@@ -30,6 +30,16 @@ importers:
         specifier: ^2.1.4
         version: 2.1.9(@types/node@22.20.1)
 
+  packages/db:
+    dependencies:
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.20.0
+        version: 8.20.0
+
   packages/domain:
     dependencies:
       zod:
