@@ -28,7 +28,7 @@ export const minorUnitsSchema = z
   .nonnegative()
   .safe();
 
-export const accountTypeSchema = z.enum(ACCOUNT_TYPES as unknown as [string, ...string[]]);
+export const accountTypeSchema = z.enum(ACCOUNT_TYPES);
 
 export const journalLineSchema = z
   .object({
