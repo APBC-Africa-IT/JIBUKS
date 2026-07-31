@@ -74,6 +74,18 @@ export async function deactivateAccount(
   return account;
 }
 
+export async function reactivateAccount(
+  tenantId: string,
+  accountId: string,
+  audit: AuditContext,
+): Promise<AccountRow> {
+  const account = await repository.reactivateAccount(tenantId, accountId, audit);
+  if (!account) {
+    throw new DomainError("ACCOUNT_NOT_FOUND", `Account ${accountId} not found`);
+  }
+  return account;
+}
+
 /**
  * Load account snapshots for use by @jibuks/ledger's PostingContext.
  * This is exactly the "other modules call the service, not the repository"

@@ -187,3 +187,81 @@ describe("POST /api/v1/accounts/:id/deactivate", () => {
     expect(stillExists.body.is_active).toBe(false);
   });
 });
+
+describe("POST /api/v1/accounts/:id/reactivate", () => {
+  it("reactivates a previously deactivated account", async () => {
+    const { tenantId, userId } = await makeTenantWithUser();
+
+    const created = await request(app)
+      .post("/api/v1/accounts")
+      .set("X-Tenant-Id", tenantId)
+      .set("X-Actor-User-Id", userId)
+      .send({ code: "6000", name: "Utilities", type: "EXPENSE" });
+
+    const accountId = created.body.id as string;
+
+    await request(app)
+      .post(`/api/v1/accounts/${accountId}/deactivate`)
+      .set("X-Tenant-Id", tenantId)
+      .set("X-Actor-User-Id", userId);
+
+    const reactivated = await request(app)
+      .post(`/api/v1/accounts/${accountId}/reactivate`)
+      .set("X-Tenant-Id", tenantId)
+      .set("X-Actor-User-Id", userId);
+
+    expect(reactivated.status).toBe(200);
+    expect(reactivated.body.is_active).toBe(true);
+
+    const fetched = await request(app).get(`/api/v1/accounts/${accountId}`).set("X-Tenant-Id", tenantId);
+    expect(fetched.body.is_active).toBe(true);
+  });
+
+  it("returns 404 when reactivating an account that does not exist", async () => {
+    const { tenantId, userId } = await makeTenantWithUser();
+
+    const response = await request(app)
+      .post(`/api/v1/accounts/${randomUUID()}/reactivate`)
+      .set("X-Tenant-Id", tenantId)
+      .set("X-Actor-User-Id", userId);
+
+    expect(response.status).toBe(404);
+    expect(response.body.title).toBe("ACCOUNT_NOT_FOUND");
+  });
+
+  it("records an audit log entry for the reactivation, distinct from the deactivation entry", async () => {
+    const { tenantId, userId } = await makeTenantWithUser();
+
+    const created = await request(app)
+      .post("/api/v1/accounts")
+      .set("X-Tenant-Id", tenantId)
+      .set("X-Actor-User-Id", userId)
+      .send({ code: "7000", name: "Marketing", type: "EXPENSE" });
+
+    const accountId = created.body.id as string;
+
+    await request(app)
+      .post(`/api/v1/accounts/${accountId}/deactivate`)
+      .set("X-Tenant-Id", tenantId)
+      .set("X-Actor-User-Id", userId);
+
+    await request(app)
+      .post(`/api/v1/accounts/${accountId}/reactivate`)
+      .set("X-Tenant-Id", tenantId)
+      .set("X-Actor-User-Id", userId);
+
+    const auditRows = await withTenant(tenantId, async (client) => {
+      const result = await client.query(
+        `SELECT action, before_state, after_state FROM audit_logs WHERE entity_id = $1 ORDER BY occurred_at`,
+        [accountId],
+      );
+      return result.rows;
+    });
+
+    // CREATE, then deactivate (UPDATE), then reactivate (UPDATE) -- three
+    // distinct entries, not the deactivation being silently overwritten.
+    expect(auditRows).toHaveLength(3);
+    expect(auditRows[1]!.after_state.is_active).toBe(false);
+    expect(auditRows[2]!.after_state.is_active).toBe(true);
+  });
+});

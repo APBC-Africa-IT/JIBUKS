@@ -16,3 +16,4 @@ accountsRouter.post("/", asyncHandler(controllers.create));
 accountsRouter.get("/", asyncHandler(controllers.list));
 accountsRouter.get("/:id", asyncHandler(controllers.getOne));
 accountsRouter.post("/:id/deactivate", asyncHandler(controllers.deactivate));
+accountsRouter.post("/:id/reactivate", asyncHandler(controllers.reactivate));

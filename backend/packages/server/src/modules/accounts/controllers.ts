@@ -55,3 +55,8 @@ export async function deactivate(req: Request, res: Response): Promise<void> {
   const account = await service.deactivateAccount(req.tenantId!, req.params["id"]!, auditContextFrom(req));
   res.json(account);
 }
+
+export async function reactivate(req: Request, res: Response): Promise<void> {
+  const account = await service.reactivateAccount(req.tenantId!, req.params["id"]!, auditContextFrom(req));
+  res.json(account);
+}

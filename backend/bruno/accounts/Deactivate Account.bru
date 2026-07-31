@@ -1,0 +1,20 @@
+meta {
+  name: Deactivate Account
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/accounts/{{accountId}}/deactivate
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenantId}}
+  X-Actor-User-Id: {{actorUserId}}
+}
+
+vars:pre-request {
+  accountId: 541a185a-c76b-4e0a-9f0e-df5772307a74
+}
