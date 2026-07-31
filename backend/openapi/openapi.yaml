@@ -1,0 +1,280 @@
+openapi: 3.0.3
+info:
+  title: JiBUks API
+  version: "1.0"
+  description: >
+    JiBUks backend API. All endpoints are under /api/v1 (Section 9.1).
+    Authentication headers shown here (X-Tenant-Id, X-Actor-User-Id) are a
+    temporary development stand-in until OIDC/JWT-based identity (constraint
+    C-03) replaces them -- at that point tenant and actor are derived from
+    the validated token, not client-supplied headers.
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Local development
+
+tags:
+  - name: Accounts
+    description: Chart of accounts (FR-COA-01 to FR-COA-04)
+
+paths:
+  /accounts:
+    post:
+      tags: [Accounts]
+      summary: Create an account
+      description: Creates a new chart-of-accounts entry for the requesting tenant.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+            example:
+              code: "1000"
+              name: "Cash"
+              type: "ASSET"
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/DuplicateValue'
+    get:
+      tags: [Accounts]
+      summary: List accounts
+      description: Returns every account belonging to the requesting tenant, ordered by code.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      responses:
+        '200':
+          description: List of accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Account'
+
+  /accounts/{id}:
+    get:
+      tags: [Accounts]
+      summary: Get a single account
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/AccountIdPath'
+      responses:
+        '200':
+          description: The account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{id}/deactivate:
+    post:
+      tags: [Accounts]
+      summary: Deactivate an account
+      description: >
+        Marks the account inactive. Per FR-COA-03, accounts that have ever
+        been posted to cannot be deleted -- only deactivated. The row and
+        its full history are retained.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+        - $ref: '#/components/parameters/AccountIdPath'
+      responses:
+        '200':
+          description: The account, now inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /accounts/{id}/reactivate:
+    post:
+      tags: [Accounts]
+      summary: Reactivate an account
+      description: Reverses a prior deactivation, restoring the account to active use.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+        - $ref: '#/components/parameters/AccountIdPath'
+      responses:
+        '200':
+          description: The account, now active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    TenantIdHeader:
+      name: X-Tenant-Id
+      in: header
+      required: true
+      description: >
+        TEMPORARY development stand-in for tenant identity. Will be replaced
+        by a claim inside a validated JWT once identity/auth is built.
+      schema:
+        type: string
+        format: uuid
+    ActorUserIdHeader:
+      name: X-Actor-User-Id
+      in: header
+      required: true
+      description: TEMPORARY stand-in for the authenticated actor, used for audit logging.
+      schema:
+        type: string
+        format: uuid
+    AccountIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    AccountType:
+      type: string
+      enum: [ASSET, LIABILITY, EQUITY, INCOME, EXPENSE]
+
+    CreateAccountRequest:
+      type: object
+      required: [code, name, type]
+      properties:
+        code:
+          type: string
+          maxLength: 20
+          example: "1000"
+        name:
+          type: string
+          maxLength: 200
+          example: "Cash"
+        type:
+          $ref: '#/components/schemas/AccountType'
+        parentAccountId:
+          type: string
+          format: uuid
+          nullable: true
+          description: If set, must belong to the same tenant and match this account's type.
+        currency:
+          type: string
+          description: ISO 4217 code. Omit to use the tenant's base currency.
+          example: "KES"
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+
+    Account:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        parent_account_id:
+          type: string
+          format: uuid
+          nullable: true
+        code:
+          type: string
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/AccountType'
+        currency:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        is_postable:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ProblemDetails:
+      type: object
+      description: RFC 7807 problem detail (Section 9.1).
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+              message:
+                type: string
+
+  responses:
+    ValidationError:
+      description: Request body failed validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: "tag:jibuks,2026:error/VALIDATION_ERROR"
+            title: "VALIDATION_ERROR"
+            status: 400
+            detail: "The request body failed validation"
+            errors:
+              - path: "type"
+                message: "Invalid enum value..."
+    DuplicateValue:
+      description: A record with this value already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: "tag:jibuks,2026:error/DUPLICATE_VALUE"
+            title: "DUPLICATE_VALUE"
+            status: 409
+            detail: "A record with this value already exists in accounts"
+    NotFound:
+      description: The requested resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: "tag:jibuks,2026:error/ACCOUNT_NOT_FOUND"
+            title: "ACCOUNT_NOT_FOUND"
+            status: 404
+            detail: "Account ... not found"
