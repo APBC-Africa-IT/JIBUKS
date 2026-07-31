@@ -8,6 +8,10 @@
  */
 
 import express, { type Express } from "express";
+import swaggerUi from "swagger-ui-express";
+import YAML from "yamljs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { accountsRouter } from "./modules/accounts/routes.js";
 
@@ -15,6 +19,10 @@ export function createApp(): Express {
   const app = express();
 
   app.use(express.json());
+
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const openapiDocument = YAML.load(path.join(__dirname, "../../../openapi/openapi.yaml"));
+  app.use("/api/v1/docs", swaggerUi.serve, swaggerUi.setup(openapiDocument));
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
