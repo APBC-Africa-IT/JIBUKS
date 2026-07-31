@@ -1,0 +1,25 @@
+meta {
+  name: Create Account
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/accounts
+  body: json
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenantId}}
+  X-Actor-User-Id: {{actorUserId}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "code": "1000",
+    "name": "Cash",
+    "type": "ASSET"
+  }
+}

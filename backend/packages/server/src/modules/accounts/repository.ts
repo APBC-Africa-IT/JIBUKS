@@ -119,3 +119,34 @@ export async function deactivateAccount(
     return account;
   });
 }
+
+export async function reactivateAccount(
+  tenantId: string,
+  accountId: string,
+  audit: AuditContext,
+): Promise<AccountRow | null> {
+  return withTenant(tenantId, async (client) => {
+    const before = await client.query<AccountRow>(`SELECT * FROM accounts WHERE id = $1`, [accountId]);
+    if (before.rows.length === 0) {
+      return null;
+    }
+
+    const result = await client.query<AccountRow>(
+      `UPDATE accounts SET is_active = true WHERE id = $1 RETURNING *`,
+      [accountId],
+    );
+    const account = result.rows[0]!;
+
+    await recordAuditLog(client, {
+      tenantId,
+      action: "UPDATE",
+      entityType: "account",
+      entityId: account.id,
+      beforeState: before.rows[0],
+      afterState: account,
+      context: audit,
+    });
+
+    return account;
+  });
+}

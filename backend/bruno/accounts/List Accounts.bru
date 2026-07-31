@@ -1,0 +1,15 @@
+meta {
+  name: List Accounts
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/accounts
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenantId}}
+}
