@@ -10,7 +10,8 @@
   "typecheck": "tsc --build --force",
   "migrate": "dotenv -e .env.migrations -- node-pg-migrate",
   "migrate:up": "dotenv -e .env.migrations -- node-pg-migrate up",
-  "migrate:down": "dotenv -e .env.migrations -- node-pg-migrate down"
+  "migrate:down": "dotenv -e .env.migrations -- node-pg-migrate down",
+  "dev:server": "pnpm --filter @jibuks/server dev"
 },
   "devDependencies": {
     "@types/node": "^22.9.0",
