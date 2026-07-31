@@ -8,43 +8,20 @@
  */
 
 import express, { type Express } from "express";
-import { DomainError } from "@jibuks/domain";
-import { asyncHandler } from "./middleware/asyncHandler.js";
 import { errorHandler } from "./middleware/errorHandler.js";
-import { tenantContext } from "./middleware/tenantContext.js";
+import { accountsRouter } from "./modules/accounts/routes.js";
 
 export function createApp(): Express {
   const app = express();
 
   app.use(express.json());
 
-  // Bare health check -- no tenant context needed, proves the process is
-  // up before any module, database, or auth logic is involved.
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
 
-  // ---------------------------------------------------------------------
-  // TEMPORARY proof-of-wiring route. Deliberately not a real module -- it
-  // exists only to demonstrate the full middleware chain (tenant context ->
-  // async handler -> thrown DomainError -> error handler) before we build
-  // the first actual module. Remove once the accounts module lands.
-  // ---------------------------------------------------------------------
-  app.get(
-    "/_debug/whoami",
-    tenantContext,
-    asyncHandler(async (req, res) => {
-      res.json({ tenantId: req.tenantId });
-    }),
-  );
-
-  app.get(
-    "/_debug/boom",
-    tenantContext,
-    asyncHandler(async () => {
-      throw new DomainError("ACCOUNT_NOT_FOUND", "This is a deliberate test error");
-    }),
-  );
+  // Section 9.1: all endpoints are under /api/v1.
+  app.use("/api/v1/accounts", accountsRouter);
 
   // Error handler must be registered LAST -- Express identifies it by its
   // four-parameter arity and only routes errors to middleware registered
