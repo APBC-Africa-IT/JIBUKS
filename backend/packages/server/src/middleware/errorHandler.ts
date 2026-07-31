@@ -5,13 +5,13 @@
  * machine-readable code, a human-readable message, and field-level detail
  * where applicable."
  *
- * This is the ONLY place that maps a DomainErrorCode to an HTTP status.
- * Controllers never set status codes for domain failures themselves --
- * they just throw DomainError, or let one propagate from @jibuks/ledger,
- * and this middleware translates it consistently, everywhere, once.
+ * This is the ONLY place that maps a failure -- DomainError, a Zod
+ * validation failure, or a known Postgres error code -- to an HTTP status.
+ * Controllers never set status codes for these failures themselves.
  */
 
 import type { NextFunction, Request, Response } from "express";
+import { ZodError } from "zod";
 import { DomainError, type DomainErrorCode } from "@jibuks/domain";
 
 const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
@@ -39,9 +39,18 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   TENANT_MISMATCH: 403,
 };
 
-/** RFC 7807-shaped body. `type` is a stable URI-like identifier for the
- * error code; we use a simple tag: scheme rather than standing up real
- * documentation URIs this early. */
+/** Recognisable shape of a node-postgres error, without depending on `pg`
+ * as a type import here -- this file should stay database-library-agnostic. */
+interface PgError {
+  code?: string;
+  constraint?: string;
+  table?: string;
+}
+
+function isPgError(err: unknown): err is PgError {
+  return typeof err === "object" && err !== null && "code" in err;
+}
+
 function problemDetails(status: number, code: string, message: string, details?: readonly unknown[]) {
   return {
     type: `tag:jibuks,2026:error/${code}`,
@@ -68,9 +77,34 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return;
   }
 
-  // Anything that reaches here is NOT a DomainError -- i.e. not an
-  // anticipated business-rule failure, but a genuine bug, a database
-  // connectivity issue, etc. Never leak internals to the client.
+  if (err instanceof ZodError) {
+    const details = err.issues.map((issue) => ({
+      path: issue.path.join("."),
+      message: issue.message,
+    }));
+    res
+      .status(400)
+      .type("application/problem+json")
+      .json(problemDetails(400, "VALIDATION_ERROR", "The request body failed validation", details));
+    return;
+  }
+
+  if (isPgError(err) && err.code === "23505") {
+    res
+      .status(409)
+      .type("application/problem+json")
+      .json(
+        problemDetails(
+          409,
+          "DUPLICATE_VALUE",
+          `A record with this value already exists${err.table ? ` in ${err.table}` : ""}`,
+        ),
+      );
+    return;
+  }
+
+  // Anything reaching here is a genuine bug, connectivity issue, etc --
+  // never leak internals to the client.
   console.error("Unhandled error:", err);
   res
     .status(500)
