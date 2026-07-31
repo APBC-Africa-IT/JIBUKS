@@ -1,0 +1,27 @@
+{
+  "name": "jibuks-backend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "JiBUks backend - Node.js/TypeScript modular monolith and shared domain packages.",
+  "scripts": {
+    "build": "tsc --build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --build --force",
+    "migrate": "dotenv -e .env.migrations -- node-pg-migrate",
+    "migrate:up": "dotenv -e .env.migrations -- node-pg-migrate up",
+    "migrate:down": "dotenv -e .env.migrations -- node-pg-migrate down"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/pg": "^8.20.0",
+    "dotenv-cli": "^11.0.0",
+    "node-pg-migrate": "^9.0.0",
+    "pg": "^8.22.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

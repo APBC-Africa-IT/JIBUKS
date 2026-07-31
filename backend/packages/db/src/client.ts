@@ -70,3 +70,18 @@ export async function withoutTenant<T>(fn: (client: pg.PoolClient) => Promise<T>
     client.release();
   }
 }
+
+/**
+ * Run a read-only query scoped to a tenant, without the overhead of a full
+ * BEGIN/COMMIT transaction. Still uses SET LOCAL semantics via a short
+ * transaction internally -- Postgres has no non-transactional way to scope
+ * a session-local GUC safely on a pooled connection, so this is the same
+ * SET LOCAL approach as withTenant, just named to signal read-only intent
+ * at call sites.
+ */
+export async function readAsTenant<T>(
+  tenantId: string,
+  fn: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  return withTenant(tenantId, fn);
+}
