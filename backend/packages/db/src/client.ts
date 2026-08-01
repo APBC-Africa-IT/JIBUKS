@@ -9,6 +9,14 @@
 
 import pg from "pg";
 
+// Postgres' `date` type (OID 1082) is parsed by pg into a JS Date object by
+// default, which always carries a timestamp -- serializing it back to JSON
+// reintroduces a time component shifted by the server process's local
+// timezone. Section 9.1 requires accounting dates be transmitted as pure
+// calendar dates with no time component, so we disable that parsing and
+// keep dates as the plain "YYYY-MM-DD" string Postgres already returns.
+pg.types.setTypeParser(1082, (value: string) => value);
+
 const { Pool } = pg;
 
 let pool: pg.Pool | undefined;
