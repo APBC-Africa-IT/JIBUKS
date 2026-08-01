@@ -7,7 +7,8 @@
  * for module boundaries to mean anything.
  */
 
-import { DomainError, type AccountType } from "@jibuks/domain";
+import { DomainError, isCurrencyCode, type AccountType } from "@jibuks/domain";
+import type { AccountSnapshot } from "@jibuks/ledger";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
 import type { AccountRow } from "./repository.js";
@@ -91,11 +92,9 @@ export async function reactivateAccount(
  * This is exactly the "other modules call the service, not the repository"
  * pattern -- the future journals module will call this function.
  */
-export async function loadAccountSnapshots(
-  tenantId: string,
-): Promise<Map<string, { id: string; tenantId: string; code: string; type: AccountType; isActive: boolean; isPostable: boolean; currency: string | null }>> {
+export async function loadAccountSnapshots(tenantId: string): Promise<Map<string, AccountSnapshot>> {
   const rows = await repository.listAccounts(tenantId);
-  const map = new Map();
+  const map = new Map<string, AccountSnapshot>();
   for (const row of rows) {
     map.set(row.id, {
       id: row.id,
@@ -104,7 +103,7 @@ export async function loadAccountSnapshots(
       type: row.type,
       isActive: row.is_active,
       isPostable: row.is_postable,
-      currency: row.currency,
+      currency: isCurrencyCode(row.currency) ? row.currency : null,
     });
   }
   return map;
