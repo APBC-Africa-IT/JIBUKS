@@ -1,0 +1,16 @@
+meta {
+  name: Reopen Period
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/periods/{{periodId}}/reopen
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenantId}}
+  X-Actor-User-Id: {{actorUserId}}
+}
