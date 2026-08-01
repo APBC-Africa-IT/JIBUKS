@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { accountsRouter } from "./modules/accounts/routes.js";
+import { periodsRouter } from "./modules/periods/routes.js";
 
 export function createApp(): Express {
   const app = express();
@@ -30,6 +31,7 @@ export function createApp(): Express {
 
   // Section 9.1: all endpoints are under /api/v1.
   app.use("/api/v1/accounts", accountsRouter);
+  app.use("/api/v1/periods", periodsRouter);
 
   // Error handler must be registered LAST -- Express identifies it by its
   // four-parameter arity and only routes errors to middleware registered
