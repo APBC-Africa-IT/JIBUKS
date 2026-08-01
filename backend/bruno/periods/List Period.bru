@@ -1,0 +1,15 @@
+meta {
+  name: List Periods
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/periods
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenantId}}
+}

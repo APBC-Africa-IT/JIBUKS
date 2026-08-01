@@ -1,0 +1,16 @@
+meta {
+  name: Close Period
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/periods/{{periodId}}/close
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenantId}}
+  X-Actor-User-Id: {{actorUserId}}
+}
