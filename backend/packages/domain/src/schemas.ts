@@ -69,6 +69,13 @@ export const createAccountSchema = z.object({
   tags: z.array(z.string().max(50)).max(20).default([]),
 });
 
+export const createPeriodSchema = z.object({
+  startDate: accountingDateSchema,
+  endDate: accountingDateSchema,
+});
+
+export type CreatePeriodDto = z.infer<typeof createPeriodSchema>;
+
 /** Cursor pagination (Section 9.1). Offset pagination is not used. */
 export const paginationSchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
