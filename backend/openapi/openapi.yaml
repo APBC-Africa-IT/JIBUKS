@@ -15,6 +15,8 @@ servers:
 tags:
   - name: Accounts
     description: Chart of accounts (FR-COA-01 to FR-COA-04)
+  - name: Periods
+    description: Accounting periods and locking (FR-ACC-03)
 
 paths:
   /accounts:
@@ -123,6 +125,112 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /periods:
+    post:
+      tags: [Periods]
+      summary: Create an accounting period
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePeriodRequest'
+            example:
+              startDate: "2026-08-01"
+              endDate: "2026-08-31"
+      responses:
+        '201':
+          description: Period created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Period'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+    get:
+      tags: [Periods]
+      summary: List accounting periods
+      description: Returns every period for the requesting tenant, ordered by start_date.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      responses:
+        '200':
+          description: List of periods
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Period'
+
+  /periods/{id}:
+    get:
+      tags: [Periods]
+      summary: Get a single period
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/PeriodIdPath'
+      responses:
+        '200':
+          description: The period
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Period'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /periods/{id}/close:
+    post:
+      tags: [Periods]
+      summary: Close a period
+      description: Only an OPEN period can be closed. FR-ACC-03.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+        - $ref: '#/components/parameters/PeriodIdPath'
+      responses:
+        '200':
+          description: The period, now CLOSED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Period'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/PeriodLocked'
+
+  /periods/{id}/reopen:
+    post:
+      tags: [Periods]
+      summary: Reopen a period
+      description: >
+        Only a CLOSED or LOCKED period can be reopened. FR-ACC-03 requires
+        this be restricted to a named permission -- not yet enforced, since
+        RBAC does not exist yet.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+        - $ref: '#/components/parameters/PeriodIdPath'
+      responses:
+        '200':
+          description: The period, now OPEN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Period'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/PeriodLocked'
+
 components:
   parameters:
     TenantIdHeader:
@@ -144,6 +252,13 @@ components:
         type: string
         format: uuid
     AccountIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PeriodIdPath:
       name: id
       in: path
       required: true
@@ -219,6 +334,46 @@ components:
           type: string
           format: date-time
 
+    CreatePeriodRequest:
+      type: object
+      required: [startDate, endDate]
+      properties:
+        startDate:
+          type: string
+          format: date
+          example: "2026-08-01"
+        endDate:
+          type: string
+          format: date
+          example: "2026-08-31"
+
+    Period:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [OPEN, CLOSED, LOCKED]
+        closed_by:
+          type: string
+          format: uuid
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+
     ProblemDetails:
       type: object
       description: RFC 7807 problem detail (Section 9.1).
@@ -278,3 +433,14 @@ components:
             title: "ACCOUNT_NOT_FOUND"
             status: 404
             detail: "Account ... not found"
+    PeriodLocked:
+      description: The period is not in a state that allows this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: "tag:jibuks,2026:error/PERIOD_LOCKED"
+            title: "PERIOD_LOCKED"
+            status: 422
+            detail: "Period ... is already closed"
