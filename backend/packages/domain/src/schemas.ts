@@ -59,6 +59,22 @@ export const journalInputSchema = z.object({
   lines: z.array(journalLineSchema).min(2, "A journal needs at least two lines to balance"),
 });
 
+/** Request body shape for creating a journal via HTTP -- tenantId is
+ * deliberately absent, since it comes from the authenticated request
+ * context (req.tenantId), never from client-supplied body data. */
+export const createJournalRequestSchema = z.object({
+  clientUuid: uuidSchema,
+  branchId: uuidSchema.optional(),
+  date: accountingDateSchema,
+  currency: currencySchema,
+  description: z.string().min(1).max(500),
+  reference: z.string().max(100).optional(),
+  source: z.enum(JOURNAL_SOURCES as unknown as [string, ...string[]]).default("MANUAL"),
+  lines: z.array(journalLineSchema).min(2, "A journal needs at least two lines to balance"),
+});
+
+export type CreateJournalRequestDto = z.infer<typeof createJournalRequestSchema>;
+
 export const createAccountSchema = z.object({
   clientUuid: uuidSchema.optional(),
   code: z.string().min(1).max(20),
