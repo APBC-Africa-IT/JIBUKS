@@ -17,8 +17,12 @@ tags:
     description: Chart of accounts (FR-COA-01 to FR-COA-04)
   - name: Periods
     description: Accounting periods and locking (FR-ACC-03)
+  - name: Journals
+    description: Double-entry journal posting and reversal (FR-ACC-01, FR-ACC-02)
 
 paths:
+  # ── Accounts ──────────────────────────────────────────────────────
+
   /accounts:
     post:
       tags: [Accounts]
@@ -124,6 +128,8 @@ paths:
                 $ref: '#/components/schemas/Account'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  # ── Periods ───────────────────────────────────────────────────────
 
   /periods:
     post:
@@ -231,7 +237,150 @@ paths:
         '422':
           $ref: '#/components/responses/PeriodLocked'
 
+  # ── Journals ────────────────────────────────────────────────────────
+
+  /journals:
+    post:
+      tags: [Journals]
+      summary: Create and post a journal
+      description: >
+        Enforces double-entry bookkeeping: the sum of debitMinor across all
+        lines must equal the sum of creditMinor, in the journal's currency
+        (FR-ACC-01). Posted immediately -- there is no draft/approval
+        workflow exposed over the API currently.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJournalRequest'
+            example:
+              clientUuid: "550e8400-e29b-41d4-a716-446655440099"
+              date: "2026-09-15"
+              currency: "KES"
+              description: "Cash sale"
+              source: "CASHBOOK"
+              lines:
+                - accountId: "541a185a-c76b-4e0a-9f0e-df5772307a74"
+                  debitMinor: 100000
+                  creditMinor: 0
+                - accountId: "e5f2cf8a-4f7d-4a10-a807-66deb74ac350"
+                  debitMinor: 0
+                  creditMinor: 100000
+      responses:
+        '201':
+          description: Journal created and posted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Journal'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          description: Referenced account not found, or no period covers the given date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Journal does not balance, an account is inactive/non-postable, or the covering period is closed/locked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "tag:jibuks,2026:error/JOURNAL_UNBALANCED"
+                title: "JOURNAL_UNBALANCED"
+                status: 422
+                detail: "Journal does not balance in KES: debits 5000 minor units, credits 3000 minor units, difference 2000 excess debit"
+    get:
+      tags: [Journals]
+      summary: List journals
+      description: Returns every journal for the requesting tenant, most recent first. Lines are NOT included -- fetch a single journal for its lines.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      responses:
+        '200':
+          description: List of journals (without lines)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/JournalSummary'
+
+  /journals/{id}:
+    get:
+      tags: [Journals]
+      summary: Get a single journal, including its lines
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/JournalIdPath'
+      responses:
+        '200':
+          description: The journal, with lines
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Journal'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /journals/{id}/reverse:
+    post:
+      tags: [Journals]
+      summary: Reverse a posted journal
+      description: >
+        The only correction mechanism (FR-ACC-02). Creates a NEW journal
+        with every line's debit and credit swapped, dated today, referencing
+        the original. The original journal is left completely unchanged.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+        - $ref: '#/components/parameters/JournalIdPath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  example: "Posted in error"
+      responses:
+        '201':
+          description: The new reversing journal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Journal'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Journal already reversed, or not in a reversible state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "tag:jibuks,2026:error/JOURNAL_ALREADY_REVERSED"
+                title: "JOURNAL_ALREADY_REVERSED"
+                status: 422
+                detail: "Journal 18230383-... was already reversed by 80430089-..."
+
+# ════════════════════════════════════════════════════════════════════
+# Components — reusable parameters, schemas, and responses
+# ════════════════════════════════════════════════════════════════════
+
 components:
+  # ── Shared parameters (headers & path) ────────────────────────────
   parameters:
     TenantIdHeader:
       name: X-Tenant-Id
@@ -265,8 +414,18 @@ components:
       schema:
         type: string
         format: uuid
+    JournalIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
 
+  # ── Schemas ───────────────────────────────────────────────────────
   schemas:
+    # -- Account-related schemas --
+
     AccountType:
       type: string
       enum: [ASSET, LIABILITY, EQUITY, INCOME, EXPENSE]
@@ -334,6 +493,8 @@ components:
           type: string
           format: date-time
 
+    # -- Period-related schemas --
+
     CreatePeriodRequest:
       type: object
       required: [startDate, endDate]
@@ -374,6 +535,165 @@ components:
           format: date-time
           nullable: true
 
+    # ── Journal-related schemas ─────────────────────────────────────
+
+    JournalSource:
+      type: string
+      enum: [MANUAL, CASHBOOK, PAYMENT, IMPORT, COMMUNITY, OPENING, REVERSAL]
+
+    JournalStatus:
+      type: string
+      enum: [DRAFT, PENDING_APPROVAL, POSTED]
+
+    CreateJournalLine:
+      type: object
+      required: [accountId, debitMinor, creditMinor]
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        debitMinor:
+          type: integer
+          minimum: 0
+        creditMinor:
+          type: integer
+          minimum: 0
+        narrative:
+          type: string
+        projectId:
+          type: string
+          format: uuid
+        department:
+          type: string
+
+    CreateJournalRequest:
+      type: object
+      required: [clientUuid, date, currency, description, lines]
+      properties:
+        clientUuid:
+          type: string
+          format: uuid
+          description: Client-generated identity for this journal. Use a fresh UUID per journal.
+        branchId:
+          type: string
+          format: uuid
+          nullable: true
+        date:
+          type: string
+          format: date
+          description: Must fall within an OPEN period for this tenant.
+        currency:
+          type: string
+          example: "KES"
+        description:
+          type: string
+        reference:
+          type: string
+        source:
+          $ref: '#/components/schemas/JournalSource'
+          default: MANUAL
+        lines:
+          type: array
+          minItems: 2
+          items:
+            $ref: '#/components/schemas/CreateJournalLine'
+
+    # Response shape for a single journal line (bigint columns returned as strings).
+    JournalLine:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        journal_id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        debit_minor:
+          type: string
+          description: 64-bit value, returned as a string. Parse explicitly on the client.
+          example: "100000"
+        credit_minor:
+          type: string
+          example: "0"
+        narrative:
+          type: string
+          nullable: true
+        project_id:
+          type: string
+          format: uuid
+          nullable: true
+        department:
+          type: string
+          nullable: true
+
+    # Journal header without lines -- used by the list endpoint.
+    JournalSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+          nullable: true
+        client_uuid:
+          type: string
+          format: uuid
+        period_id:
+          type: string
+          format: uuid
+        date:
+          type: string
+          format: date
+        currency:
+          type: string
+        description:
+          type: string
+        reference:
+          type: string
+          nullable: true
+        source:
+          $ref: '#/components/schemas/JournalSource'
+        status:
+          $ref: '#/components/schemas/JournalStatus'
+        reversal_of_journal_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_by:
+          type: string
+          format: uuid
+        approved_by:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    # Full journal = summary + lines (used by GET /journals/{id} and POST responses).
+    Journal:
+      allOf:
+        - $ref: '#/components/schemas/JournalSummary'
+        - type: object
+          properties:
+            lines:
+              type: array
+              items:
+                $ref: '#/components/schemas/JournalLine'
+
+    # -- Shared error schema (RFC 7807) --
+
     ProblemDetails:
       type: object
       description: RFC 7807 problem detail (Section 9.1).
@@ -396,6 +716,7 @@ components:
               message:
                 type: string
 
+  # ── Reusable responses ────────────────────────────────────────────
   responses:
     ValidationError:
       description: Request body failed validation
