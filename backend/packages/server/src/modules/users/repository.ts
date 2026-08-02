@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { recordAuditLog, withTenant, withoutTenant, readAsTenant } from "@jibuks/db";
+import { recordAuditLog, withTenant, withoutTenant, readAsTenant, withAuthResolver } from "@jibuks/db";
 
 export interface UserRow {
   readonly id: string;
@@ -74,14 +74,13 @@ export async function getUserById(tenantId: string, userId: string): Promise<Use
 }
 
 /**
- * Look up a user by their Auth0 subject claim, WITHOUT knowing the tenant
- * in advance -- this is the missing piece real auth needs: given only a
- * verified `sub`, find out who this is and which tenant they belong to.
- * Runs outside any tenant context deliberately, since the tenant is exactly
- * what we don't know yet at this point.
+ * The one deliberate exception to RLS in this module. Uses the dedicated
+ * jibuks_auth_resolver role (SELECT-only, BYPASSRLS) so this lookup can
+ * genuinely search across all tenants -- necessary because the tenant is
+ * exactly what's being discovered here.
  */
 export async function findUserByExternalIdpSubject(externalIdpSubject: string): Promise<UserRow | null> {
-  return withoutTenant(async (client) => {
+  return withAuthResolver(async (client) => {
     const result = await client.query<UserRow>(`SELECT * FROM users WHERE external_idp_subject = $1`, [
       externalIdpSubject,
     ]);
