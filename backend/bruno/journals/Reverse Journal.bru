@@ -1,0 +1,23 @@
+meta {
+  name: Reverse Journal
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/journals/{{journalId}}/reverse
+  body: json
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenantId}}
+  X-Actor-User-Id: {{actorUserId}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "reason": "Testing reversal via Bruno"
+  }
+}
