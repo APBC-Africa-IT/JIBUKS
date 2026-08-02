@@ -94,6 +94,26 @@ export const createPeriodSchema = z.object({
 
 export type CreatePeriodDto = z.infer<typeof createPeriodSchema>;
 
+export const createUserSchema = z.object({
+  externalIdpSubject: z.string().min(1).max(500),
+  name: z.string().min(1).max(200),
+  email: z.string().email().optional(),
+  phone: z.string().max(20).optional(),
+});
+
+export type CreateUserDto = z.infer<typeof createUserSchema>;
+
+export const onboardingRequestSchema = z.object({
+  tenantName: z.string().min(1).max(200),
+  tenantType: z.enum(["BUSINESS", "NGO", "HOUSEHOLD"]),
+  baseCurrency: currencySchema,
+  userName: z.string().min(1).max(200),
+  email: z.string().email().optional(),
+  phone: z.string().max(20).optional(),
+});
+
+export type OnboardingRequestDto = z.infer<typeof onboardingRequestSchema>;
+
 /** Cursor pagination (Section 9.1). Offset pagination is not used. */
 export const paginationSchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
