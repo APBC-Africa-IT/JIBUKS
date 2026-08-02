@@ -20,6 +20,40 @@ pg.types.setTypeParser(1082, (value: string) => value);
 const { Pool } = pg;
 
 let pool: pg.Pool | undefined;
+let authResolverPool: pg.Pool | undefined;
+
+/**
+ * A SEPARATE connection pool, using a distinct, narrowly-scoped database
+ * role (jibuks_auth_resolver) that bypasses RLS -- reserved exclusively for
+ * resolving a verified identity to its tenant, where the tenant is exactly
+ * what's being discovered. Never use this pool for anything else; every
+ * other query in the system must go through the ordinary tenant-scoped
+ * pool via withTenant/readAsTenant, which stays fully RLS-protected.
+ */
+export function getAuthResolverPool(): pg.Pool {
+  if (!authResolverPool) {
+    const connectionString = process.env["AUTH_RESOLVER_DATABASE_URL"];
+    if (!connectionString) {
+      throw new Error("AUTH_RESOLVER_DATABASE_URL is not set");
+    }
+    authResolverPool = new Pool({ connectionString });
+  }
+  return authResolverPool;
+}
+
+/**
+ * Runs a read-only query against the auth-resolver pool. There is no
+ * tenant-scoping here by design -- this is the one deliberate, narrow,
+ * auditable exception to RLS in the whole system.
+ */
+export async function withAuthResolver<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+  const client = await getAuthResolverPool().connect();
+  try {
+    return await fn(client);
+  } finally {
+    client.release();
+  }
+}
 
 export function getPool(): pg.Pool {
   if (!pool) {
@@ -36,6 +70,10 @@ export async function closePool(): Promise<void> {
   if (pool) {
     await pool.end();
     pool = undefined;
+  }
+  if (authResolverPool) {
+    await authResolverPool.end();
+    authResolverPool = undefined;
   }
 }
 
