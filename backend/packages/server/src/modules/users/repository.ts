@@ -4,14 +4,14 @@
  * The ONLY file permitted to write raw SQL against `users` (AD-02).
  *
  * Note on audit logging: audit_logs.actor_user_id has a NOT NULL foreign
- * key into users. Creating the first user for a tenant has nobody else to
- * attribute the action to, so a newly created user is recorded as the
- * actor of their own creation -- honest and fully attributable, not a
- * workaround.
+ * key into users. Since user creation now requires an authenticated caller
+ * (requireRealIdentity), the action is attributed to that caller -- never
+ * to the newly created user. Self-service onboarding of a tenant's very
+ * first user is a separate, public flow.
  */
 
 import { randomUUID } from "node:crypto";
-import { recordAuditLog, withTenant, withoutTenant, readAsTenant, withAuthResolver } from "@jibuks/db";
+import { recordAuditLog, withTenant, readAsTenant, withAuthResolver, type AuditContext } from "@jibuks/db";
 
 export interface UserRow {
   readonly id: string;
@@ -34,7 +34,7 @@ export interface CreateUserInput {
   readonly phone?: string;
 }
 
-export async function createUser(input: CreateUserInput): Promise<UserRow> {
+export async function createUser(input: CreateUserInput, audit: AuditContext): Promise<UserRow> {
   return withTenant(input.tenantId, async (client) => {
     const id = randomUUID();
     const result = await client.query<UserRow>(
@@ -45,14 +45,14 @@ export async function createUser(input: CreateUserInput): Promise<UserRow> {
     );
     const user = result.rows[0]!;
 
-    // The new user is the actor of their own creation -- see file header.
+    // The authenticated caller is the actor -- see file header.
     await recordAuditLog(client, {
       tenantId: input.tenantId,
       action: "CREATE",
       entityType: "user",
       entityId: user.id,
       afterState: user,
-      context: { actorUserId: user.id },
+      context: audit,
     });
 
     return user;

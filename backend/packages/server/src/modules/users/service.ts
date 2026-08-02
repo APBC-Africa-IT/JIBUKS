@@ -8,6 +8,7 @@
  */
 
 import { DomainError } from "@jibuks/domain";
+import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
 import type { UserRow } from "./repository.js";
 
@@ -19,19 +20,22 @@ export interface CreateUserRequest {
   readonly phone?: string;
 }
 
-export async function createUser(request: CreateUserRequest): Promise<UserRow> {
+export async function createUser(request: CreateUserRequest, audit: AuditContext): Promise<UserRow> {
   const existing = await repository.findUserByExternalIdpSubject(request.externalIdpSubject);
   if (existing) {
     throw new DomainError("USER_ALREADY_EXISTS", `A user for this identity already exists (id ${existing.id})`);
   }
 
-  return repository.createUser({
-    tenantId: request.tenantId,
-    externalIdpSubject: request.externalIdpSubject,
-    name: request.name,
-    ...(request.email !== undefined ? { email: request.email } : {}),
-    ...(request.phone !== undefined ? { phone: request.phone } : {}),
-  });
+  return repository.createUser(
+    {
+      tenantId: request.tenantId,
+      externalIdpSubject: request.externalIdpSubject,
+      name: request.name,
+      ...(request.email !== undefined ? { email: request.email } : {}),
+      ...(request.phone !== undefined ? { phone: request.phone } : {}),
+    },
+    audit,
+  );
 }
 
 export async function listUsers(tenantId: string): Promise<UserRow[]> {
