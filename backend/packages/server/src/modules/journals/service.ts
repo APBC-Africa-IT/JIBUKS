@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { DomainError, type Journal as DomainJournal } from "@jibuks/domain";
+import { DomainError, type CurrencyCode, type JournalSource, type Journal as DomainJournal } from "@jibuks/domain";
 import { validateForPosting, buildReversal as domainBuildReversal, type PostingContext, type PeriodSnapshot } from "@jibuks/ledger";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
@@ -29,10 +29,10 @@ export interface CreateJournalRequest {
   readonly clientUuid: string;
   readonly branchId?: string;
   readonly date: string;
-  readonly currency: string;
+  readonly currency: CurrencyCode;
   readonly description: string;
   readonly reference?: string;
-  readonly source: string;
+  readonly source: JournalSource;
   readonly lines: readonly CreateJournalLineRequest[];
 }
 
@@ -111,10 +111,10 @@ export async function createJournal(request: CreateJournalRequest, audit: AuditC
       tenantId: request.tenantId,
       ...(request.branchId !== undefined ? { branchId: request.branchId } : {}),
       date: request.date,
-      currency: request.currency as never,
+      currency: request.currency,
       description: request.description,
       ...(request.reference !== undefined ? { reference: request.reference } : {}),
-      source: request.source as never,
+      source: request.source,
       lines: request.lines,
     },
     context,

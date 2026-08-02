@@ -7,13 +7,15 @@
  */
 
 import { z } from "zod";
-import { CURRENCY_CODES } from "./currency.js";
+import { CURRENCIES } from "./currency.js";
 import { ACCOUNT_TYPES } from "./accounts.js";
 import { JOURNAL_SOURCES } from "./journal.js";
 
 export const uuidSchema = z.string().uuid();
 
-export const currencySchema = z.enum(CURRENCY_CODES as [string, ...string[]]);
+export const currencySchema = z.enum(
+  Object.keys(CURRENCIES) as [keyof typeof CURRENCIES, ...(keyof typeof CURRENCIES)[]],
+);
 
 /** ISO 8601 calendar date, no time component (Section 9.1, Dates and times). */
 export const accountingDateSchema = z
@@ -55,7 +57,7 @@ export const journalInputSchema = z.object({
   currency: currencySchema,
   description: z.string().min(1).max(500),
   reference: z.string().max(100).optional(),
-  source: z.enum(JOURNAL_SOURCES as unknown as [string, ...string[]]).default("MANUAL"),
+  source: z.enum(JOURNAL_SOURCES).default("MANUAL"),
   lines: z.array(journalLineSchema).min(2, "A journal needs at least two lines to balance"),
 });
 
@@ -69,7 +71,7 @@ export const createJournalRequestSchema = z.object({
   currency: currencySchema,
   description: z.string().min(1).max(500),
   reference: z.string().max(100).optional(),
-  source: z.enum(JOURNAL_SOURCES as unknown as [string, ...string[]]).default("MANUAL"),
+  source: z.enum(JOURNAL_SOURCES).default("MANUAL"),
   lines: z.array(journalLineSchema).min(2, "A journal needs at least two lines to balance"),
 });
 
