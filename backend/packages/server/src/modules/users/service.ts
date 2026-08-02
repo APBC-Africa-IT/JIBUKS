@@ -49,6 +49,12 @@ export async function getUser(tenantId: string, userId: string): Promise<UserRow
   }
   return user;
 }
+/** Thin passthrough so other modules can check identity existence without
+ * reaching into this module's repository directly (AD-01). */
+
+export async function findByExternalIdpSubject(externalIdpSubject: string): Promise<UserRow | null> {
+  return repository.findUserByExternalIdpSubject(externalIdpSubject);
+}
 
 /**
  * Resolve a verified Auth0 `sub` claim to a real user + tenant. This is
