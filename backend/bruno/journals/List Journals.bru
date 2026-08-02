@@ -1,0 +1,15 @@
+meta {
+  name: List Journals
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/journals
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenantId}}
+}

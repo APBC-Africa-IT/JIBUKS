@@ -1,0 +1,31 @@
+meta {
+  name: Create Journal
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/journals
+  body: json
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenantId}}
+  X-Actor-User-Id: {{actorUserId}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "date": "2026-09-15",
+    "currency": "KES",
+    "description": "Cash sale",
+    "source": "CASHBOOK",
+    "lines": [
+      { "accountId": "{{cashAccountId}}", "debitMinor": 100000, "creditMinor": 0 },
+      { "accountId": "{{salesAccountId}}", "debitMinor": 0, "creditMinor": 100000 }
+    ]
+  }
+}
