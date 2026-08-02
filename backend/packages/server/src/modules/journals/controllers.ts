@@ -8,12 +8,11 @@ import type { AuditContext } from "@jibuks/db";
 import * as service from "./service.js";
 
 function auditContextFrom(req: Request): AuditContext {
-  const actorUserId = req.header("X-Actor-User-Id");
-  if (!actorUserId) {
-    throw new Error("X-Actor-User-Id header is required (temporary stand-in until identity/auth is built)");
+  if (!req.actorUserId) {
+    throw new Error("actorUserId missing -- requireRealIdentity should have set this");
   }
   return {
-    actorUserId,
+    actorUserId: req.actorUserId,
     ...(req.ip !== undefined ? { ipAddress: req.ip } : {}),
   };
 }

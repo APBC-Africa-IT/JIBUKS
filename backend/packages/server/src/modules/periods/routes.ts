@@ -4,12 +4,12 @@
 
 import { Router, type Router as RouterType } from "express";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { tenantContext } from "../../middleware/tenantContext.js";
+import { requireRealIdentity } from "../../middleware/authContext.js";
 import * as controllers from "./controllers.js";
 
 export const periodsRouter: RouterType = Router();
 
-periodsRouter.use(tenantContext);
+periodsRouter.use(requireRealIdentity);
 
 periodsRouter.post("/", asyncHandler(controllers.create));
 periodsRouter.get("/", asyncHandler(controllers.list));
