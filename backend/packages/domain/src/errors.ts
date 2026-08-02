@@ -27,7 +27,11 @@ export type DomainErrorCode =
   | "ACCOUNT_NOT_FOUND"
   | "ACCOUNT_INACTIVE"
   | "ACCOUNT_NOT_POSTABLE"
-  | "TENANT_MISMATCH";
+  | "TENANT_MISMATCH"
+  // users
+  | "USER_NOT_FOUND"
+  | "USER_ALREADY_EXISTS"
+  | "USER_INACTIVE";
 
 export interface FieldDetail {
   readonly path: string;

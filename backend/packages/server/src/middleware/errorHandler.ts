@@ -38,6 +38,9 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   ACCOUNT_INACTIVE: 422,
   ACCOUNT_NOT_POSTABLE: 422,
   TENANT_MISMATCH: 403,
+  USER_NOT_FOUND: 404,
+  USER_ALREADY_EXISTS: 409,
+  USER_INACTIVE: 422,
 };
 
 /** Recognisable shape of a node-postgres error, without depending on `pg`
