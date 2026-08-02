@@ -12,6 +12,7 @@
 
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
+import { UnauthorizedError, InsufficientScopeError } from "express-oauth2-jwt-bearer";
 import { DomainError, type DomainErrorCode } from "@jibuks/domain";
 
 const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
@@ -86,6 +87,15 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
       .status(400)
       .type("application/problem+json")
       .json(problemDetails(400, "VALIDATION_ERROR", "The request body failed validation", details));
+    return;
+  }
+
+  if (err instanceof UnauthorizedError || err instanceof InsufficientScopeError) {
+    const status = err.status ?? 401;
+    res
+      .status(status)
+      .type("application/problem+json")
+      .json(problemDetails(status, "UNAUTHORIZED", err.message || "Authentication required"));
     return;
   }
 

@@ -16,6 +16,7 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import { accountsRouter } from "./modules/accounts/routes.js";
 import { periodsRouter } from "./modules/periods/routes.js";
 import { journalsRouter } from "./modules/journals/routes.js";
+import { requireAuth0Token } from "./middleware/auth0.js";
 
 export function createApp(): Express {
   const app = express();
@@ -28,6 +29,12 @@ export function createApp(): Express {
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
+  });
+  // TEMPORARY debug route -- proves Auth0 verification works before we
+  // wire real identity mapping into any module. Remove once userIdentity.ts
+  // exists and real modules use it instead.
+  app.get("/_debug/verified", requireAuth0Token, (req, res) => {
+    res.json({ claims: req.auth?.payload });
   });
 
   // Section 9.1: all endpoints are under /api/v1.
