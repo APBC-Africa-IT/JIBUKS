@@ -4,17 +4,31 @@
 
 import type { Request, Response } from "express";
 import { createUserSchema } from "@jibuks/domain";
+import type { AuditContext } from "@jibuks/db";
 import * as service from "./service.js";
+
+function auditContextFrom(req: Request): AuditContext {
+  if (!req.actorUserId) {
+    throw new Error("actorUserId missing -- requireRealIdentity should have set this");
+  }
+  return {
+    actorUserId: req.actorUserId,
+    ...(req.ip !== undefined ? { ipAddress: req.ip } : {}),
+  };
+}
 
 export async function create(req: Request, res: Response): Promise<void> {
   const body = createUserSchema.parse(req.body);
-  const user = await service.createUser({
-    tenantId: req.tenantId!,
-    externalIdpSubject: body.externalIdpSubject,
-    name: body.name,
-    ...(body.email !== undefined ? { email: body.email } : {}),
-    ...(body.phone !== undefined ? { phone: body.phone } : {}),
-  });
+  const user = await service.createUser(
+    {
+      tenantId: req.tenantId!,
+      externalIdpSubject: body.externalIdpSubject,
+      name: body.name,
+      ...(body.email !== undefined ? { email: body.email } : {}),
+      ...(body.phone !== undefined ? { phone: body.phone } : {}),
+    },
+    auditContextFrom(req),
+  );
   res.status(201).json(user);
 }
 
