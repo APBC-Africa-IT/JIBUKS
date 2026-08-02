@@ -47,23 +47,27 @@ async function makeFixture(): Promise<Fixture> {
     );
   });
 
-  const created = await request(app)
-    .post("/api/v1/accounts")
-    .set("X-Tenant-Id", tenantId)
-    .set("X-Actor-User-Id", userId)
-    .send({ code: "1000", name: "Cash", type: "ASSET" });
+  const cash = await withTenant(tenantId, async (client) => {
+    const result = await client.query(
+      `INSERT INTO accounts (tenant_id, code, name, type) VALUES ($1, '1000', 'Cash', 'ASSET') RETURNING id`,
+      [tenantId],
+    );
+    return result.rows[0]!.id as string;
+  });
 
-  const sales = await request(app)
-    .post("/api/v1/accounts")
-    .set("X-Tenant-Id", tenantId)
-    .set("X-Actor-User-Id", userId)
-    .send({ code: "4000", name: "Sales", type: "INCOME" });
+  const sales = await withTenant(tenantId, async (client) => {
+    const result = await client.query(
+      `INSERT INTO accounts (tenant_id, code, name, type) VALUES ($1, '4000', 'Sales', 'INCOME') RETURNING id`,
+      [tenantId],
+    );
+    return result.rows[0]!.id as string;
+  });
 
   return {
     tenantId,
     userId,
-    cashAccountId: created.body.id as string,
-    salesAccountId: sales.body.id as string,
+    cashAccountId: cash,
+    salesAccountId: sales,
   };
 }
 

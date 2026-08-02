@@ -9,17 +9,15 @@ import { createAccountSchema } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as service from "./service.js";
 
-/**
- * TEMPORARY: reads the actor from a header, standing in for a validated
- * JWT claim until identity/auth exists. Same caveat as tenantContext.ts.
- */
 function auditContextFrom(req: Request): AuditContext {
-  const actorUserId = req.header("X-Actor-User-Id");
-  if (!actorUserId) {
-    throw new Error("X-Actor-User-Id header is required (temporary stand-in until identity/auth is built)");
+  // req.actorUserId is set by requireRealIdentity, from a cryptographically
+  // verified Auth0 token resolved against the users table -- no longer a
+  // client-supplied header.
+  if (!req.actorUserId) {
+    throw new Error("actorUserId missing -- requireRealIdentity should have set this");
   }
   return {
-    actorUserId,
+    actorUserId: req.actorUserId,
     ...(req.ip !== undefined ? { ipAddress: req.ip } : {}),
   };
 }

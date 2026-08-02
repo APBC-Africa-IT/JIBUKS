@@ -5,12 +5,12 @@
 
 import { Router, type Router as RouterType } from "express";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { tenantContext } from "../../middleware/tenantContext.js";
+import { requireRealIdentity } from "../../middleware/authContext.js";
 import * as controllers from "./controllers.js";
 
 export const accountsRouter: RouterType = Router();
 
-accountsRouter.use(tenantContext);
+accountsRouter.use(requireRealIdentity);
 
 accountsRouter.post("/", asyncHandler(controllers.create));
 accountsRouter.get("/", asyncHandler(controllers.list));
