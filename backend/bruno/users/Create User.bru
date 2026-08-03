@@ -1,11 +1,11 @@
 meta {
-  name: Create Period
+  name: Create User
   type: http
   seq: 1
 }
 
 post {
-  url: {{baseUrl}}/api/v1/periods
+  url: {{baseUrl}}/api/v1/users
   body: json
   auth: none
 }
@@ -17,7 +17,8 @@ headers {
 
 body:json {
   {
-    "startDate": "2026-08-01",
-    "endDate": "2026-08-31"
+    "externalIdpSubject": "auth0|{{$randomUUID}}",
+    "name": "Teammate",
+    "email": "teammate@example.com"
   }
 }

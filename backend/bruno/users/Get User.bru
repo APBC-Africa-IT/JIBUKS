@@ -1,11 +1,11 @@
 meta {
-  name: Get Account
+  name: Get User
   type: http
   seq: 3
 }
 
 get {
-  url: {{baseUrl}}/api/v1/accounts/{{accountId}}
+  url: {{baseUrl}}/api/v1/users/{{userId}}
   body: none
   auth: none
 }
@@ -15,5 +15,5 @@ headers {
 }
 
 vars:pre-request {
-  accountId: 50558e6a-15b4-4343-8a22-27c4a9583a0f
+  userId: 2a24f6ee-3a9a-4969-a286-7bb66ac48dd8
 }

@@ -1,0 +1,36 @@
+meta {
+  name: Onboard New Tenant
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/onboarding
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{onboardingAuthToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "tenantName": "New Business",
+    "tenantType": "BUSINESS",
+    "baseCurrency": "KES",
+    "userName": "New Owner"
+  }
+}
+
+docs {
+  This endpoint requires a token from an identity that has NEVER been
+  onboarded before -- {{authToken}} (our regular seeded test identity) is
+  already onboarded and will correctly return 409 USER_ALREADY_EXISTS.
+
+  Set {{onboardingAuthToken}} in the Local environment to a token from a
+  fresh Auth0 M2M application (or a fresh real user) each time you want to
+  test this manually. See the onboarding test M2M app we created for this
+  purpose.
+}
