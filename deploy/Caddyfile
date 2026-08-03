@@ -1,0 +1,3 @@
+dev-jibuksapi.apbcafrica.com {
+	reverse_proxy server:3000
+}
