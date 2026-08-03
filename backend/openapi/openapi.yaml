@@ -26,25 +26,25 @@ info:
 
     **Authentication.** Every request must carry `Authorization: Bearer
     <token>`, where `<token>` is a genuine, Auth0-issued, RS256-signed JWT.
-    Tokens are verified against Auth0's own public keys — this platform
+    Tokens are verified against Auth0's own public keys - this platform
     never sees, stores, or processes a password (constraint C-03). Client
     applications obtain a token via the OAuth 2.0 Authorization Code flow
     (with PKCE) against the Auth0 domain/audience shown under "Servers"
     below, using the real, production-appropriate Auth0 Application
-    registered for that client (mobile/web) — never the developer test
+    registered for that client (mobile/web) - never the developer test
     applications used to build this API.
 
 
     **Two identity levels.** `POST /onboarding` only requires a *genuine*
-    token — it deliberately does not require that identity to already exist
+    token - it deliberately does not require that identity to already exist
     in our own `users` table, since creating that first record is exactly
     what it does. Every other endpoint requires BOTH a genuine token AND an
-    already-provisioned user — an unrecognised identity gets `404
+    already-provisioned user - an unrecognised identity gets `404
     USER_NOT_FOUND` from those endpoints, not `401`.
 
 
     **Tenant scoping.** `X-Tenant-Id` / `X-Actor-User-Id` headers do
-    **not** exist in this API and are not accepted — they were an early
+    **not** exist in this API and are not accepted - they were an early
     development stand-in, fully retired once real identity was wired in.
     Tenant and actor are always derived from the verified token itself, via
     a server-side lookup keyed on the token's `sub` claim. A client can
@@ -61,7 +61,7 @@ servers:
     description: >
       Local development only. Same Auth0 tenant/domain as staging, but
       against the DEV/TEST API's audience (https://apbc.jibuks.com), not
-      the staging one — the two audiences are deliberately different, so a
+      the staging one - the two audiences are deliberately different, so a
       staging token is never accidentally valid against a developer's
       laptop or vice versa.
 

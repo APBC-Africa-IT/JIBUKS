@@ -1,11 +1,11 @@
 meta {
-  name: Create (Real Login)User
+  name: Onboard (Real Login) New Tenant 
   type: http
-  seq: 3
+  seq: 2
 }
 
 post {
-  url: {{baseUrl}}/api/v1/users
+  url: {{baseUrl}}/api/v1/onboarding
   body: json
   auth: oauth2
 }
@@ -36,9 +36,10 @@ auth:oauth2:additional_params:auth_req:queryparams {
 
 body:json {
   {
-    "externalIdpSubject": "auth0|placeholder-teammate-not-a-real-login",
-    "name": "Real Teammate",
-    "email": "teammate2@example.com"
+    "tenantName": "Real Login Test Business",
+    "tenantType": "BUSINESS",
+    "baseCurrency": "KES",
+    "userName": "Real Login Test Owner"
   }
 }
 
