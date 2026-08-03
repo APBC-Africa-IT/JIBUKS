@@ -1,0 +1,22 @@
+name: Deploy to staging
+
+# Triggers on every push to Dev-Branch, per the decision to auto-deploy
+# without a separate staging branch gate.
+on:
+  push:
+    branches:
+      - Dev-Branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd ~/JIBUKS
+            bash deploy/remote-deploy.sh
