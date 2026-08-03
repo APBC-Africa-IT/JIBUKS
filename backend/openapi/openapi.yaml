@@ -152,7 +152,7 @@ paths:
       summary: Provision a new user into the CALLER'S OWN tenant
       description: >
         The tenant is always taken from the caller's own verified identity
-        — never from the request body — so a caller can only ever add users
+        - never from the request body - so a caller can only ever add users
         to their own business, never anyone else's. The audit log records
         the CALLER as the actor of this action, not the new user.
       requestBody:
