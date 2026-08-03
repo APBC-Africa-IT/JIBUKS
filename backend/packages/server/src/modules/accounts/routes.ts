@@ -1,7 +1,9 @@
 /**
- * Accounts routes. Every route requires tenantContext -- there is no
+ 
+ * Accounts routes. Every route requires requireRealIdentity -- there is no
  * accounts endpoint that operates outside a tenant boundary.
  */
+
 
 import { Router, type Router as RouterType } from "express";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
