@@ -1,18 +1,81 @@
 openapi: 3.0.3
+
+# ════════════════════════════════════════════════════════════════════
+# JiBUks API — OpenAPI specification
+#
+# This is the machine-readable source of truth, served live via Swagger UI
+# at /api/v1/docs on both environments below. docs/api-reference.md is the
+# hand-written companion for humans; this file is what drives the
+# interactive "Try it out" experience mobile/web teams actually use.
+#
+# AUTH MODEL (read this before anything else):
+# Every endpoint except health checks requires a real, Auth0-issued bearer
+# token (constraint C-03 — identity is delegated entirely to Auth0, this
+# platform never handles a password). Most endpoints additionally require
+# that token's identity to already be a provisioned user in our own
+# database — /onboarding is the one deliberate exception, since its whole
+# purpose is creating that very first user record.
+# ════════════════════════════════════════════════════════════════════
+
 info:
   title: JiBUks API
   version: "1.0"
   description: >
     JiBUks backend API. All endpoints are under /api/v1 (Section 9.1).
-    Authentication headers shown here (X-Tenant-Id, X-Actor-User-Id) are a
-    temporary development stand-in until OIDC/JWT-based identity (constraint
-    C-03) replaces them -- at that point tenant and actor are derived from
-    the validated token, not client-supplied headers.
+
+
+    **Authentication.** Every request must carry `Authorization: Bearer
+    <token>`, where `<token>` is a genuine, Auth0-issued, RS256-signed JWT.
+    Tokens are verified against Auth0's own public keys — this platform
+    never sees, stores, or processes a password (constraint C-03). Client
+    applications obtain a token via the OAuth 2.0 Authorization Code flow
+    (with PKCE) against the Auth0 domain/audience shown under "Servers"
+    below, using the real, production-appropriate Auth0 Application
+    registered for that client (mobile/web) — never the developer test
+    applications used to build this API.
+
+
+    **Two identity levels.** `POST /onboarding` only requires a *genuine*
+    token — it deliberately does not require that identity to already exist
+    in our own `users` table, since creating that first record is exactly
+    what it does. Every other endpoint requires BOTH a genuine token AND an
+    already-provisioned user — an unrecognised identity gets `404
+    USER_NOT_FOUND` from those endpoints, not `401`.
+
+
+    **Tenant scoping.** `X-Tenant-Id` / `X-Actor-User-Id` headers do
+    **not** exist in this API and are not accepted — they were an early
+    development stand-in, fully retired once real identity was wired in.
+    Tenant and actor are always derived from the verified token itself, via
+    a server-side lookup keyed on the token's `sub` claim. A client can
+    never claim to belong to a tenant that isn't genuinely theirs.
+
 servers:
+  - url: https://dev-jibuksapi.apbcafrica.com/api/v1
+    description: >
+      Staging — hosted, always-on, real HTTPS. Mobile/web teams should
+      build against this, not a developer's laptop. Auth0 domain:
+      dev-1g8zdrubzj5enqii.us.auth0.com, audience:
+      https://api-staging.jibuks.com.
   - url: http://localhost:3000/api/v1
-    description: Local development
+    description: >
+      Local development only. Same Auth0 tenant/domain as staging, but
+      against the DEV/TEST API's audience (https://apbc.jibuks.com), not
+      the staging one — the two audiences are deliberately different, so a
+      staging token is never accidentally valid against a developer's
+      laptop or vice versa.
 
 tags:
+  - name: Onboarding
+    description: >
+      Self-service sign-up. Creates a brand-new tenant and its first user
+      together, atomically (supports FR-MIC-07's minimal-friction merchant
+      onboarding). Requires a genuine Auth0 token, but NOT an
+      already-provisioned platform user.
+  - name: Users
+    description: >
+      Provisioning additional users into an ALREADY-EXISTING tenant. Always
+      requires a fully resolved identity (genuine token + existing user).
   - name: Accounts
     description: Chart of accounts (FR-COA-01 to FR-COA-04)
   - name: Periods
@@ -20,17 +83,154 @@ tags:
   - name: Journals
     description: Double-entry journal posting and reversal (FR-ACC-01, FR-ACC-02)
 
-paths:
-  # ── Accounts ──────────────────────────────────────────────────────
+# Applied to every operation by default (see the per-operation overrides on
+# the two /onboarding operations, which relax this to "token only").
+security:
+  - bearerAuth: []
 
+paths:
+  # ── Onboarding ──────────────────────────────────────────────────────
+  /onboarding:
+    post:
+      tags: [Onboarding]
+      summary: Self-service sign-up — create a tenant and its first user
+      description: >
+        Public relative to the rest of the API in the sense that no
+        pre-existing platform user is required — but a genuine Auth0 token
+        IS required (see the global auth note above). The token's `sub`
+        claim becomes the new user's `external_idp_subject`.
+
+
+        Returns 409 USER_ALREADY_EXISTS if this identity has already been
+        onboarded or provisioned anywhere on the platform — an identity
+        maps to exactly one tenant, permanently.
+      security:
+        # Overrides the global "bearerAuth" requirement -- functionally
+        # identical (still needs a token), documented separately here
+        # because Swagger UI's padlock icon and the description above are
+        # the cue that THIS endpoint does not additionally require an
+        # existing platform user, unlike every other one.
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingRequest'
+            example:
+              tenantName: "Jane's Kiosk"
+              tenantType: "BUSINESS"
+              baseCurrency: "KES"
+              userName: "Jane Wanjiru"
+      responses:
+        '201':
+          description: Tenant and first user created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingResult'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: This identity has already been onboarded elsewhere
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "tag:jibuks,2026:error/USER_ALREADY_EXISTS"
+                title: "USER_ALREADY_EXISTS"
+                status: 409
+                detail: "This identity is already onboarded (user ..., tenant ...)"
+
+  # ── Users ─────────────────────────────────────────────────────────
+  /users:
+    post:
+      tags: [Users]
+      summary: Provision a new user into the CALLER'S OWN tenant
+      description: >
+        The tenant is always taken from the caller's own verified identity
+        — never from the request body — so a caller can only ever add users
+        to their own business, never anyone else's. The audit log records
+        the CALLER as the actor of this action, not the new user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+            example:
+              externalIdpSubject: "auth0|..."
+              name: "New Teammate"
+              email: "teammate@example.com"
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/UserNotFound'
+        '409':
+          description: This identity is already provisioned somewhere
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "tag:jibuks,2026:error/USER_ALREADY_EXISTS"
+                title: "USER_ALREADY_EXISTS"
+                status: 409
+                detail: "A user for this identity already exists (id ...)"
+    get:
+      tags: [Users]
+      summary: List users in the caller's tenant
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Get a single user
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: The user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/UserNotFound'
+
+  # ── Accounts ──────────────────────────────────────────────────────
   /accounts:
     post:
       tags: [Accounts]
       summary: Create an account
-      description: Creates a new chart-of-accounts entry for the requesting tenant.
-      parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/ActorUserIdHeader'
+      description: Creates a new chart-of-accounts entry for the CALLER'S tenant.
       requestBody:
         required: true
         content:
@@ -50,14 +250,14 @@ paths:
                 $ref: '#/components/schemas/Account'
         '400':
           $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/DuplicateValue'
     get:
       tags: [Accounts]
       summary: List accounts
-      description: Returns every account belonging to the requesting tenant, ordered by code.
-      parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
+      description: Returns every account belonging to the caller's tenant, ordered by code.
       responses:
         '200':
           description: List of accounts
@@ -70,13 +270,14 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Account'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /accounts/{id}:
     get:
       tags: [Accounts]
       summary: Get a single account
       parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/AccountIdPath'
       responses:
         '200':
@@ -85,6 +286,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Account'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -94,11 +297,9 @@ paths:
       summary: Deactivate an account
       description: >
         Marks the account inactive. Per FR-COA-03, accounts that have ever
-        been posted to cannot be deleted -- only deactivated. The row and
+        been posted to cannot be deleted — only deactivated. The row and
         its full history are retained.
       parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/ActorUserIdHeader'
         - $ref: '#/components/parameters/AccountIdPath'
       responses:
         '200':
@@ -107,6 +308,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Account'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -116,8 +319,6 @@ paths:
       summary: Reactivate an account
       description: Reverses a prior deactivation, restoring the account to active use.
       parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/ActorUserIdHeader'
         - $ref: '#/components/parameters/AccountIdPath'
       responses:
         '200':
@@ -126,18 +327,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Account'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
 
   # ── Periods ───────────────────────────────────────────────────────
-
   /periods:
     post:
       tags: [Periods]
       summary: Create an accounting period
-      parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/ActorUserIdHeader'
       requestBody:
         required: true
         content:
@@ -156,12 +355,12 @@ paths:
                 $ref: '#/components/schemas/Period'
         '400':
           $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     get:
       tags: [Periods]
       summary: List accounting periods
-      description: Returns every period for the requesting tenant, ordered by start_date.
-      parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
+      description: Returns every period for the caller's tenant, ordered by start_date.
       responses:
         '200':
           description: List of periods
@@ -174,13 +373,14 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Period'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /periods/{id}:
     get:
       tags: [Periods]
       summary: Get a single period
       parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/PeriodIdPath'
       responses:
         '200':
@@ -189,6 +389,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Period'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -198,8 +400,6 @@ paths:
       summary: Close a period
       description: Only an OPEN period can be closed. FR-ACC-03.
       parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/ActorUserIdHeader'
         - $ref: '#/components/parameters/PeriodIdPath'
       responses:
         '200':
@@ -208,6 +408,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Period'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -219,11 +421,9 @@ paths:
       summary: Reopen a period
       description: >
         Only a CLOSED or LOCKED period can be reopened. FR-ACC-03 requires
-        this be restricted to a named permission -- not yet enforced, since
-        RBAC does not exist yet.
+        this be restricted to a named permission — not yet enforced, since
+        RBAC does not exist yet. Treat as provisional.
       parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/ActorUserIdHeader'
         - $ref: '#/components/parameters/PeriodIdPath'
       responses:
         '200':
@@ -232,13 +432,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Period'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/PeriodLocked'
 
-  # ── Journals ────────────────────────────────────────────────────────
-
+  # ── Journals ──────────────────────────────────────────────────────
   /journals:
     post:
       tags: [Journals]
@@ -246,11 +447,8 @@ paths:
       description: >
         Enforces double-entry bookkeeping: the sum of debitMinor across all
         lines must equal the sum of creditMinor, in the journal's currency
-        (FR-ACC-01). Posted immediately -- there is no draft/approval
+        (FR-ACC-01). Posted immediately — there is no draft/approval
         workflow exposed over the API currently.
-      parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/ActorUserIdHeader'
       requestBody:
         required: true
         content:
@@ -279,6 +477,8 @@ paths:
                 $ref: '#/components/schemas/Journal'
         '400':
           $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           description: Referenced account not found, or no period covers the given date
           content:
@@ -299,9 +499,7 @@ paths:
     get:
       tags: [Journals]
       summary: List journals
-      description: Returns every journal for the requesting tenant, most recent first. Lines are NOT included -- fetch a single journal for its lines.
-      parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
+      description: Returns every journal for the caller's tenant, most recent first. Lines are NOT included — fetch a single journal for its lines.
       responses:
         '200':
           description: List of journals (without lines)
@@ -314,13 +512,14 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/JournalSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /journals/{id}:
     get:
       tags: [Journals]
       summary: Get a single journal, including its lines
       parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/JournalIdPath'
       responses:
         '200':
@@ -329,6 +528,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Journal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -339,10 +540,10 @@ paths:
       description: >
         The only correction mechanism (FR-ACC-02). Creates a NEW journal
         with every line's debit and credit swapped, dated today, referencing
-        the original. The original journal is left completely unchanged.
+        the original. The original journal is left completely unchanged —
+        there is no field on it that gets updated; the link is one-directional
+        (the reversal points at the original, never the reverse).
       parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/ActorUserIdHeader'
         - $ref: '#/components/parameters/JournalIdPath'
       requestBody:
         required: false
@@ -361,6 +562,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Journal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
@@ -376,30 +579,26 @@ paths:
                 detail: "Journal 18230383-... was already reversed by 80430089-..."
 
 # ════════════════════════════════════════════════════════════════════
-# Components — reusable parameters, schemas, and responses
+# Components — reusable security schemes, parameters, schemas, responses
 # ════════════════════════════════════════════════════════════════════
-
 components:
-  # ── Shared parameters (headers & path) ────────────────────────────
-  parameters:
-    TenantIdHeader:
-      name: X-Tenant-Id
-      in: header
-      required: true
+  # ── Security ────────────────────────────────────────────────────
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
       description: >
-        TEMPORARY development stand-in for tenant identity. Will be replaced
-        by a claim inside a validated JWT once identity/auth is built.
-      schema:
-        type: string
-        format: uuid
-    ActorUserIdHeader:
-      name: X-Actor-User-Id
-      in: header
-      required: true
-      description: TEMPORARY stand-in for the authenticated actor, used for audit logging.
-      schema:
-        type: string
-        format: uuid
+        A genuine, Auth0-issued, RS256-signed access token. Obtain one via
+        the OAuth 2.0 Authorization Code flow (+ PKCE) against the relevant
+        environment's Auth0 domain/audience (see the description under
+        "Servers" at the top of this document). Client-credentials tokens
+        are for automated testing only — real users always authenticate via
+        a hosted Auth0 login screen, never by typing a password into this
+        API directly (this platform never sees one).
+
+  # ── Path parameters ────────────────────────────────────────────────
+  parameters:
     AccountIdPath:
       name: id
       in: path
@@ -421,15 +620,113 @@ components:
       schema:
         type: string
         format: uuid
+    UserIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
 
-  # ── Schemas ───────────────────────────────────────────────────────
+  # ── Schemas ─────────────────────────────────────────────────────
   schemas:
-    # -- Account-related schemas --
+    # -- Onboarding --
+    OnboardingRequest:
+      type: object
+      required: [tenantName, tenantType, baseCurrency, userName]
+      properties:
+        tenantName:
+          type: string
+          maxLength: 200
+          example: "Jane's Kiosk"
+        tenantType:
+          type: string
+          enum: [BUSINESS, NGO, HOUSEHOLD]
+        baseCurrency:
+          type: string
+          example: "KES"
+        userName:
+          type: string
+          maxLength: 200
+          example: "Jane Wanjiru"
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+    OnboardingResult:
+      type: object
+      properties:
+        tenant:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            type: { type: string, enum: [BUSINESS, NGO, HOUSEHOLD] }
+            base_currency: { type: string }
+            accounting_framework: { type: string }
+            plan_tier: { type: string }
+            status: { type: string }
+            created_at: { type: string, format: date-time }
+        user:
+          $ref: '#/components/schemas/User'
 
+    # -- Users --
+    CreateUserRequest:
+      type: object
+      required: [externalIdpSubject, name]
+      properties:
+        externalIdpSubject:
+          type: string
+          description: >
+            The `sub` claim of the new user's OWN future Auth0 token (i.e.
+            their Auth0 identity), NOT the caller's. This is how a real
+            login by that person later resolves to this row.
+          example: "auth0|64f2a1b3c9d..."
+        name:
+          type: string
+          maxLength: 200
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null only for a Super Admin, who belongs to no tenant.
+        external_idp_subject:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED]
+        mfa_enabled:
+          type: boolean
+        is_super_admin:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    # -- Accounts --
     AccountType:
       type: string
       enum: [ASSET, LIABILITY, EQUITY, INCOME, EXPENSE]
-
     CreateAccountRequest:
       type: object
       required: [code, name, type]
@@ -458,114 +755,62 @@ components:
           items:
             type: string
           default: []
-
     Account:
       type: object
       properties:
-        id:
-          type: string
-          format: uuid
-        tenant_id:
-          type: string
-          format: uuid
-        parent_account_id:
-          type: string
-          format: uuid
-          nullable: true
-        code:
-          type: string
-        name:
-          type: string
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        parent_account_id: { type: string, format: uuid, nullable: true }
+        code: { type: string }
+        name: { type: string }
         type:
           $ref: '#/components/schemas/AccountType'
-        currency:
-          type: string
-          nullable: true
-        is_active:
-          type: boolean
-        is_postable:
-          type: boolean
+        currency: { type: string, nullable: true }
+        is_active: { type: boolean }
+        is_postable: { type: boolean }
         tags:
           type: array
           items:
             type: string
-        created_at:
-          type: string
-          format: date-time
+        created_at: { type: string, format: date-time }
 
-    # -- Period-related schemas --
-
+    # -- Periods --
     CreatePeriodRequest:
       type: object
       required: [startDate, endDate]
       properties:
-        startDate:
-          type: string
-          format: date
-          example: "2026-08-01"
-        endDate:
-          type: string
-          format: date
-          example: "2026-08-31"
-
+        startDate: { type: string, format: date, example: "2026-08-01" }
+        endDate: { type: string, format: date, example: "2026-08-31" }
     Period:
       type: object
       properties:
-        id:
-          type: string
-          format: uuid
-        tenant_id:
-          type: string
-          format: uuid
-        start_date:
-          type: string
-          format: date
-        end_date:
-          type: string
-          format: date
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
         status:
           type: string
           enum: [OPEN, CLOSED, LOCKED]
-        closed_by:
-          type: string
-          format: uuid
-          nullable: true
-        closed_at:
-          type: string
-          format: date-time
-          nullable: true
+        closed_by: { type: string, format: uuid, nullable: true }
+        closed_at: { type: string, format: date-time, nullable: true }
 
-    # ── Journal-related schemas ─────────────────────────────────────
-
+    # -- Journals --
     JournalSource:
       type: string
       enum: [MANUAL, CASHBOOK, PAYMENT, IMPORT, COMMUNITY, OPENING, REVERSAL]
-
     JournalStatus:
       type: string
       enum: [DRAFT, PENDING_APPROVAL, POSTED]
-
     CreateJournalLine:
       type: object
       required: [accountId, debitMinor, creditMinor]
       properties:
-        accountId:
-          type: string
-          format: uuid
-        debitMinor:
-          type: integer
-          minimum: 0
-        creditMinor:
-          type: integer
-          minimum: 0
-        narrative:
-          type: string
-        projectId:
-          type: string
-          format: uuid
-        department:
-          type: string
-
+        accountId: { type: string, format: uuid }
+        debitMinor: { type: integer, minimum: 0 }
+        creditMinor: { type: integer, minimum: 0 }
+        narrative: { type: string }
+        projectId: { type: string, format: uuid }
+        department: { type: string }
     CreateJournalRequest:
       type: object
       required: [clientUuid, date, currency, description, lines]
@@ -597,91 +842,46 @@ components:
           minItems: 2
           items:
             $ref: '#/components/schemas/CreateJournalLine'
-
-    # Response shape for a single journal line (bigint columns returned as strings).
+    # Individual line as RETURNED (bigint columns come back as strings).
     JournalLine:
       type: object
       properties:
-        id:
-          type: string
-          format: uuid
-        tenant_id:
-          type: string
-          format: uuid
-        journal_id:
-          type: string
-          format: uuid
-        account_id:
-          type: string
-          format: uuid
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        journal_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
         debit_minor:
           type: string
-          description: 64-bit value, returned as a string. Parse explicitly on the client.
+          description: 64-bit value, returned as a STRING. Parse explicitly on the client — do not assume a native number.
           example: "100000"
         credit_minor:
           type: string
           example: "0"
-        narrative:
-          type: string
-          nullable: true
-        project_id:
-          type: string
-          format: uuid
-          nullable: true
-        department:
-          type: string
-          nullable: true
-
-    # Journal header without lines -- used by the list endpoint.
+        narrative: { type: string, nullable: true }
+        project_id: { type: string, format: uuid, nullable: true }
+        department: { type: string, nullable: true }
+    # Journal header WITHOUT lines -- what the list endpoint returns.
     JournalSummary:
       type: object
       properties:
-        id:
-          type: string
-          format: uuid
-        tenant_id:
-          type: string
-          format: uuid
-        branch_id:
-          type: string
-          format: uuid
-          nullable: true
-        client_uuid:
-          type: string
-          format: uuid
-        period_id:
-          type: string
-          format: uuid
-        date:
-          type: string
-          format: date
-        currency:
-          type: string
-        description:
-          type: string
-        reference:
-          type: string
-          nullable: true
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid, nullable: true }
+        client_uuid: { type: string, format: uuid }
+        period_id: { type: string, format: uuid }
+        date: { type: string, format: date }
+        currency: { type: string }
+        description: { type: string }
+        reference: { type: string, nullable: true }
         source:
           $ref: '#/components/schemas/JournalSource'
         status:
           $ref: '#/components/schemas/JournalStatus'
-        reversal_of_journal_id:
-          type: string
-          format: uuid
-          nullable: true
-        created_by:
-          type: string
-          format: uuid
-        approved_by:
-          type: string
-          format: uuid
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-
-    # Full journal = summary + lines (used by GET /journals/{id} and POST responses).
+        reversal_of_journal_id: { type: string, format: uuid, nullable: true }
+        created_by: { type: string, format: uuid }
+        approved_by: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+    # Full journal = summary + lines (GET /journals/{id}, and every POST response).
     Journal:
       allOf:
         - $ref: '#/components/schemas/JournalSummary'
@@ -692,32 +892,36 @@ components:
               items:
                 $ref: '#/components/schemas/JournalLine'
 
-    # -- Shared error schema (RFC 7807) --
-
+    # -- Shared error shape (RFC 7807, Section 9.1) --
     ProblemDetails:
       type: object
-      description: RFC 7807 problem detail (Section 9.1).
+      description: RFC 7807 problem detail.
       properties:
-        type:
-          type: string
-        title:
-          type: string
-        status:
-          type: integer
-        detail:
-          type: string
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
         errors:
           type: array
           items:
             type: object
             properties:
-              path:
-                type: string
-              message:
-                type: string
+              path: { type: string }
+              message: { type: string }
 
   # ── Reusable responses ────────────────────────────────────────────
   responses:
+    Unauthorized:
+      description: Missing, malformed, expired, or otherwise invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: "tag:jibuks,2026:error/UNAUTHORIZED"
+            title: "UNAUTHORIZED"
+            status: 401
+            detail: "Unauthorized"
     ValidationError:
       description: Request body failed validation
       content:
@@ -744,7 +948,7 @@ components:
             status: 409
             detail: "A record with this value already exists in accounts"
     NotFound:
-      description: The requested resource does not exist
+      description: The requested resource does not exist (or belongs to a different tenant — the two are indistinguishable by design)
       content:
         application/json:
           schema:
@@ -754,6 +958,17 @@ components:
             title: "ACCOUNT_NOT_FOUND"
             status: 404
             detail: "Account ... not found"
+    UserNotFound:
+      description: The requested user does not exist (or belongs to a different tenant)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: "tag:jibuks,2026:error/USER_NOT_FOUND"
+            title: "USER_NOT_FOUND"
+            status: 404
+            detail: "User ... not found"
     PeriodLocked:
       description: The period is not in a state that allows this action
       content:
