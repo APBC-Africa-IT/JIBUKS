@@ -18,6 +18,13 @@ GRANT CONNECT ON DATABASE jibuks_prod TO jibuks_auth_resolver;
 CREATE ROLE jibuks_migrator WITH LOGIN PASSWORD '__JIBUKS_MIGRATOR_PASSWORD__' BYPASSRLS CREATEDB CREATEROLE;
 GRANT ALL PRIVILEGES ON DATABASE jibuks_prod TO jibuks_migrator;
 
+-- Postgres 15+ no longer grants CREATE on the public schema to all roles by
+-- default. jibuks_migrator needs it to run migrations; the app roles need
+-- USAGE to reference objects within it.
+GRANT CREATE, USAGE ON SCHEMA public TO jibuks_migrator;
+GRANT USAGE ON SCHEMA public TO jibuks_app;
+GRANT USAGE ON SCHEMA public TO jibuks_auth_resolver;
+
 -- Ensures any table jibuks_migrator creates automatically grants jibuks_app
 -- the privileges it needs -- the same fix we made locally after discovering
 -- migrations run by a different role than the app didn't auto-grant access.
