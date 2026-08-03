@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+coverage
+.git
+.vscode
+bruno
+docs
+*.md

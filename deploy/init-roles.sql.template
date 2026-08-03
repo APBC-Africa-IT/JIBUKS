@@ -1,0 +1,28 @@
+-- Production role setup, run automatically by Postgres on first container
+-- startup (mounted into /docker-entrypoint-initdb.d/). Mirrors the local
+-- dev role split exactly: jibuks_app (RLS-bound, used by the running
+-- server), jibuks_auth_resolver (BYPASSRLS, SELECT-only on users, used for
+-- the one legitimate cross-tenant identity lookup), and jibuks_migrator
+-- (full DDL rights, used only to run migrations -- never by the app itself).
+--
+-- This file is a TEMPLATE. Real values are substituted into a generated
+-- deploy/init-roles.sql at deploy time (see the deploy steps) -- this
+-- template itself is safe to commit, since it contains no real secrets.
+
+CREATE ROLE jibuks_app WITH LOGIN PASSWORD '__JIBUKS_APP_PASSWORD__';
+GRANT ALL PRIVILEGES ON DATABASE jibuks_prod TO jibuks_app;
+
+CREATE ROLE jibuks_auth_resolver WITH LOGIN PASSWORD '__JIBUKS_AUTH_RESOLVER_PASSWORD__' BYPASSRLS;
+GRANT CONNECT ON DATABASE jibuks_prod TO jibuks_auth_resolver;
+
+CREATE ROLE jibuks_migrator WITH LOGIN PASSWORD '__JIBUKS_MIGRATOR_PASSWORD__' BYPASSRLS CREATEDB CREATEROLE;
+GRANT ALL PRIVILEGES ON DATABASE jibuks_prod TO jibuks_migrator;
+
+-- Ensures any table jibuks_migrator creates automatically grants jibuks_app
+-- the privileges it needs -- the same fix we made locally after discovering
+-- migrations run by a different role than the app didn't auto-grant access.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO jibuks_app;
+
+-- The column-level grant for jibuks_auth_resolver on `users` is applied
+-- separately, AFTER migrations have run and the table actually exists --
+-- see the deploy steps, step "grant auth-resolver access".
