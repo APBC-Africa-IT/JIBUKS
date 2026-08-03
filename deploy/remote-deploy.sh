@@ -23,7 +23,7 @@ echo "==> Running migrations (visible step -- fails loudly on error)"
 docker compose run --rm migrate
 
 echo "==> Starting/updating the server container"
-docker compose up -d postgres server
+docker compose up -d postgres server caddy
 
 echo "==> Pruning old, now-unused images"
 docker image prune -f

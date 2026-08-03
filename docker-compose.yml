@@ -31,10 +31,22 @@ services:
     env_file:
       - .env.production
     ports:
-      # Exposed directly to the internet for now -- no reverse proxy yet.
-      # Mobile/web teams hit http://SERVER_IP:3000/api/v1/... directly.
-      # Revisit once a domain is ready, to add TLS via a reverse proxy.
-      - "3000:3000"
+      # Caddy is the only thing that reaches this from outside the
+      # container network now that a domain + TLS are configured.
+      - "127.0.0.1:3000:3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
 
   migrate:
     build:
@@ -59,3 +71,5 @@ services:
 
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:
