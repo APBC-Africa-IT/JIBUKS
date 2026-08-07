@@ -74,3 +74,24 @@ export async function resolveIdentity(externalIdpSubject: string): Promise<UserR
   }
   return user;
 }
+
+/**
+ * Used ONLY by the invites flow (acceptInvite) -- creates a user in a
+ * tenant determined by a validated invite, not by an authenticated
+ * caller's own tenant. Self-attributed for audit purposes, same reasoning
+ * as onboarding: at the moment of creation, the new user is the only
+ * party who could plausibly be the actor.
+ */
+export async function createUserFromInvite(input: {
+  tenantId: string;
+  externalIdpSubject: string;
+  name: string;
+  email?: string;
+}): Promise<UserRow> {
+  return repository.createUserSelfAttributed({
+    tenantId: input.tenantId,
+    externalIdpSubject: input.externalIdpSubject,
+    name: input.name,
+    ...(input.email !== undefined ? { email: input.email } : {}),
+  });
+}
