@@ -23,18 +23,22 @@ afterAll(async () => {
 });
 
 describe("POST /api/v1/invites", () => {
-  it("creates an invite and never returns token_hash", async () => {
-    const response = await request(app)
-      .post("/api/v1/invites")
-      .set("Authorization", await authHeader())
-      .send({ email: "apbcafricait@gmail.com", name: "Test Invitee" });
+  it(
+    "creates an invite and never returns token_hash",
+    async () => {
+      const response = await request(app)
+        .post("/api/v1/invites")
+        .set("Authorization", await authHeader())
+        .send({ email: "apbcafricait@gmail.com", name: "Test Invitee" });
 
-    expect(response.status).toBe(201);
-    expect(response.body.tenant_id).toBe(TEST_TENANT_ID);
-    expect(response.body.invited_by).toBe(TEST_USER_ID);
-    expect(response.body.status).toBe("PENDING");
-    expect(response.body).not.toHaveProperty("token_hash");
-  });
+      expect(response.status).toBe(201);
+      expect(response.body.tenant_id).toBe(TEST_TENANT_ID);
+      expect(response.body.invited_by).toBe(TEST_USER_ID);
+      expect(response.body.status).toBe("PENDING");
+      expect(response.body).not.toHaveProperty("token_hash");
+    },
+    15000, // real Resend API call -- give it real headroom
+  );
 
   it("rejects a request with no Authorization header", async () => {
     const response = await request(app)
