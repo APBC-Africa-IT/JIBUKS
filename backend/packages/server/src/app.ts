@@ -13,6 +13,7 @@ import YAML from "yamljs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { invitesRouter } from "./modules/invites/routes.js";
 import { onboardingRouter } from "./modules/onboarding/routes.js";
 import { usersRouter } from "./modules/users/routes.js";
 import { accountsRouter } from "./modules/accounts/routes.js";
@@ -41,6 +42,7 @@ export function createApp(): Express {
 
   // Section 9.1: all endpoints are under /api/v1.
   app.use("/api/v1/onboarding", onboardingRouter);
+  app.use("/api/v1/invites", invitesRouter);
   app.use("/api/v1/users", usersRouter);
   app.use("/api/v1/accounts", accountsRouter);
   app.use("/api/v1/periods", periodsRouter);

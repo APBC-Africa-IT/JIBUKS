@@ -32,7 +32,7 @@ export interface CreateInviteRequest {
   readonly name?: string;
 }
 
-export async function createInvite(request: CreateInviteRequest, audit: AuditContext): Promise<InviteRow> {
+export async function createInvite(request: CreateInviteRequest, audit: AuditContext): Promise<Omit<InviteRow, "token_hash">> {
   const token = generateToken();
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -62,11 +62,13 @@ export async function createInvite(request: CreateInviteRequest, audit: AuditCon
     acceptUrl: acceptUrl(token),
   });
 
-  return invite;
+  const { token_hash, ...safeInvite } = invite;
+  return safeInvite;
 }
 
-export async function listInvites(tenantId: string): Promise<InviteRow[]> {
-  return repository.listInvites(tenantId);
+export async function listInvites(tenantId: string): Promise<Omit<InviteRow, "token_hash">[]> {
+  const invites = await repository.listInvites(tenantId);
+  return invites.map(({ token_hash, ...safeInvite }) => safeInvite);
 }
 
 export interface InvitePreview {
