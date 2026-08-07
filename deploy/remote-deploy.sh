@@ -24,7 +24,11 @@ git checkout Dev-Branch
 git reset --hard origin/Dev-Branch
 
 echo "==> Building images (--no-cache: never trust a cached layer for this)"
-docker compose build --no-cache
+# Explicit service names, not a bare "build" -- migrate has profiles:
+# [tools], which excludes it from Compose's default build set just like it
+# excludes it from `up`. A bare `docker compose build` silently skips it,
+# which is exactly how a stale migrate image slipped through once already.
+docker compose build --no-cache server migrate
 
 echo "==> Verifying the built image actually contains current migrations"
 EXPECTED_COUNT=$(ls backend/migrations/ | wc -l | tr -d ' ')
