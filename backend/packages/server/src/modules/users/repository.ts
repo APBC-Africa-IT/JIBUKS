@@ -87,3 +87,33 @@ export async function findUserByExternalIdpSubject(externalIdpSubject: string): 
     return result.rows[0] ?? null;
   });
 }
+
+/**
+ * Creates a user who is the actor of their own creation -- used only where
+ * no other authenticated party exists yet (invite acceptance, mirroring
+ * onboarding's same reasoning). Distinct from createUser(), which always
+ * requires and attributes to a real, separate, authenticated caller.
+ */
+export async function createUserSelfAttributed(input: CreateUserInput): Promise<UserRow> {
+  return withTenant(input.tenantId, async (client) => {
+    const id = randomUUID();
+    const result = await client.query<UserRow>(
+      `INSERT INTO users (id, tenant_id, external_idp_subject, name, email, phone, is_super_admin)
+       VALUES ($1, $2, $3, $4, $5, $6, false)
+       RETURNING *`,
+      [id, input.tenantId, input.externalIdpSubject, input.name, input.email ?? null, input.phone ?? null],
+    );
+    const user = result.rows[0]!;
+
+    await recordAuditLog(client, {
+      tenantId: input.tenantId,
+      action: "CREATE",
+      entityType: "user",
+      entityId: user.id,
+      afterState: user,
+      context: { actorUserId: user.id },
+    });
+
+    return user;
+  });
+}

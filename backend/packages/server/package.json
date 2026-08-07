@@ -15,6 +15,7 @@
     "@jibuks/ledger": "workspace:*",
     "express": "^4.21.1",
     "express-oauth2-jwt-bearer": "^1.9.1",
+    "resend": "^6.18.1",
     "swagger-ui-express": "^5.0.1",
     "yamljs": "^0.3.0",
     "zod": "^3.23.8"

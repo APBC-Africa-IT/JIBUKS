@@ -2,12 +2,23 @@
 
 This document is the hand-written, human-readable companion to `openapi/openapi.yaml` (the machine-readable source of truth, served live at `/api/v1/docs`). Mobile and web teams should use this file to understand and consume backend endpoints.
 
+**Environments:**
+
+| Environment | Base URL |
+|---|---|
+| **Staging** (build against this) | `https://dev-jibuksapi.apbcafrica.com/api/v1` |
+| Local development | `http://localhost:3000/api/v1` |
+
+Live, interactive documentation (Swagger UI, "Try it out" against real data): `https://dev-jibuksapi.apbcafrica.com/api/v1/docs`
+
 **Conventions used throughout this document:**
 - All endpoints are under `/api/v1` (SRS Section 9.1).
-- `X-Tenant-Id` and `X-Actor-User-Id` headers are a **temporary development stand-in** for real authentication. Once identity/auth (OIDC/JWT) is live, these values will be derived automatically from your access token — this document will be updated at that point, and consuming clients will stop sending these headers manually.
+- **Every request requires** `Authorization: Bearer <token>`, where `<token>` is a genuine, Auth0-issued, RS256-signed JWT. This platform never sees, stores, or processes a password — identity is delegated entirely to Auth0 (constraint C-03). See [§7 Authentication](#7-authentication) below for the full flow.
+- There is **no** `X-Tenant-Id` / `X-Actor-User-Id` header support. Tenant and actor are always derived from the verified token itself — a client can never claim to belong to a tenant that isn't genuinely theirs.
 - Error responses follow [RFC 7807](https://tools.ietf.org/html/rfc7807) problem-detail format: `{ type, title, status, detail, errors? }`.
-- Money fields are always integer minor units (e.g. cents) with a separate currency code — never decimals.
+- Money fields are always integer minor units (e.g. cents) with a separate currency code — never decimals. **Example:** a sale of 1000.50 KES is sent/received as `debitMinor: 100050` (1000.50 × 100, since KES has 2 decimal places). Not every currency has 2 decimal places — UGX and RWF have 0, so `1500` UGX is *already* the full minor-unit value, not something to further multiply. Always convert using the specific currency's decimal count, never a hardcoded ×100.
 - Date fields (e.g. `start_date`, `date`) are always plain calendar dates (`YYYY-MM-DD`), with no time component, per Section 9.1.
+- `debit_minor` / `credit_minor` on journal lines are returned as **strings**, not numbers (e.g. `"100000"`) — these are 64-bit values that JavaScript's number type cannot always safely represent. Parse explicitly (`parseInt(x, 10)`) rather than assuming a native number.
 
 **Maintenance rule:** this file is updated as part of finishing a module, not as separate catch-up work. When a module's endpoints are built, tested, and working, its section is added here before moving to the next module.
 
@@ -15,25 +26,236 @@ This document is the hand-written, human-readable companion to `openapi/openapi.
 
 ## Table of Contents
 
-- [6.1 Accounts](#61-accounts)
-- [6.2 Periods](#62-periods)
-- [6.3 Journals](#63-journals)
+- [7. Authentication](#7-authentication)
+- [7.1 Onboarding](#71-onboarding)
+- [7.2 Users](#72-users)
+- [7.3 Accounts](#73-accounts)
+- [7.4 Periods](#74-periods)
+- [7.5 Journals](#75-journals)
 
 ---
 
-## 6.1 Accounts
+## 7. Authentication
 
-Base path: `/api/v1/accounts` | All endpoints require `X-Tenant-Id`
+Every endpoint in this API — with no exceptions — requires a genuine `Authorization: Bearer <token>` header. There are two distinct identity levels, and getting this distinction right matters:
 
-> ⚠️ See the temporary auth note at the top of this document — applies to every endpoint below.
+| | Needs a genuine token | Needs an already-provisioned platform user |
+|---|---|---|
+| `POST /onboarding` | ✅ Yes | ❌ No — this is what creates that user |
+| Everything else | ✅ Yes | ✅ Yes |
+
+An **unauthenticated** request (missing/invalid/expired token) gets `401 UNAUTHORIZED` from every endpoint. A request with a genuine token, but whose identity has never onboarded, gets `404 USER_NOT_FOUND` from any endpoint other than `/onboarding`.
+
+**How a client actually gets a token:** the OAuth 2.0 Authorization Code flow, with PKCE, against Auth0 — this is the standard secure pattern for mobile/web apps, distinct from the client-credentials flow used only for automated backend testing. The Auth0 login screen (email/password signup, or a social connection if enabled) is entirely Auth0's own hosted UI — this platform never renders a login form or touches a password.
+
+| Environment | Auth0 Domain | Audience |
+|---|---|---|
+| Staging | `dev-1g8zdrubzj5enqii.us.auth0.com` | `https://api-staging.jibuks.com` |
+| Local dev | `dev-1g8zdrubzj5enqii.us.auth0.com` | `https://apbc.jibuks.com` |
+
+> ⚠️ Each real client app (the React Native app, a future web app) needs its own dedicated Auth0 **Native** or **Single Page Application** registration, with its own Client ID and its own callback URL — never reuse the developer test/M2M applications used to build this API.
+
+**Token expiry and refresh:** access tokens are short-lived; implement standard refresh-token handling via whichever Auth0 SDK the client uses, so users aren't forced to re-authenticate constantly. Logging out is entirely client-side (just discard the stored token) — there is no server-side session to end, since every request is independently verified from the token alone. Logging back in later works automatically and indefinitely: the token's `sub` claim never changes for a given person, so the same Auth0 account always resolves to the same platform user and tenant, no matter how many times they log out and back in.
+
+---
+
+## 7.1 Onboarding
+
+Base path: `/api/v1/onboarding`
+
+Self-service sign-up: creates a **brand-new tenant and its first user, together, atomically**. This is the app's very first screen for someone who has never used JiBUks before — directly supporting FR-MIC-07's minimal-friction merchant onboarding.
+
+⚠️ **Requires:** a genuine Auth0 token. Does **not** require an already-provisioned platform user — that's precisely what this endpoint creates.
+
+---
+
+### `POST /onboarding`
+
+**Request:** `POST /api/v1/onboarding`
+`Content-Type: application/json`
+
+**Request Body:**
+```json
+{
+  "tenantName": "Jane's Kiosk",
+  "tenantType": "BUSINESS",
+  "baseCurrency": "KES",
+  "userName": "Jane Wanjiru",
+  "email": "jane@example.com"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `tenantName` | string | ✅ Yes | The business/household/NGO name. Max 200 chars. |
+| `tenantType` | string | ✅ Yes | One of `BUSINESS`, `NGO`, `HOUSEHOLD`. |
+| `baseCurrency` | string | ✅ Yes | ISO 4217 code (e.g. `KES`). |
+| `userName` | string | ✅ Yes | Display name of the first user (the person onboarding). Max 200 chars. |
+| `email` | string | No | Contact email. Not verified against the token — see note below. |
+| `phone` | string | No | Contact phone. |
+
+The new user's `external_idp_subject` is taken directly from the verified token's `sub` claim — not from anything in the request body, and not something the client can override.
+
+**Success Response:** `201 Created`
+```json
+{
+  "tenant": {
+    "id": "75d11c00-1694-4461-8048-a49d305b9ada",
+    "name": "Jane's Kiosk",
+    "type": "BUSINESS",
+    "base_currency": "KES",
+    "accounting_framework": "GAAP",
+    "plan_tier": "STARTER",
+    "status": "ACTIVE",
+    "created_at": "2026-08-03T00:55:32.051Z"
+  },
+  "user": {
+    "id": "734d2f93-98e0-4fc8-b4e9-8f622777bc63",
+    "tenant_id": "75d11c00-1694-4461-8048-a49d305b9ada",
+    "external_idp_subject": "auth0|6a6fe4e1275c708a0cd882df",
+    "name": "Jane Wanjiru",
+    "email": null,
+    "phone": null,
+    "status": "ACTIVE",
+    "mfa_enabled": false,
+    "is_super_admin": false,
+    "created_at": "2026-08-03T00:55:32.051Z"
+  }
+}
+```
+
+**Error Response:** `401 Unauthorized` — missing/invalid token. See [§7 Authentication](#7-authentication).
+
+**Error Response:** `400 Bad Request` — request body failed validation. Same `VALIDATION_ERROR` shape as every other module.
+
+**Error Response:** `409 Conflict` — this identity has already onboarded before:
+```json
+{
+  "type": "tag:jibuks,2026:error/USER_ALREADY_EXISTS",
+  "title": "USER_ALREADY_EXISTS",
+  "status": 409,
+  "detail": "This identity is already onboarded (user 734d2f93-..., tenant 75d11c00-...)"
+}
+```
+
+**A client should treat `409` from this endpoint as expected, normal behavior for a returning user** — not an error state to show — and route them straight into the app instead of an onboarding failure screen. There is no separate "log in" endpoint to call in that case; any authenticated request (e.g. `GET /users/{id}`) will resolve to their existing account correctly.
+
+### Notes for consuming clients (Onboarding)
+
+- One Auth0 identity maps to exactly **one** tenant, permanently. There is currently no supported way for one person to own multiple separate businesses under one login.
+- Both the tenant creation and the user creation are recorded in the audit trail, with the new user recorded as the actor of their own creation — the only case in the platform where this self-attribution is correct, since nobody else could possibly exist yet at that moment.
+
+---
+
+## 7.2 Users
+
+Base path: `/api/v1/users`
+
+Provisioning **additional** users into an **already-existing** tenant — an owner or existing teammate adding a coworker.
+
+⚠️ **Requires:** a genuine Auth0 token **and** an already-provisioned platform user (i.e. the caller must have onboarded already).
+
+> ⚠️ **Open design question, not yet resolved:** `externalIdpSubject` below must be the *new* teammate's own future Auth0 identity, not the caller's. How that value is actually communicated in a real invite flow (an invite link? an email claim step?) has not yet been designed — this is a known gap between backend and frontend, flagged for a joint decision.
+
+---
+
+### `POST /users`
+
+Creates a user in the **caller's own** tenant — the tenant is always taken from the caller's verified identity, never from the request body, so a caller can only ever add users to their own business.
+
+**Request:** `POST /api/v1/users`
+`Content-Type: application/json`
+
+**Request Body:**
+```json
+{
+  "externalIdpSubject": "auth0|64f2a1b3c9d...",
+  "name": "New Teammate",
+  "email": "teammate@example.com"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `externalIdpSubject` | string | ✅ Yes | The new person's own Auth0 `sub`. Not verified as a real, existing Auth0 identity at creation time — becomes meaningful the first time that person actually logs in. |
+| `name` | string | ✅ Yes | Display name. Max 200 chars. |
+| `email` | string | No | Contact email. |
+| `phone` | string | No | Contact phone. |
+
+**Success Response:** `201 Created`
+```json
+{
+  "id": "fa7420b7-dc44-4058-a146-f624adaae031",
+  "tenant_id": "75d11c00-1694-4461-8048-a49d305b9ada",
+  "external_idp_subject": "auth0|64f2a1b3c9d...",
+  "name": "New Teammate",
+  "email": "teammate@example.com",
+  "phone": null,
+  "status": "ACTIVE",
+  "mfa_enabled": false,
+  "is_super_admin": false,
+  "created_at": "2026-08-03T01:18:21.190Z"
+}
+```
+
+The audit log records the **caller** as the actor of this action — not the new teammate — since the caller is the one who genuinely performed it.
+
+**Error Response:** `401 Unauthorized` — missing/invalid token.
+
+**Error Response:** `404 Not Found` — the token is genuine, but its identity has never onboarded:
+```json
+{
+  "type": "tag:jibuks,2026:error/USER_NOT_FOUND",
+  "title": "USER_NOT_FOUND",
+  "status": 404,
+  "detail": "..."
+}
+```
+
+**Error Response:** `409 Conflict` — `externalIdpSubject` already belongs to a user somewhere on the platform (identities are globally unique, not scoped per tenant):
+```json
+{
+  "type": "tag:jibuks,2026:error/USER_ALREADY_EXISTS",
+  "title": "USER_ALREADY_EXISTS",
+  "status": 409,
+  "detail": "A user for this identity already exists (id ...)"
+}
+```
+
+---
+
+### `GET /users`
+
+List every user in the caller's tenant.
+
+**Success Response:** `200 OK` — `{ "data": [ ...user objects... ] }`.
+
+---
+
+### `GET /users/{id}`
+
+Fetch a single user by ID.
+
+**Success Response:** `200 OK` — same shape as `POST /users`'s response.
+
+**Error Response:** `404 Not Found` — doesn't exist, or belongs to a different tenant (indistinguishable by design).
+
+### Notes for consuming clients (Users)
+
+- Every user added to a tenant currently has **full access** to everything in that tenant — there is no role/permission system yet (a known, planned gap, not an oversight).
+- A person, once provisioned anywhere, is permanently tied to that one tenant — there's no supported way to move a user between tenants.
+
+---
+
+## 7.3 Accounts
+
+Base path: `/api/v1/accounts`
 
 ---
 
 ### `POST /accounts`
 
 Create a new account in the tenant's chart of accounts.
-
-⚠️ **Requires:** `X-Tenant-Id`, `X-Actor-User-Id`
 
 **Request:** `POST /api/v1/accounts`
 `Content-Type: application/json`
@@ -79,7 +301,7 @@ Create a new account in the tenant's chart of accounts.
 | Response Field | Type | Description |
 |---|---|---|
 | `id` | string (uuid) | Server-assigned account ID. |
-| `tenant_id` | string (uuid) | The owning tenant — always mirrors your `X-Tenant-Id`. |
+| `tenant_id` | string (uuid) | The owning tenant — always the caller's own. |
 | `parent_account_id` | string (uuid) \| `null` | The parent account, if one was set. |
 | `code` | string | Mirrored from the request. |
 | `name` | string | Mirrored from the request. |
@@ -89,6 +311,8 @@ Create a new account in the tenant's chart of accounts.
 | `is_postable` | boolean | `true` unless this account is a non-postable grouping account. |
 | `tags` | string[] | Mirrored from the request. |
 | `created_at` | string (ISO 8601) | Server timestamp of creation. |
+
+**Error Response:** `401 Unauthorized` — missing/invalid token.
 
 **Error Response:** `400 Bad Request` — request body failed validation (e.g. invalid `type`)
 ```json
@@ -117,9 +341,7 @@ Create a new account in the tenant's chart of accounts.
 
 ### `GET /accounts`
 
-List every account belonging to the requesting tenant, ordered by `code`.
-
-⚠️ **Requires:** `X-Tenant-Id`
+List every account belonging to the caller's tenant, ordered by `code`.
 
 **Request:** `GET /api/v1/accounts`
 
@@ -144,15 +366,13 @@ List every account belonging to the requesting tenant, ordered by `code`.
 }
 ```
 
-Only accounts belonging to the tenant in `X-Tenant-Id` are ever returned — this is enforced at the database level, not just filtered in application code, so it cannot leak another tenant's accounts even in the event of an application bug.
+Only accounts belonging to the caller's tenant are ever returned — this is enforced at the database level, not just filtered in application code, so it cannot leak another tenant's accounts even in the event of an application bug.
 
 ---
 
 ### `GET /accounts/{id}`
 
 Fetch a single account by ID.
-
-⚠️ **Requires:** `X-Tenant-Id`
 
 **Request:** `GET /api/v1/accounts/541a185a-c76b-4e0a-9f0e-df5772307a74`
 
@@ -175,8 +395,6 @@ Returned both when the ID doesn't exist at all, and when it exists but belongs t
 
 Deactivate an account. **Accounts are never deleted** — only deactivated. This preserves full history and every past journal entry that referenced the account.
 
-⚠️ **Requires:** `X-Tenant-Id`, `X-Actor-User-Id`
-
 **Request:** `POST /api/v1/accounts/541a185a-c76b-4e0a-9f0e-df5772307a74/deactivate`
 
 **Success Response:** `200 OK` — the account, with `is_active: false`. Same shape as `POST /accounts`.
@@ -190,8 +408,6 @@ A deactivated account can no longer be posted to, but remains fully visible in `
 ### `POST /accounts/{id}/reactivate`
 
 Reverse a prior deactivation.
-
-⚠️ **Requires:** `X-Tenant-Id`, `X-Actor-User-Id`
 
 **Request:** `POST /api/v1/accounts/541a185a-c76b-4e0a-9f0e-df5772307a74/reactivate`
 
@@ -209,11 +425,9 @@ Reverse a prior deactivation.
 
 ---
 
-## 6.2 Periods
+## 7.4 Periods
 
-Base path: `/api/v1/periods` | All endpoints require `X-Tenant-Id`
-
-> ⚠️ See the temporary auth note at the top of this document — applies to every endpoint below.
+Base path: `/api/v1/periods`
 
 A journal can only be posted into an **open** period covering its date. Periods do not overlap and must be created before journals can be posted into the dates they cover.
 
@@ -222,8 +436,6 @@ A journal can only be posted into an **open** period covering its date. Periods 
 ### `POST /periods`
 
 Create a new accounting period for the tenant.
-
-⚠️ **Requires:** `X-Tenant-Id`, `X-Actor-User-Id`
 
 **Request:** `POST /api/v1/periods`
 `Content-Type: application/json`
@@ -269,11 +481,7 @@ Create a new accounting period for the tenant.
 
 ### `GET /periods`
 
-List every period for the requesting tenant, ordered by `start_date`.
-
-⚠️ **Requires:** `X-Tenant-Id`
-
-**Request:** `GET /api/v1/periods`
+List every period for the caller's tenant, ordered by `start_date`.
 
 **Success Response:** `200 OK` — `{ "data": [ ...period objects... ] }`, same shape as `POST /periods`'s response.
 
@@ -282,8 +490,6 @@ List every period for the requesting tenant, ordered by `start_date`.
 ### `GET /periods/{id}`
 
 Fetch a single period by ID.
-
-⚠️ **Requires:** `X-Tenant-Id`
 
 **Success Response:** `200 OK` — same shape as `POST /periods`.
 
@@ -294,8 +500,6 @@ Fetch a single period by ID.
 ### `POST /periods/{id}/close`
 
 Close an open period. Only a period with `status: "OPEN"` can be closed.
-
-⚠️ **Requires:** `X-Tenant-Id`, `X-Actor-User-Id`
 
 **Request:** `POST /api/v1/periods/914c5153-9779-489d-a265-2b4a2fb2de5a/close`
 
@@ -317,9 +521,7 @@ Close an open period. Only a period with `status: "OPEN"` can be closed.
 
 Reopen a closed or locked period, restoring it to `OPEN`.
 
-⚠️ **Requires:** `X-Tenant-Id`, `X-Actor-User-Id`
-
-> ⚠️ **Not yet permission-gated.** Per the SRS, reopening a period should require a named permission (this action is inherently sensitive — it allows further posting into a period that was believed final). That permission check is **not yet implemented**, since role-based access control does not exist yet in the platform. Currently, any caller with a valid `X-Tenant-Id`/`X-Actor-User-Id` can reopen any period. This will change once RBAC lands — treat this endpoint as provisional.
+> ⚠️ **Not yet permission-gated.** Per the SRS, reopening a period should require a named permission (this action is inherently sensitive — it allows further posting into a period that was believed final). That permission check is **not yet implemented**, since role-based access control does not exist yet in the platform. Currently, any authenticated caller in the tenant can reopen any period. This will change once RBAC lands — treat this endpoint as provisional.
 
 **Request:** `POST /api/v1/periods/914c5153-9779-489d-a265-2b4a2fb2de5a/reopen`
 
@@ -337,11 +539,9 @@ Reopen a closed or locked period, restoring it to `OPEN`.
 
 ---
 
-## 6.3 Journals
+## 7.5 Journals
 
-Base path: `/api/v1/journals` | All endpoints require `X-Tenant-Id`
-
-> ⚠️ See the temporary auth note at the top of this document — applies to every endpoint below.
+Base path: `/api/v1/journals`
 
 This is the core accounting module. Every journal enforces **double-entry bookkeeping**: the sum of all `debitMinor` values across its lines must exactly equal the sum of all `creditMinor` values, in the journal's currency. This is checked both before the request reaches the database and independently by the database itself — a journal can never be stored unbalanced.
 
@@ -352,8 +552,6 @@ This is the core accounting module. Every journal enforces **double-entry bookke
 ### `POST /journals`
 
 Create and post a journal.
-
-⚠️ **Requires:** `X-Tenant-Id`, `X-Actor-User-Id`
 
 **Request:** `POST /api/v1/journals`
 `Content-Type: application/json`
@@ -431,9 +629,11 @@ Create and post a journal.
 }
 ```
 
-> ⚠️ **`debit_minor` and `credit_minor` are returned as strings**, not numbers, in every response from this module (e.g. `"100000"`, not `100000`). This is deliberate — these are 64-bit values on the server, and JavaScript's native number type cannot safely represent every possible 64-bit integer. Parse them explicitly on the client (e.g. `parseInt(line.debit_minor, 10)`) rather than assuming JSON gives you a native number.
+> ⚠️ **`debit_minor` and `credit_minor` are returned as strings**, not numbers, in every response from this module. See the conventions section at the top of this document.
 
 A journal is always created directly with `status: "POSTED"` — there is currently no draft/approval workflow exposed over the API.
+
+**Error Response:** `401 Unauthorized` — missing/invalid token.
 
 **Error Response:** `422 Unprocessable Entity` — the journal does not balance:
 ```json
@@ -485,9 +685,7 @@ A journal is always created directly with `status: "POSTED"` — there is curren
 
 ### `GET /journals`
 
-List every journal for the requesting tenant, most recent first (`date DESC, created_at DESC`).
-
-⚠️ **Requires:** `X-Tenant-Id`
+List every journal for the caller's tenant, most recent first (`date DESC, created_at DESC`).
 
 **Success Response:** `200 OK` — `{ "data": [ ...journal objects, WITHOUT lines... ] }`. Fetch `GET /journals/{id}` for a specific journal's lines.
 
@@ -496,8 +694,6 @@ List every journal for the requesting tenant, most recent first (`date DESC, cre
 ### `GET /journals/{id}`
 
 Fetch a single journal, including its lines.
-
-⚠️ **Requires:** `X-Tenant-Id`
 
 **Success Response:** `200 OK` — same shape as `POST /journals`'s response.
 
@@ -508,8 +704,6 @@ Fetch a single journal, including its lines.
 ### `POST /journals/{id}/reverse`
 
 The only way to correct a posted journal. Creates and posts a **new** journal with every line's debit and credit swapped, dated today, referencing the original.
-
-⚠️ **Requires:** `X-Tenant-Id`, `X-Actor-User-Id`
 
 **Request:** `POST /api/v1/journals/18230383-e71e-45fe-ac5e-c98d18ca7fb2/reverse`
 ```json
@@ -561,4 +755,4 @@ The only way to correct a posted journal. Creates and posts a **new** journal wi
 - There is no update or delete endpoint for journals, by design. To correct a mistake, reverse the journal and post a new, correct one.
 - A journal can only be reversed **once**. There is no way to reverse a reversal through this endpoint currently — if that's needed, post a new corrective journal manually.
 - Every create and reverse action is recorded in the audit trail automatically.
-- Create at least one open `Period` (see Section 6.2) covering your intended posting dates before attempting to post journals — otherwise every `POST /journals` will fail with `PERIOD_NOT_FOUND`.
+- Create at least one open `Period` (see §7.4) covering your intended posting dates before attempting to post journals — otherwise every `POST /journals` will fail with `PERIOD_NOT_FOUND`.

@@ -30,6 +30,6 @@ GRANT USAGE ON SCHEMA public TO jibuks_auth_resolver;
 -- migrations run by a different role than the app didn't auto-grant access.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO jibuks_app;
 
--- The column-level grant for jibuks_auth_resolver on `users` is applied
--- separately, AFTER migrations have run and the table actually exists --
--- see the deploy steps, step "grant auth-resolver access".
+-- The column-level grant for jibuks_auth_resolver on `users`
+-- is applied separately, AFTER migrations have run and the table actually
+-- exists -- see the deploy steps, step "grant auth-resolver access".
