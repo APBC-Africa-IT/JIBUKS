@@ -25,10 +25,13 @@ GRANT CREATE, USAGE ON SCHEMA public TO jibuks_migrator;
 GRANT USAGE ON SCHEMA public TO jibuks_app;
 GRANT USAGE ON SCHEMA public TO jibuks_auth_resolver;
 
--- Ensures any table jibuks_migrator creates automatically grants jibuks_app
--- the privileges it needs -- the same fix we made locally after discovering
--- migrations run by a different role than the app didn't auto-grant access.
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO jibuks_app;
+-- ALTER DEFAULT PRIVILEGES is tied to WHO creates a table, not database-
+-- wide. It must be scoped to jibuks_migrator specifically, since that's
+-- the role that actually creates tables (via migrations) -- setting this
+-- up as whichever role runs this init script (the superuser) does NOT
+-- apply to tables jibuks_migrator creates later. Got this wrong once
+-- already; fixed for real here.
+ALTER DEFAULT PRIVILEGES FOR ROLE jibuks_migrator IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO jibuks_app;
 
 -- The column-level grant for jibuks_auth_resolver on `users`
 -- is applied separately, AFTER migrations have run and the table actually
