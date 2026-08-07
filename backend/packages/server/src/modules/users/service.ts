@@ -95,3 +95,7 @@ export async function createUserFromInvite(input: {
     ...(input.email !== undefined ? { email: input.email } : {}),
   });
 }
+
+export async function getTenantNameForController(tenantId: string): Promise<string> {
+  return repository.getTenantName(tenantId);
+}

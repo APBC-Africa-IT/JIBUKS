@@ -103,6 +103,15 @@ export const createUserSchema = z.object({
 
 export type CreateUserDto = z.infer<typeof createUserSchema>;
 
+export const createInviteSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(1).max(200).optional(),
+});
+
+export const acceptInviteSchema = z.object({
+  name: z.string().min(1).max(200),
+});
+
 export const onboardingRequestSchema = z.object({
   tenantName: z.string().min(1).max(200),
   tenantType: z.enum(["BUSINESS", "NGO", "HOUSEHOLD"]),

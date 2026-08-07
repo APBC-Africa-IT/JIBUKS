@@ -77,7 +77,7 @@ export async function getUserById(tenantId: string, userId: string): Promise<Use
  * The one deliberate exception to RLS in this module. Uses the dedicated
  * jibuks_auth_resolver role (SELECT-only, BYPASSRLS) so this lookup can
  * genuinely search across all tenants -- necessary because the tenant is
- * exactly what's being discovered here.
+ * exactly what is being discovered here.
  */
 export async function findUserByExternalIdpSubject(externalIdpSubject: string): Promise<UserRow | null> {
   return withAuthResolver(async (client) => {
@@ -115,5 +115,15 @@ export async function createUserSelfAttributed(input: CreateUserInput): Promise<
     });
 
     return user;
+  });
+}
+
+/** Ordinary tenant-scoped lookup -- NOT the auth-resolver path, since the
+ * caller here already has a real tenant context (unlike the invites
+ * preview screen, which has none yet). */
+export async function getTenantName(tenantId: string): Promise<string> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<{ name: string }>(`SELECT name FROM tenants WHERE id = $1`, [tenantId]);
+    return result.rows[0]?.name ?? "Unknown";
   });
 }
