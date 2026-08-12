@@ -1,11 +1,11 @@
 meta {
-  name: Onboard (Real Login) New Tenant
+  name: Accept Invite
   type: http
-  seq: 2
+  seq: 4
 }
 
 post {
-  url: {{baseUrl}}/api/v1/onboarding
+  url: {{baseUrl}}/api/v1/invites/{{inviteToken}}/accept
   body: json
   auth: oauth2
 }
@@ -20,7 +20,7 @@ auth:oauth2 {
   client_secret: 
   scope: openid profile email
   state: 
-  pkce: true
+  pkce: false
   credentials_placement: body
   credentials_id: credentials
   token_source: access_token
@@ -36,14 +36,10 @@ auth:oauth2:additional_params:auth_req:queryparams {
 
 body:json {
   {
-    "tenantName": "Jibuks Test",
-    "tenantType": "BUSINESS",
-    "baseCurrency": "KES",
-    "userName": "Test User"
+    "name": "maina imani"
   }
 }
 
-settings {
-  encodeUrl: true
-  timeout: 0
+vars:pre-request {
+  inviteToken: wTfNoVD4aCzpqLFR_kboG9B9ikxSmF5lJbOPk_6bM_g
 }

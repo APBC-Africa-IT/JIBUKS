@@ -76,6 +76,12 @@ tags:
     description: >
       Provisioning additional users into an ALREADY-EXISTING tenant. Always
       requires a fully resolved identity (genuine token + existing user).
+  - name: Invites
+    description: >
+      Team invitations. An existing tenant user invites someone by email;
+      the invitee accepts using their OWN Auth0 identity, which may not
+      exist in our system yet -- solving the real gap where nobody knows
+      their own Auth0 sub before they've logged in once.
   - name: Accounts
     description: Chart of accounts (FR-COA-01 to FR-COA-04)
   - name: Periods
@@ -224,6 +230,119 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/UserNotFound'
+
+  # ── Invites ───────────────────────────────────────────────────────
+  /invites:
+    post:
+      tags: [Invites]
+      summary: Invite a new user to the caller's tenant
+      description: >
+        Sends a real email (via Resend) containing an accept link. The new
+        person does not need to exist in our system yet -- that's exactly
+        what accepting the invite creates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInviteRequest'
+            example:
+              email: "colleague@example.com"
+              name: "Colleague Name"
+      responses:
+        '201':
+          description: Invite created and emailed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invite'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      tags: [Invites]
+      summary: List invites for the caller's tenant
+      responses:
+        '200':
+          description: List of invites
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Invite'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /invites/{token}:
+    get:
+      tags: [Invites]
+      summary: Preview an invite (public -- no authentication at all)
+      description: >
+        Shown to the invitee BEFORE they have logged in anywhere. Returns
+        only the tenant name, inviter name, and status -- nothing sensitive.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/InviteTokenPath'
+      responses:
+        '200':
+          description: Invite preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitePreview'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /invites/{token}/accept:
+    post:
+      tags: [Invites]
+      summary: Accept an invite
+      description: >
+        Requires a genuine Auth0 token (same tier as /onboarding) but NOT
+        an already-provisioned platform user -- accepting IS what creates
+        that user. The new user's external_idp_subject comes from the
+        verified token's sub claim, never from the request body.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InviteTokenPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptInviteRequest'
+      responses:
+        '201':
+          description: Invite accepted; user created in the invite's tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcceptInviteResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Invite not found, or the token is invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Invite no longer valid (already accepted/revoked/expired), or this identity is already provisioned elsewhere
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "tag:jibuks,2026:error/USER_ALREADY_EXISTS"
+                title: "USER_ALREADY_EXISTS"
+                status: 409
+                detail: "This identity already has an account (user ..., tenant ...)"
 
   # ── Accounts ──────────────────────────────────────────────────────
   /accounts:
@@ -627,6 +746,12 @@ components:
       schema:
         type: string
         format: uuid
+    InviteTokenPath:
+      name: token
+      in: path
+      required: true
+      schema:
+        type: string
 
   # ── Schemas ─────────────────────────────────────────────────────
   schemas:
@@ -722,6 +847,56 @@ components:
         created_at:
           type: string
           format: date-time
+
+    # -- Invites --
+    CreateInviteRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+          maxLength: 200
+    Invite:
+      type: object
+      description: >
+        Never includes the raw token or its hash -- the raw token exists only in the email itself.
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        email: { type: string }
+        name: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [PENDING, ACCEPTED, REVOKED, EXPIRED]
+        invited_by: { type: string, format: uuid }
+        accepted_by: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        accepted_at: { type: string, format: date-time, nullable: true }
+    InvitePreview:
+      type: object
+      properties:
+        tenantName: { type: string }
+        inviterName: { type: string }
+        status:
+          type: string
+          enum: [PENDING, ACCEPTED, REVOKED, EXPIRED]
+        expired: { type: boolean }
+    AcceptInviteRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 200
+    AcceptInviteResult:
+      type: object
+      properties:
+        tenantId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
 
     # -- Accounts --
     AccountType:

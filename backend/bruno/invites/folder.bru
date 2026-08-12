@@ -1,13 +1,9 @@
 meta {
-  name: Onboard (Real Login) New Tenant
-  type: http
-  seq: 2
+  name: invites
 }
 
-post {
-  url: {{baseUrl}}/api/v1/onboarding
-  body: json
-  auth: oauth2
+auth {
+  mode: oauth2
 }
 
 auth:oauth2 {
@@ -20,7 +16,7 @@ auth:oauth2 {
   client_secret: 
   scope: openid profile email
   state: 
-  pkce: true
+  pkce: false
   credentials_placement: body
   credentials_id: credentials
   token_source: access_token
@@ -34,16 +30,6 @@ auth:oauth2:additional_params:auth_req:queryparams {
   audience: https://api-staging.jibuks.com
 }
 
-body:json {
-  {
-    "tenantName": "Jibuks Test",
-    "tenantType": "BUSINESS",
-    "baseCurrency": "KES",
-    "userName": "Test User"
-  }
-}
-
-settings {
-  encodeUrl: true
-  timeout: 0
+auth:oauth2:additional_params:access_token_req:queryparams {
+  audience: https://api-staging.jibuks.com
 }
