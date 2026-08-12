@@ -1,0 +1,15 @@
+meta {
+  name: Preview Invite
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/invites/{{inviteToken}}
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  inviteToken: wTfNoVD4aCzpqLFR_kboG9B9ikxSmF5lJbOPk_6bM_g
+}
