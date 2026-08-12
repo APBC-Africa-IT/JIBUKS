@@ -30,6 +30,12 @@ export function createApp(): Express {
   const openapiDocument = YAML.load(path.join(__dirname, "../../../openapi/openapi.yaml"));
   app.use("/api/v1/docs", swaggerUi.serve, swaggerUi.setup(openapiDocument));
 
+  // Raw spec, for tooling (e.g. the frontend team's OpenAPI code generators)
+  // that needs to fetch the actual YAML file, not just view it via Swagger UI.
+  app.get("/api/v1/openapi.yaml", (_req, res) => {
+    res.type("text/yaml").sendFile(path.join(__dirname, "../../../openapi/openapi.yaml"));
+  });
+
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
