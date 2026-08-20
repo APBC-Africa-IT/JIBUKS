@@ -20,9 +20,21 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+/**
+ * Builds the accept link included in the invite email.
+ *
+ * INVITE_ACCEPT_BASE_URL is a TEMPLATE containing the literal string
+ * "{token}", replaced with the real token. This supports both styles a
+ * real client might need -- a path-based deep link
+ * (com.jibuks.app://invite/{token}) for the mobile app, or a query-param
+ * web URL (https://app.example.com/accept-invite?token={token}) for a
+ * future web app -- without the backend hardcoding either shape.
+ */
 function acceptUrl(token: string): string {
-  const base = process.env["INVITE_ACCEPT_BASE_URL"] ?? "https://dev-jibuksapi.apbcafrica.com/accept-invite";
-  return `${base}?token=${token}`;
+  const template =
+    process.env["INVITE_ACCEPT_BASE_URL"] ??
+    "https://dev-jibuksapi.apbcafrica.com/accept-invite?token={token}";
+  return template.replace("{token}", encodeURIComponent(token));
 }
 
 export interface CreateInviteRequest {
