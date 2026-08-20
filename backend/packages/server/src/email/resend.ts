@@ -38,9 +38,10 @@ export async function sendInviteEmail(input: SendInviteEmailInput): Promise<void
     from,
     to: input.to,
     subject: `You've been invited to join ${input.tenantName} on JiBUks`,
-    html: `
+       html: `
       <p>${input.inviterName} has invited you to join <strong>${input.tenantName}</strong> on JiBUks.</p>
       <p><a href="${input.acceptUrl}">Click here to accept the invitation</a></p>
+      <p style="color: #666; font-size: 12px;">If the button above doesn't work, copy this link into the JiBUks app: ${input.acceptUrl}</p>
       <p>This link expires in 7 days.</p>
     `,
   });
