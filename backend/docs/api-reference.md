@@ -185,6 +185,16 @@ Creates a user in the **caller's own** tenant — the tenant is always taken fro
 
 ---
 
+### `GET /users/me` 
+
+Returns the caller's own user record. **Use this on app load to decide whether to show onboarding or go straight into the app** — much more reliable than guessing locally on-device, since it works correctly across reinstalls and for invited teammates too, not just onboarded owners.
+
+**Success Response:** `200 OK` — same shape as a user object elsewhere.
+
+**Error Response:** `404 USER_NOT_FOUND` — this identity has never onboarded or been invited/accepted anywhere. Show the onboarding screen in this case.
+
+---
+
 ### `GET /users` / `GET /users/{id}` 
 
 List / fetch users in the caller's tenant. Standard shapes, see `POST /users`'s response for the object shape.
