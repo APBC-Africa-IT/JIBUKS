@@ -13,4 +13,5 @@ usersRouter.use(requireRealIdentity);
 
 usersRouter.post("/", asyncHandler(controllers.create));
 usersRouter.get("/", asyncHandler(controllers.list));
+usersRouter.get("/me", asyncHandler(controllers.me));
 usersRouter.get("/:id", asyncHandler(controllers.getOne));

@@ -102,3 +102,28 @@ describe("GET /api/v1/users/:id", () => {
     expect(response.body.title).toBe("USER_NOT_FOUND");
   });
 });
+
+describe("GET /api/v1/users/me", () => {
+  it("returns the caller's own user record", async () => {
+    const response = await request(app).get("/api/v1/users/me").set("Authorization", await authHeader());
+
+    expect(response.status).toBe(200);
+    expect(response.body.id).toBe(TEST_USER_ID);
+    expect(response.body.tenant_id).toBe(TEST_TENANT_ID);
+  });
+
+  it("rejects a request with no Authorization header", async () => {
+    const response = await request(app).get("/api/v1/users/me");
+    expect(response.status).toBe(401);
+  });
+
+  it("is matched correctly and never confused with GET /users/:id", async () => {
+    // A real regression risk: if route ordering were ever wrong, "me"
+    // could be interpreted as a :id parameter instead of the literal
+    // /me route, and this would 404 with USER_NOT_FOUND instead of
+    // returning the caller's own record.
+    const response = await request(app).get("/api/v1/users/me").set("Authorization", await authHeader());
+
+    expect(response.status).not.toBe(404);
+  });
+});

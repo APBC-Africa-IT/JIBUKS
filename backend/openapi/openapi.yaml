@@ -213,6 +213,26 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get the caller's own user record
+      description: >
+        Lets a client check whether the current token's identity already
+        has a platform account, without guessing locally or reusing
+        /onboarding as a de-facto check endpoint.
+      responses:
+        '200':
+          description: The caller's own user record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/UserNotFound'
+
   /users/{id}:
     get:
       tags: [Users]

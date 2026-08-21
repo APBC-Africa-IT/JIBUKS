@@ -41,3 +41,15 @@ export async function getOne(req: Request, res: Response): Promise<void> {
   const user = await service.getUser(req.tenantId!, req.params["id"]!);
   res.json(user);
 }
+
+/**
+ * "Who am I" -- lets a client check whether the current token's identity
+ * already has a platform account, without guessing locally or reusing
+ * /onboarding as a de-facto check endpoint. Requires only that
+ * requireRealIdentity resolved successfully; if it didn't, that middleware
+ * has already thrown 404 USER_NOT_FOUND before this function ever runs.
+ */
+export async function me(req: Request, res: Response): Promise<void> {
+  const user = await service.getUser(req.tenantId!, req.actorUserId!);
+  res.json(user);
+}
