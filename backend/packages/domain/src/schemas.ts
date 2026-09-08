@@ -32,6 +32,15 @@ export const minorUnitsSchema = z
 
 export const accountTypeSchema = z.enum(ACCOUNT_TYPES);
 
+/** Query params for GET /accounts and GET /accounts/{id}: an optional
+ * point-in-time cutoff for the returned balance_minor (Section 9.1 dates).
+ * `as_of` (not camelCase) because it's a query string, not a JSON body. */
+export const accountBalanceQuerySchema = z.object({
+  as_of: accountingDateSchema.optional(),
+});
+
+export type AccountBalanceQueryDto = z.infer<typeof accountBalanceQuerySchema>;
+
 export const journalLineSchema = z
   .object({
     accountId: uuidSchema,

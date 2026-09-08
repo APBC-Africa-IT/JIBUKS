@@ -396,9 +396,35 @@ Create a new account in the tenant's chart of accounts.
 
 ### `GET /accounts` / `GET /accounts/{id}` 
 
-List / fetch accounts for the caller's tenant, enforced at the database level.
+List / fetch accounts for the caller's tenant, enforced at the database level. Each account includes a server-computed `balance_minor`.
 
-**Error Response:** `404 ACCOUNT_NOT_FOUND` — doesn't exist, or belongs to a different tenant (indistinguishable by design).
+**Query Parameters:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `as_of` | string (date) | No | Point-in-time cutoff for `balance_minor` — only `POSTED` journals dated on or before this date count. Omit for the balance as of now. |
+
+**Success Response:** `200 OK` 
+```json
+{
+  "id": "541a185a-c76b-4e0a-9f0e-df5772307a74",
+  "tenant_id": "33333333-3333-4333-8333-333333333333",
+  "parent_account_id": null,
+  "code": "1000",
+  "name": "Cash",
+  "type": "ASSET",
+  "currency": null,
+  "is_active": true,
+  "is_postable": true,
+  "tags": [],
+  "created_at": "2026-07-30T10:25:50.110Z",
+  "balance_minor": "1500000"
+}
+```
+
+`balance_minor` is the net of `POSTED` journal lines against the account, on its natural side (debit for `ASSET`/`EXPENSE`, credit for `LIABILITY`/`EQUITY`/`INCOME`) — same 64-bit-safe string convention as `debit_minor`/`credit_minor`. `DRAFT`/`PENDING_APPROVAL` journals never affect it.
+
+**Error Response:** `400 VALIDATION_ERROR` (malformed `as_of`), `404 ACCOUNT_NOT_FOUND` — doesn't exist, or belongs to a different tenant (indistinguishable by design).
 
 ---
 
@@ -410,6 +436,7 @@ List / fetch accounts for the caller's tenant, enforced at the database level.
 
 - `code` uniqueness is scoped **per tenant**, not global.
 - No update/delete endpoint exists, by design.
+- `balance_minor` is only present on `GET /accounts` and `GET /accounts/{id}` responses — not on `POST /accounts` or the deactivate/reactivate responses.
 
 ---
 

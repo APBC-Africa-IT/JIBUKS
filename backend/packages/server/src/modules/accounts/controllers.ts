@@ -5,7 +5,7 @@
  */
 
 import type { Request, Response } from "express";
-import { createAccountSchema } from "@jibuks/domain";
+import { accountBalanceQuerySchema, createAccountSchema } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as service from "./service.js";
 
@@ -40,12 +40,14 @@ export async function create(req: Request, res: Response): Promise<void> {
 }
 
 export async function list(req: Request, res: Response): Promise<void> {
-  const accounts = await service.listAccounts(req.tenantId!);
+  const { as_of } = accountBalanceQuerySchema.parse(req.query);
+  const accounts = await service.listAccounts(req.tenantId!, as_of);
   res.json({ data: accounts });
 }
 
 export async function getOne(req: Request, res: Response): Promise<void> {
-  const account = await service.getAccount(req.tenantId!, req.params["id"]!);
+  const { as_of } = accountBalanceQuerySchema.parse(req.query);
+  const account = await service.getAccount(req.tenantId!, req.params["id"]!, as_of);
   res.json(account);
 }
 

@@ -396,7 +396,11 @@ paths:
     get:
       tags: [Accounts]
       summary: List accounts
-      description: Returns every account belonging to the caller's tenant, ordered by code.
+      description: >
+        Returns every account belonging to the caller's tenant, ordered by
+        code. Each account includes balance_minor, computed server-side.
+      parameters:
+        - $ref: '#/components/parameters/AccountAsOfQuery'
       responses:
         '200':
           description: List of accounts
@@ -409,6 +413,8 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -418,6 +424,7 @@ paths:
       summary: Get a single account
       parameters:
         - $ref: '#/components/parameters/AccountIdPath'
+        - $ref: '#/components/parameters/AccountAsOfQuery'
       responses:
         '200':
           description: The account
@@ -425,6 +432,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -745,6 +754,17 @@ components:
       schema:
         type: string
         format: uuid
+    AccountAsOfQuery:
+      name: as_of
+      in: query
+      required: false
+      description: >
+        Point-in-time cutoff for balance_minor: only journals dated on or
+        before this date are included. Omit for the balance as of now.
+      schema:
+        type: string
+        format: date
+        example: "2026-08-31"
     PeriodIdPath:
       name: id
       in: path
@@ -968,6 +988,16 @@ components:
           items:
             type: string
         created_at: { type: string, format: date-time }
+        balance_minor:
+          type: string
+          description: >
+            Net of POSTED journal_lines against this account, on its
+            natural side (debit for ASSET/EXPENSE, credit for
+            LIABILITY/EQUITY/INCOME), as of the as_of query param if given,
+            otherwise as of now. A 64-bit-safe integer string, same
+            convention as debit_minor/credit_minor. Present only on
+            responses from GET /accounts and GET /accounts/{id}.
+          example: "1500000"
 
     # -- Periods --
     CreatePeriodRequest:

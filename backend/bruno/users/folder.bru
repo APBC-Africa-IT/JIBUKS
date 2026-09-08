@@ -1,0 +1,31 @@
+meta {
+  name: users
+}
+
+auth {
+  mode: oauth2
+}
+
+auth:oauth2 {
+  grant_type: authorization_code
+  callback_url: https://usebruno.com/oauth2/callback
+  authorization_url: https://dev-1g8zdrubzj5enqii.us.auth0.com/authorize
+  access_token_url: https://dev-1g8zdrubzj5enqii.us.auth0.com/oauth/token
+  refresh_token_url: 
+  client_id: SxX6IvVhmgGeLW3gREuRf28VtLrnW93k
+  client_secret: 
+  scope: openid profile email
+  state: 
+  pkce: true
+  credentials_placement: body
+  credentials_id: credentials
+  token_source: access_token
+  token_placement: header
+  token_header_prefix: Bearer
+  auto_fetch_token: true
+  auto_refresh_token: false
+}
+
+auth:oauth2:additional_params:access_token_req:queryparams {
+  audience: https://api-staging.jibuks.com
+}
