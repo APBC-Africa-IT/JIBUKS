@@ -36,6 +36,8 @@ export async function create(req: Request, res: Response): Promise<void> {
         ...(line.narrative ? { narrative: line.narrative } : {}),
         ...(line.projectId ? { projectId: line.projectId } : {}),
         ...(line.department ? { department: line.department } : {}),
+        ...(line.customerId ? { customerId: line.customerId } : {}),
+        ...(line.supplierId ? { supplierId: line.supplierId } : {}),
       })),
     },
     auditContextFrom(req),

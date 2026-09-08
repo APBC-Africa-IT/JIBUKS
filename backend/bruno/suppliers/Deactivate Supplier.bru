@@ -1,0 +1,19 @@
+meta {
+  name: Deactivate Supplier
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/suppliers/{{supplierId}}/deactivate
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  supplierId: 00000000-0000-4000-8000-000000000000
+}

@@ -31,8 +31,10 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.2 Users](#72-users)
 - [7.3 Invites](#73-invites)
 - [7.4 Accounts](#74-accounts)
-- [7.5 Periods](#75-periods)
-- [7.6 Journals](#76-journals)
+- [7.5 Customers](#75-customers)
+- [7.6 Suppliers](#76-suppliers)
+- [7.7 Periods](#77-periods)
+- [7.8 Journals](#78-journals)
 
 ---
 
@@ -440,7 +442,139 @@ List / fetch accounts for the caller's tenant, enforced at the database level. E
 
 ---
 
-## 7.5 Periods
+## 7.5 Customers
+
+Base path: `/api/v1/customers` 
+
+A customer is a name list entry, deliberately separate from the chart of accounts (`accounts`) — it carries contact metadata (`phone`, `email`, `address`) that has no place on an account row, mirroring how QuickBooks keeps Customers as their own list rather than sub-accounts of Accounts Receivable.
+
+---
+
+### `POST /customers` 
+
+Create a new customer for the tenant.
+
+**Request Body:**
+```json
+{
+  "name": "Jane Trader",
+  "phone": "+254700000000",
+  "email": "jane@example.com",
+  "address": null,
+  "tags": []
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | ✅ Yes | Display name. Max 200 chars. |
+| `phone` | string | No | Max 20 chars. |
+| `email` | string | No | Must be a valid email if given. |
+| `address` | string | No | Max 500 chars. |
+| `tags` | string[] | No | Defaults to `[]`. |
+
+**Success Response:** `201 Created` — same shape as `GET /customers/{id}` below, minus `balance_minor` (a brand-new customer has no journal history yet).
+
+**Error Response:** `401 Unauthorized`, `400 VALIDATION_ERROR`.
+
+---
+
+### `GET /customers` / `GET /customers/{id}` 
+
+List / fetch customers for the caller's tenant. Each customer includes a server-computed `balance_minor`.
+
+**Query Parameters:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `as_of` | string (date) | No | Point-in-time cutoff for `balance_minor` — only `POSTED` journals dated on or before this date count. Omit for the balance as of now. |
+
+**Success Response:** `200 OK` 
+```json
+{
+  "id": "6c1a2f3e-2b4a-4c1a-9c1a-2b4a4c1a9c1a",
+  "tenant_id": "33333333-3333-4333-8333-333333333333",
+  "name": "Jane Trader",
+  "phone": "+254700000000",
+  "email": "jane@example.com",
+  "address": null,
+  "is_active": true,
+  "tags": [],
+  "created_at": "2026-07-30T10:25:50.110Z",
+  "balance_minor": "150000"
+}
+```
+
+`balance_minor` is the net of `POSTED` journal lines **tagged with this customer's id** (via `customerId` on a journal line — see [7.8 Journals](#78-journals)), on the debit side (AR-like: a customer owing money is a debit balance). It is not tied to any particular account — a customer can be tagged on lines against different accounts and the balance still nets correctly.
+
+**Error Response:** `400 VALIDATION_ERROR` (malformed `as_of`), `404 CUSTOMER_NOT_FOUND` — doesn't exist, or belongs to a different tenant (indistinguishable by design).
+
+---
+
+### `POST /customers/{id}/deactivate` / `POST /customers/{id}/reactivate` 
+
+**Customers are never deleted** — only deactivated/reactivated, preserving full history. Deactivating a customer does **not** block posting further journal lines tagged with it in this phase.
+
+### Notes for consuming clients (Customers)
+
+- `balance_minor` is only present on `GET /customers` and `GET /customers/{id}` responses.
+- There is no guided "Credit Sale" endpoint yet — attributing a journal line to a customer today means posting via `POST /journals` directly with `customerId` set on the relevant line.
+
+---
+
+## 7.6 Suppliers
+
+Base path: `/api/v1/suppliers` 
+
+Mirrors [7.5 Customers](#75-customers) exactly, except a supplier's `balance_minor` sits on the **credit** side (AP-like: money owed to them is a credit balance) and journal lines attribute to it via `supplierId` instead of `customerId`.
+
+---
+
+### `POST /suppliers` 
+
+Same request shape as `POST /customers`, e.g.:
+```json
+{ "name": "Acme Supplies", "phone": "+254711111111" }
+```
+
+**Error Response:** `401 Unauthorized`, `400 VALIDATION_ERROR`.
+
+---
+
+### `GET /suppliers` / `GET /suppliers/{id}` 
+
+Same query parameters (`as_of`) and shape as `GET /customers`, with `balance_minor` computed from lines tagged via `supplierId`:
+```json
+{
+  "id": "9a2f3e6c-4a2b-4c1a-9c1a-4a2b4c1a9c1a",
+  "tenant_id": "33333333-3333-4333-8333-333333333333",
+  "name": "Acme Supplies",
+  "phone": "+254711111111",
+  "email": null,
+  "address": null,
+  "is_active": true,
+  "tags": [],
+  "created_at": "2026-07-30T10:25:50.110Z",
+  "balance_minor": "80000"
+}
+```
+
+**Error Response:** `400 VALIDATION_ERROR` (malformed `as_of`), `404 SUPPLIER_NOT_FOUND`.
+
+---
+
+### `POST /suppliers/{id}/deactivate` / `POST /suppliers/{id}/reactivate` 
+
+**Suppliers are never deleted** — only deactivated/reactivated, same as customers.
+
+### Notes for consuming clients (Suppliers)
+
+- A journal line may carry `customerId` **or** `supplierId`, never both — `400 VALIDATION_ERROR` otherwise.
+- There is no guided "Write Bill" endpoint yet — attributing a journal line to a supplier today means posting via `POST /journals` directly with `supplierId` set on the relevant line.
+
+---
+
+## 7.7 Periods
 
 Base path: `/api/v1/periods` 
 
@@ -488,7 +622,7 @@ Only an `OPEN` period can be closed. `422 PERIOD_LOCKED` otherwise.
 
 ---
 
-## 7.6 Journals
+## 7.8 Journals
 
 Base path: `/api/v1/journals` 
 
@@ -514,7 +648,12 @@ Enforces **double-entry bookkeeping**: debits must equal credits, checked both b
 
 A journal is always created directly with `status: "POSTED"`.
 
-**Error Response:** `422 JOURNAL_UNBALANCED` — with the exact imbalance identified in `detail`. Also `404 ACCOUNT_NOT_FOUND`, `404 PERIOD_NOT_FOUND`, `422 PERIOD_LOCKED`, `422 ACCOUNT_INACTIVE`/`ACCOUNT_NOT_POSTABLE`/`JOURNAL_LINE_AMBIGUOUS`/`JOURNAL_LINE_EMPTY`/`CURRENCY_MISMATCH` as appropriate.
+A line may optionally carry `customerId` **or** `supplierId` (never both) to attribute it to a customer's/supplier's subledger balance — see [7.5 Customers](#75-customers) / [7.6 Suppliers](#76-suppliers). For example, a credit sale debits Accounts Receivable with `customerId` set and credits Sales:
+```json
+{ "accountId": "<ar-account-id>", "debitMinor": 100000, "creditMinor": 0, "customerId": "<customer-id>" }
+```
+
+**Error Response:** `422 JOURNAL_UNBALANCED` — with the exact imbalance identified in `detail`. Also `404 ACCOUNT_NOT_FOUND`, `404 CUSTOMER_NOT_FOUND`, `404 SUPPLIER_NOT_FOUND`, `404 PERIOD_NOT_FOUND`, `422 PERIOD_LOCKED`, `422 ACCOUNT_INACTIVE`/`ACCOUNT_NOT_POSTABLE`/`JOURNAL_LINE_AMBIGUOUS`/`JOURNAL_LINE_EMPTY`/`CURRENCY_MISMATCH` as appropriate, `400 VALIDATION_ERROR` if a line carries both `customerId` and `supplierId`.
 
 ### `GET /journals` / `GET /journals/{id}` 
 

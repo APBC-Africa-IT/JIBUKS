@@ -28,6 +28,9 @@ export type DomainErrorCode =
   | "ACCOUNT_INACTIVE"
   | "ACCOUNT_NOT_POSTABLE"
   | "TENANT_MISMATCH"
+  // customers / suppliers
+  | "CUSTOMER_NOT_FOUND"
+  | "SUPPLIER_NOT_FOUND"
   // users
   | "USER_NOT_FOUND"
   | "USER_ALREADY_EXISTS"

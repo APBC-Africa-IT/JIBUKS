@@ -32,14 +32,15 @@ export const minorUnitsSchema = z
 
 export const accountTypeSchema = z.enum(ACCOUNT_TYPES);
 
-/** Query params for GET /accounts and GET /accounts/{id}: an optional
- * point-in-time cutoff for the returned balance_minor (Section 9.1 dates).
- * `as_of` (not camelCase) because it's a query string, not a JSON body. */
-export const accountBalanceQuerySchema = z.object({
+/** Query params for GET /accounts, GET /customers, GET /suppliers and their
+ * /{id} counterparts: an optional point-in-time cutoff for the returned
+ * balance_minor (Section 9.1 dates). `as_of` (not camelCase) because it's a
+ * query string, not a JSON body. */
+export const partyBalanceQuerySchema = z.object({
   as_of: accountingDateSchema.optional(),
 });
 
-export type AccountBalanceQueryDto = z.infer<typeof accountBalanceQuerySchema>;
+export type PartyBalanceQueryDto = z.infer<typeof partyBalanceQuerySchema>;
 
 export const journalLineSchema = z
   .object({
@@ -49,6 +50,10 @@ export const journalLineSchema = z
     narrative: z.string().max(500).optional(),
     projectId: uuidSchema.optional(),
     department: z.string().max(100).optional(),
+    /** Optional attribution to a customer/supplier subledger (mutually
+     * exclusive) -- see packages/server/src/modules/{customers,suppliers}. */
+    customerId: uuidSchema.optional(),
+    supplierId: uuidSchema.optional(),
   })
   .refine((l) => !(l.debitMinor > 0 && l.creditMinor > 0), {
     message: "A line carries either a debit or a credit, never both",
@@ -57,6 +62,10 @@ export const journalLineSchema = z
   .refine((l) => l.debitMinor > 0 || l.creditMinor > 0, {
     message: "A line must carry a non-zero debit or credit",
     path: ["debitMinor"],
+  })
+  .refine((l) => !(l.customerId && l.supplierId), {
+    message: "A line carries either a customer or a supplier, never both",
+    path: ["customerId"],
   });
 
 export const journalInputSchema = z.object({
@@ -95,6 +104,22 @@ export const createAccountSchema = z.object({
   currency: currencySchema.optional(),
   tags: z.array(z.string().max(50)).max(20).default([]),
 });
+
+/** Shared shape of a customer/supplier -- a name list, deliberately separate
+ * from createAccountSchema (no code, no type, no parent hierarchy). */
+const partySchema = z.object({
+  name: z.string().min(1).max(200),
+  phone: z.string().max(20).optional(),
+  email: z.string().email().optional(),
+  address: z.string().max(500).optional(),
+  tags: z.array(z.string().max(50)).max(20).default([]),
+});
+
+export const createCustomerSchema = partySchema;
+export const createSupplierSchema = partySchema;
+
+export type CreateCustomerDto = z.infer<typeof createCustomerSchema>;
+export type CreateSupplierDto = z.infer<typeof createSupplierSchema>;
 
 export const createPeriodSchema = z.object({
   startDate: accountingDateSchema,

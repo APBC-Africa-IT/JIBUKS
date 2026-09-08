@@ -11,7 +11,7 @@
  */
 
 import type { CurrencyCode } from "./currency.js";
-import type { AccountId, BranchId, JournalId, TenantId, UserId, Uuid } from "./ids.js";
+import type { AccountId, BranchId, CustomerId, JournalId, SupplierId, TenantId, UserId, Uuid } from "./ids.js";
 
 export const JOURNAL_SOURCES = ["MANUAL", "CASHBOOK", "PAYMENT", "IMPORT", "COMMUNITY", "OPENING", "REVERSAL"] as const;
 export type JournalSource = (typeof JOURNAL_SOURCES)[number];
@@ -27,6 +27,10 @@ export interface JournalLineInput {
   readonly narrative?: string;
   readonly projectId?: Uuid;
   readonly department?: string;
+  /** Optional attribution to a customer/supplier subledger (mutually
+   * exclusive) -- see packages/server/src/modules/{customers,suppliers}. */
+  readonly customerId?: CustomerId;
+  readonly supplierId?: SupplierId;
 }
 
 export interface JournalInput {

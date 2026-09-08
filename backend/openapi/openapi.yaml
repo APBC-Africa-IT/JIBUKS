@@ -84,6 +84,18 @@ tags:
       their own Auth0 sub before they've logged in once.
   - name: Accounts
     description: Chart of accounts (FR-COA-01 to FR-COA-04)
+  - name: Customers
+    description: >
+      Customer name list, separate from the chart of accounts. A journal
+      line can optionally attribute itself to a customer (mutually
+      exclusive with a supplier); balance_minor is the net of POSTED lines
+      tagged with that customer, on the debit side (AR-like).
+  - name: Suppliers
+    description: >
+      Supplier name list, separate from the chart of accounts. A journal
+      line can optionally attribute itself to a supplier (mutually
+      exclusive with a customer); balance_minor is the net of POSTED lines
+      tagged with that supplier, on the credit side (AP-like).
   - name: Periods
     description: Accounting periods and locking (FR-ACC-03)
   - name: Journals
@@ -400,7 +412,7 @@ paths:
         Returns every account belonging to the caller's tenant, ordered by
         code. Each account includes balance_minor, computed server-side.
       parameters:
-        - $ref: '#/components/parameters/AccountAsOfQuery'
+        - $ref: '#/components/parameters/PartyAsOfQuery'
       responses:
         '200':
           description: List of accounts
@@ -424,7 +436,7 @@ paths:
       summary: Get a single account
       parameters:
         - $ref: '#/components/parameters/AccountIdPath'
-        - $ref: '#/components/parameters/AccountAsOfQuery'
+        - $ref: '#/components/parameters/PartyAsOfQuery'
       responses:
         '200':
           description: The account
@@ -475,6 +487,230 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Account'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Customers ─────────────────────────────────────────────────────
+  /customers:
+    post:
+      tags: [Customers]
+      summary: Create a customer
+      description: Creates a new customer for the CALLER'S tenant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCustomerRequest'
+            example:
+              name: "Jane Trader"
+              phone: "+254700000000"
+      responses:
+        '201':
+          description: Customer created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      tags: [Customers]
+      summary: List customers
+      description: >
+        Returns every customer belonging to the caller's tenant, ordered by
+        name. Each customer includes balance_minor, computed server-side.
+      parameters:
+        - $ref: '#/components/parameters/PartyAsOfQuery'
+      responses:
+        '200':
+          description: List of customers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Customer'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /customers/{id}:
+    get:
+      tags: [Customers]
+      summary: Get a single customer
+      parameters:
+        - $ref: '#/components/parameters/CustomerIdPath'
+        - $ref: '#/components/parameters/PartyAsOfQuery'
+      responses:
+        '200':
+          description: The customer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /customers/{id}/deactivate:
+    post:
+      tags: [Customers]
+      summary: Deactivate a customer
+      description: >
+        Marks the customer inactive. Like accounts, a customer is never
+        deleted, only deactivated -- history against it stays retrievable.
+      parameters:
+        - $ref: '#/components/parameters/CustomerIdPath'
+      responses:
+        '200':
+          description: The customer, now inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /customers/{id}/reactivate:
+    post:
+      tags: [Customers]
+      summary: Reactivate a customer
+      description: Reverses a prior deactivation, restoring the customer to active use.
+      parameters:
+        - $ref: '#/components/parameters/CustomerIdPath'
+      responses:
+        '200':
+          description: The customer, now active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Suppliers ─────────────────────────────────────────────────────
+  /suppliers:
+    post:
+      tags: [Suppliers]
+      summary: Create a supplier
+      description: Creates a new supplier for the CALLER'S tenant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSupplierRequest'
+            example:
+              name: "Acme Supplies"
+              phone: "+254711111111"
+      responses:
+        '201':
+          description: Supplier created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      tags: [Suppliers]
+      summary: List suppliers
+      description: >
+        Returns every supplier belonging to the caller's tenant, ordered by
+        name. Each supplier includes balance_minor, computed server-side.
+      parameters:
+        - $ref: '#/components/parameters/PartyAsOfQuery'
+      responses:
+        '200':
+          description: List of suppliers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Supplier'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /suppliers/{id}:
+    get:
+      tags: [Suppliers]
+      summary: Get a single supplier
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdPath'
+        - $ref: '#/components/parameters/PartyAsOfQuery'
+      responses:
+        '200':
+          description: The supplier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /suppliers/{id}/deactivate:
+    post:
+      tags: [Suppliers]
+      summary: Deactivate a supplier
+      description: >
+        Marks the supplier inactive. Like accounts, a supplier is never
+        deleted, only deactivated -- history against it stays retrievable.
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdPath'
+      responses:
+        '200':
+          description: The supplier, now inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /suppliers/{id}/reactivate:
+    post:
+      tags: [Suppliers]
+      summary: Reactivate a supplier
+      description: Reverses a prior deactivation, restoring the supplier to active use.
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdPath'
+      responses:
+        '200':
+          description: The supplier, now active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -754,13 +990,28 @@ components:
       schema:
         type: string
         format: uuid
-    AccountAsOfQuery:
+    CustomerIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SupplierIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PartyAsOfQuery:
       name: as_of
       in: query
       required: false
       description: >
         Point-in-time cutoff for balance_minor: only journals dated on or
         before this date are included. Omit for the balance as of now.
+        Shared by accounts, customers and suppliers.
       schema:
         type: string
         format: date
@@ -999,6 +1250,92 @@ components:
             responses from GET /accounts and GET /accounts/{id}.
           example: "1500000"
 
+    # -- Customers --
+    CreateCustomerRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          example: "Jane Trader"
+        phone: { type: string, maxLength: 20 }
+        email: { type: string, format: email }
+        address: { type: string, maxLength: 500 }
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+    Customer:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        name: { type: string }
+        phone: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        is_active: { type: boolean }
+        tags:
+          type: array
+          items:
+            type: string
+        created_at: { type: string, format: date-time }
+        balance_minor:
+          type: string
+          description: >
+            Net of POSTED journal_lines tagged with this customer, on the
+            debit side (AR-like -- a customer owing money is a debit
+            balance), as of the as_of query param if given, otherwise as
+            of now. A 64-bit-safe integer string, same convention as
+            debit_minor/credit_minor. Present only on responses from
+            GET /customers and GET /customers/{id}.
+          example: "150000"
+
+    # -- Suppliers --
+    CreateSupplierRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          example: "Acme Supplies"
+        phone: { type: string, maxLength: 20 }
+        email: { type: string, format: email }
+        address: { type: string, maxLength: 500 }
+        tags:
+          type: array
+          items:
+            type: string
+          default: []
+    Supplier:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        name: { type: string }
+        phone: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        is_active: { type: boolean }
+        tags:
+          type: array
+          items:
+            type: string
+        created_at: { type: string, format: date-time }
+        balance_minor:
+          type: string
+          description: >
+            Net of POSTED journal_lines tagged with this supplier, on the
+            credit side (AP-like -- money owed to them is a credit
+            balance), as of the as_of query param if given, otherwise as
+            of now. A 64-bit-safe integer string, same convention as
+            debit_minor/credit_minor. Present only on responses from
+            GET /suppliers and GET /suppliers/{id}.
+          example: "80000"
+
     # -- Periods --
     CreatePeriodRequest:
       type: object
@@ -1036,6 +1373,18 @@ components:
         narrative: { type: string }
         projectId: { type: string, format: uuid }
         department: { type: string }
+        customerId:
+          type: string
+          format: uuid
+          description: >
+            Optional attribution to a customer's AR subledger. Mutually
+            exclusive with supplierId; must belong to the caller's tenant.
+        supplierId:
+          type: string
+          format: uuid
+          description: >
+            Optional attribution to a supplier's AP subledger. Mutually
+            exclusive with customerId; must belong to the caller's tenant.
     CreateJournalRequest:
       type: object
       required: [clientUuid, date, currency, description, lines]
