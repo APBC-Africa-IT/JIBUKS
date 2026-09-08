@@ -1,0 +1,30 @@
+meta {
+  name: Create Credit Sale Journal
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/journals
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "date": "2026-09-15",
+    "currency": "KES",
+    "description": "Credit sale",
+    "source": "MANUAL",
+    "lines": [
+      { "accountId": "{{arAccountId}}", "debitMinor": 100000, "creditMinor": 0, "customerId": "{{customerId}}" },
+      { "accountId": "{{salesAccountId}}", "debitMinor": 0, "creditMinor": 100000 }
+    ]
+  }
+}

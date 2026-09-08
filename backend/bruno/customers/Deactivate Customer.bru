@@ -1,0 +1,19 @@
+meta {
+  name: Deactivate Customer
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/customers/{{customerId}}/deactivate
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  customerId: 00000000-0000-4000-8000-000000000000
+}

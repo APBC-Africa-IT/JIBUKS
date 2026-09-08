@@ -1,0 +1,19 @@
+meta {
+  name: List Suppliers
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/suppliers
+  body: none
+  auth: none
+}
+
+params:query {
+  ~as_of: 2026-08-31
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}

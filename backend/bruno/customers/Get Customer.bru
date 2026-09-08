@@ -1,0 +1,23 @@
+meta {
+  name: Get Customer
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/customers/{{customerId}}
+  body: none
+  auth: none
+}
+
+params:query {
+  ~as_of: 2026-08-31
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  customerId: 00000000-0000-4000-8000-000000000000
+}
