@@ -26,6 +26,40 @@ export interface AccountRow {
   readonly created_at: string;
 }
 
+/** An AccountRow plus its computed balance -- what GET /accounts and GET
+ * /accounts/{id} return. Net of POSTED journal_lines against the account,
+ * on its natural side (debit for ASSET/EXPENSE, credit for
+ * LIABILITY/EQUITY/INCOME), as of `asOf` if given, otherwise as of now.
+ * bigint sum comes back from pg as a string. */
+export interface AccountWithBalanceRow extends AccountRow {
+  readonly balance_minor: string;
+}
+
+/**
+ * The join shared by listAccounts/getAccountById: sums POSTED journal_lines
+ * per account, signed onto each account's natural side. DRAFT/PENDING_APPROVAL
+ * journals never affect a balance -- only POSTED ones are real ledger effects
+ * (FR-ACC-02). In BALANCE_EXPR, j.id IS NULL covers both "no lines at all"
+ * and "lines whose journal didn't match the POSTED/asOf filter" -- either
+ * way, they contribute 0.
+ */
+function balanceJoin(asOfParamIndex: number | null): string {
+  const asOfClause = asOfParamIndex !== null ? ` AND j.date <= $${asOfParamIndex}` : "";
+  return `
+    LEFT JOIN journal_lines jl ON jl.account_id = a.id
+    LEFT JOIN journals j ON j.id = jl.journal_id AND j.status = 'POSTED'${asOfClause}
+  `;
+}
+
+const BALANCE_EXPR = `
+  COALESCE(SUM(
+    CASE WHEN j.id IS NULL THEN 0
+         WHEN a.type IN ('ASSET', 'EXPENSE') THEN jl.debit_minor - jl.credit_minor
+         ELSE jl.credit_minor - jl.debit_minor
+    END
+  ), 0)::text AS balance_minor
+`;
+
 export interface CreateAccountInput {
   readonly tenantId: string;
   readonly code: string;
@@ -72,18 +106,48 @@ export async function createAccount(input: CreateAccountInput, audit: AuditConte
   });
 }
 
-export async function listAccounts(tenantId: string): Promise<AccountRow[]> {
+export async function listAccounts(tenantId: string, asOf?: string): Promise<AccountWithBalanceRow[]> {
   return readAsTenant(tenantId, async (client) => {
-    const result = await client.query<AccountRow>(
-      `SELECT * FROM accounts ORDER BY code ASC`,
+    const params: unknown[] = [];
+    let asOfParamIndex: number | null = null;
+    if (asOf) {
+      params.push(asOf);
+      asOfParamIndex = params.length;
+    }
+
+    const result = await client.query<AccountWithBalanceRow>(
+      `SELECT a.*, ${BALANCE_EXPR}
+       FROM accounts a
+       ${balanceJoin(asOfParamIndex)}
+       GROUP BY a.id
+       ORDER BY a.code ASC`,
+      params,
     );
     return result.rows;
   });
 }
 
-export async function getAccountById(tenantId: string, accountId: string): Promise<AccountRow | null> {
+export async function getAccountById(
+  tenantId: string,
+  accountId: string,
+  asOf?: string,
+): Promise<AccountWithBalanceRow | null> {
   return readAsTenant(tenantId, async (client) => {
-    const result = await client.query<AccountRow>(`SELECT * FROM accounts WHERE id = $1`, [accountId]);
+    const params: unknown[] = [accountId];
+    let asOfParamIndex: number | null = null;
+    if (asOf) {
+      params.push(asOf);
+      asOfParamIndex = params.length;
+    }
+
+    const result = await client.query<AccountWithBalanceRow>(
+      `SELECT a.*, ${BALANCE_EXPR}
+       FROM accounts a
+       ${balanceJoin(asOfParamIndex)}
+       WHERE a.id = $1
+       GROUP BY a.id`,
+      params,
+    );
     return result.rows[0] ?? null;
   });
 }

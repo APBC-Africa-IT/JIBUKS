@@ -11,7 +11,7 @@ import { DomainError, isCurrencyCode, type AccountType } from "@jibuks/domain";
 import type { AccountSnapshot } from "@jibuks/ledger";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
-import type { AccountRow } from "./repository.js";
+import type { AccountRow, AccountWithBalanceRow } from "./repository.js";
 
 export interface CreateAccountRequest {
   readonly tenantId: string;
@@ -51,12 +51,12 @@ export async function createAccount(request: CreateAccountRequest, audit: AuditC
   );
 }
 
-export async function listAccounts(tenantId: string): Promise<AccountRow[]> {
-  return repository.listAccounts(tenantId);
+export async function listAccounts(tenantId: string, asOf?: string): Promise<AccountWithBalanceRow[]> {
+  return repository.listAccounts(tenantId, asOf);
 }
 
-export async function getAccount(tenantId: string, accountId: string): Promise<AccountRow> {
-  const account = await repository.getAccountById(tenantId, accountId);
+export async function getAccount(tenantId: string, accountId: string, asOf?: string): Promise<AccountWithBalanceRow> {
+  const account = await repository.getAccountById(tenantId, accountId, asOf);
   if (!account) {
     throw new DomainError("ACCOUNT_NOT_FOUND", `Account ${accountId} not found`);
   }
