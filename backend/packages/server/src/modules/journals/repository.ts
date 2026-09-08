@@ -40,6 +40,8 @@ export interface JournalLineRow {
   readonly narrative: string | null;
   readonly project_id: string | null;
   readonly department: string | null;
+  readonly customer_id: string | null;
+  readonly supplier_id: string | null;
 }
 
 export interface JournalWithLines extends JournalRow {
@@ -53,6 +55,8 @@ export interface CreateJournalLineInput {
   readonly narrative?: string;
   readonly projectId?: string;
   readonly department?: string;
+  readonly customerId?: string;
+  readonly supplierId?: string;
 }
 
 export interface CreateJournalInput {
@@ -100,8 +104,8 @@ export async function createJournal(input: CreateJournalInput, audit: AuditConte
     for (const line of input.lines) {
       const lineResult = await client.query<JournalLineRow>(
         `INSERT INTO journal_lines
-           (id, tenant_id, journal_id, account_id, debit_minor, credit_minor, narrative, project_id, department)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (id, tenant_id, journal_id, account_id, debit_minor, credit_minor, narrative, project_id, department, customer_id, supplier_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *`,
         [
           randomUUID(),
@@ -113,6 +117,8 @@ export async function createJournal(input: CreateJournalInput, audit: AuditConte
           line.narrative ?? null,
           line.projectId ?? null,
           line.department ?? null,
+          line.customerId ?? null,
+          line.supplierId ?? null,
         ],
       );
       lines.push(lineResult.rows[0]!);

@@ -16,6 +16,8 @@ export type AccountId = Uuid;
 export type JournalId = Uuid;
 export type BranchId = Uuid;
 export type PeriodId = Uuid;
+export type CustomerId = Uuid;
+export type SupplierId = Uuid;
 export type DeviceId = string;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

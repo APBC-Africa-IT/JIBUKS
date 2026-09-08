@@ -46,6 +46,8 @@ export function buildReversal(original: Journal, options: ReverseOptions): Journ
       ...(line.narrative !== undefined ? { narrative: `Reversal: ${line.narrative}` } : {}),
       ...(line.projectId !== undefined ? { projectId: line.projectId } : {}),
       ...(line.department !== undefined ? { department: line.department } : {}),
+      ...(line.customerId !== undefined ? { customerId: line.customerId } : {}),
+      ...(line.supplierId !== undefined ? { supplierId: line.supplierId } : {}),
     };
     return swapped;
   });

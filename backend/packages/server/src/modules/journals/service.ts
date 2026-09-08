@@ -14,6 +14,8 @@ import * as repository from "./repository.js";
 import type { JournalWithLines, CreateJournalLineInput } from "./repository.js";
 import * as accountsService from "../accounts/service.js";
 import * as periodsService from "../periods/service.js";
+import * as customersService from "../customers/service.js";
+import * as suppliersService from "../suppliers/service.js";
 
 export interface CreateJournalLineRequest {
   readonly accountId: string;
@@ -22,6 +24,8 @@ export interface CreateJournalLineRequest {
   readonly narrative?: string;
   readonly projectId?: string;
   readonly department?: string;
+  readonly customerId?: string;
+  readonly supplierId?: string;
 }
 
 export interface CreateJournalRequest {
@@ -70,6 +74,8 @@ function toDomainJournal(row: JournalWithLines): DomainJournal {
       ...(line.narrative ? { narrative: line.narrative } : {}),
       ...(line.project_id ? { projectId: line.project_id } : {}),
       ...(line.department ? { department: line.department } : {}),
+      ...(line.customer_id ? { customerId: line.customer_id } : {}),
+      ...(line.supplier_id ? { supplierId: line.supplier_id } : {}),
     })),
   };
 }
@@ -89,6 +95,27 @@ async function buildPostingContext(tenantId: string): Promise<PostingContext> {
   return { tenantId, accounts, periods: periodSnapshots };
 }
 
+/**
+ * Unlike account_id, customer_id/supplier_id never enter @jibuks/ledger's
+ * pure PostingContext (it stays account/period-only, per its own doc
+ * comment). Without this check, a cross-tenant customerId/supplierId would
+ * only be caught by the database trigger added alongside these columns,
+ * surfacing as an unhandled 500 instead of the same clean 404 a foreign
+ * account_id already gets via loadAccountSnapshots. This gives customer/
+ * supplier attribution the same fail-fast, well-formed error -- the DB
+ * trigger remains as defence-in-depth underneath it, same as everywhere
+ * else in this system.
+ */
+async function validatePartyAttribution(tenantId: string, lines: readonly CreateJournalLineRequest[]): Promise<void> {
+  const customerIds = new Set(lines.flatMap((l) => (l.customerId ? [l.customerId] : [])));
+  const supplierIds = new Set(lines.flatMap((l) => (l.supplierId ? [l.supplierId] : [])));
+
+  await Promise.all([
+    ...Array.from(customerIds, (id) => customersService.getCustomer(tenantId, id)),
+    ...Array.from(supplierIds, (id) => suppliersService.getSupplier(tenantId, id)),
+  ]);
+}
+
 function serializeLinesForRepository(
   lines: readonly CreateJournalLineRequest[],
 ): CreateJournalLineInput[] {
@@ -99,10 +126,13 @@ function serializeLinesForRepository(
     ...(line.narrative !== undefined ? { narrative: line.narrative } : {}),
     ...(line.projectId !== undefined ? { projectId: line.projectId } : {}),
     ...(line.department !== undefined ? { department: line.department } : {}),
+    ...(line.customerId !== undefined ? { customerId: line.customerId } : {}),
+    ...(line.supplierId !== undefined ? { supplierId: line.supplierId } : {}),
   }));
 }
 
 export async function createJournal(request: CreateJournalRequest, audit: AuditContext): Promise<JournalWithLines> {
+  await validatePartyAttribution(request.tenantId, request.lines);
   const context = await buildPostingContext(request.tenantId);
 
   const validated = validateForPosting(
@@ -205,6 +235,8 @@ export async function reverseJournal(
           ...(l.narrative !== undefined ? { narrative: l.narrative } : {}),
           ...(l.projectId !== undefined ? { projectId: l.projectId } : {}),
           ...(l.department !== undefined ? { department: l.department } : {}),
+          ...(l.customerId !== undefined ? { customerId: l.customerId } : {}),
+          ...(l.supplierId !== undefined ? { supplierId: l.supplierId } : {}),
         })),
       ),
     },

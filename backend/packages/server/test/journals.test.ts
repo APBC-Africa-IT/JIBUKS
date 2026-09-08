@@ -193,6 +193,31 @@ describe("POST /api/v1/journals", () => {
     expect(response.body.detail).toContain("3000");
   });
 
+  it("rejects a line carrying both a customerId and a supplierId with a precise 400 validation error", async () => {
+    const fixture = await makeFixture();
+
+    const response = await request(app)
+      .post("/api/v1/journals")
+      .set("Authorization", await authHeader())
+      .send(
+        balancedJournalBody(fixture, {
+          lines: [
+            {
+              accountId: fixture.cashAccountId,
+              debitMinor: 1000,
+              creditMinor: 0,
+              customerId: randomUUID(),
+              supplierId: randomUUID(),
+            },
+            { accountId: fixture.salesAccountId, debitMinor: 0, creditMinor: 1000 },
+          ],
+        }),
+      );
+
+    expect(response.status).toBe(400);
+    expect(response.body.title).toBe("VALIDATION_ERROR");
+  });
+
   it("rejects a journal with no period covering the posting date", async () => {
     const fixture = await makeFixture();
 
