@@ -71,7 +71,7 @@ An **unauthenticated** request (missing/invalid/expired token) gets `401 UNAUTHO
 
 Base path: `/api/v1/onboarding` 
 
-Self-service sign-up: creates a **brand-new tenant and its first user, together, atomically**. This is the app's very first screen for someone who has never used JiBUks before — directly supporting FR-MIC-07's minimal-friction merchant onboarding.
+Self-service sign-up: creates a **brand-new tenant and its first user, together, atomically**, then seeds everything that tenant needs to start recording transactions immediately: one **OPEN accounting period** and a **starter chart of accounts**. This is the app's very first screen for someone who has never used JiBUks before — directly supporting FR-MIC-07's minimal-friction merchant onboarding.
 
 ⚠️ **Requires:** a genuine Auth0 token. Does **not** require an already-provisioned platform user — that's precisely what this endpoint creates.
 
@@ -89,7 +89,9 @@ Self-service sign-up: creates a **brand-new tenant and its first user, together,
   "tenantType": "BUSINESS",
   "baseCurrency": "KES",
   "userName": "Jane Wanjiru",
-  "email": "jane@example.com"
+  "email": "jane@example.com",
+  "vatRegistered": false,
+  "periodStartDate": "2026-09-01"
 }
 ```
 
@@ -101,6 +103,8 @@ Self-service sign-up: creates a **brand-new tenant and its first user, together,
 | `userName` | string | ✅ Yes | Display name of the first user (the person onboarding). Max 200 chars. |
 | `email` | string | No | Contact email. Not verified against the token — see note below. |
 | `phone` | string | No | Contact phone. |
+| `vatRegistered` | boolean | ✅ Yes | Whether this business charges VAT. Kenya's VAT registration threshold is currently an annual turnover of KES 5,000,000. Ask the equivalent of QuickBooks' "Do you charge sales tax?" step. Determines whether VAT accounts are seeded (below) and whether your UI should show tax fields on the Credit Sale/Cash Sale/Write Bill screens at all. |
+| `periodStartDate` | string (date) | ✅ Yes | The date this tenant's books begin — the equivalent of QuickBooks' "books start date" step. Onboarding seeds one OPEN period from this date through the end of that calendar month. |
 
 The new user's `external_idp_subject` is taken directly from the verified token's `sub` claim — not from anything in the request body, and not something the client can override.
 
@@ -115,6 +119,7 @@ The new user's `external_idp_subject` is taken directly from the verified token'
     "accounting_framework": "GAAP",
     "plan_tier": "STARTER",
     "status": "ACTIVE",
+    "vat_registered": false,
     "created_at": "2026-08-03T00:55:32.051Z"
   },
   "user": {
@@ -128,9 +133,30 @@ The new user's `external_idp_subject` is taken directly from the verified token'
     "mfa_enabled": false,
     "is_super_admin": false,
     "created_at": "2026-08-03T00:55:32.051Z"
-  }
+  },
+  "period": {
+    "id": "3a2f3e6c-4a2b-4c1a-9c1a-4a2b4c1a9c1a",
+    "tenant_id": "75d11c00-1694-4461-8048-a49d305b9ada",
+    "start_date": "2026-09-01",
+    "end_date": "2026-09-30",
+    "status": "OPEN"
+  },
+  "accounts": [
+    { "id": "...", "code": "1000", "name": "Cash", "type": "ASSET", "is_active": true, "is_postable": true },
+    { "id": "...", "code": "1010", "name": "Bank", "type": "ASSET", "is_active": true, "is_postable": true },
+    { "id": "...", "code": "1100", "name": "Accounts Receivable", "type": "ASSET", "is_active": true, "is_postable": true },
+    { "id": "...", "code": "2000", "name": "Accounts Payable", "type": "LIABILITY", "is_active": true, "is_postable": true },
+    { "id": "...", "code": "3000", "name": "Owner's Equity", "type": "EQUITY", "is_active": true, "is_postable": true },
+    { "id": "...", "code": "4000", "name": "Sales Revenue", "type": "INCOME", "is_active": true, "is_postable": true },
+    { "id": "...", "code": "5000", "name": "Purchases", "type": "EXPENSE", "is_active": true, "is_postable": true },
+    { "id": "...", "code": "5100", "name": "General Expenses", "type": "EXPENSE", "is_active": true, "is_postable": true }
+  ]
 }
 ```
+
+**The starter chart of accounts** always includes Cash, Bank, Accounts Receivable, Accounts Payable, Owner's Equity, Sales Revenue, Purchases, and General Expenses (codes `1000`–`5100` above). If `vatRegistered: true`, two more accounts are added: `1200` VAT Recoverable (Input VAT, an ASSET — used as `taxAccountId` on `POST /bills`) and `2100` VAT Payable (Output VAT, a LIABILITY — used as `taxAccountId` on `POST /credit-sales`/`POST /cash-sales`).
+
+**Use these account ids directly** with `POST /credit-sales`, `POST /cash-sales`, `POST /bills`, and `POST /cheques` — no extra `GET /accounts` round trip is needed right after sign-up. A user can still rename, deactivate, or add more accounts later via the `/accounts` endpoints; nothing about this starter set is special or protected.
 
 **Error Response:** `401 Unauthorized` — missing/invalid token.
 
@@ -152,6 +178,7 @@ The new user's `external_idp_subject` is taken directly from the verified token'
 
 - One Auth0 identity maps to exactly **one** tenant, permanently.
 - Both the tenant creation and the user creation are recorded in the audit trail, with the new user recorded as the actor of their own creation.
+- The seeded period only covers `periodStartDate`'s calendar month. Posting to a later month needs a new period first — there is no automatic month-end rollover yet, so plan for a "create next period" step (or prompt) once the seeded period is close to its `end_date`.
 
 ---
 
