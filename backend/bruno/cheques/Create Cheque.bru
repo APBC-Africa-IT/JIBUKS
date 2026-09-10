@@ -1,0 +1,30 @@
+meta {
+  name: Create Cheque
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/cheques
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "bankAccountId": "{{bankAccountId}}",
+    "date": "2026-09-15",
+    "currency": "KES",
+    "reference": "CHQ-0001",
+    "lines": [
+      { "accountId": "{{apAccountId}}", "amountMinor": 60000, "supplierId": "{{supplierId}}" },
+      { "accountId": "{{expenseAccountId}}", "amountMinor": 15000, "narrative": "Office supplies" }
+    ]
+  }
+}

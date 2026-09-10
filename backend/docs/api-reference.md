@@ -38,6 +38,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.9 Credit Sales](#79-credit-sales)
 - [7.10 Cash Sales](#710-cash-sales)
 - [7.11 Bills](#711-bills)
+- [7.12 Cheques](#712-cheques)
 
 ---
 
@@ -716,7 +717,6 @@ Dr Accounts Receivable   (gross = net + tax)
 ### Notes for consuming clients (Credit Sales)
 
 - This is a convenience wrapper, not a separate ledger concept — the resulting journal shows up in `GET /journals` and counts toward the customer's `balance_minor` exactly like a hand-built one.
-- There is no guided "Write Bill"/"Write Cheque" endpoint yet — those still go through `POST /journals` directly.
 
 ---
 
@@ -759,7 +759,7 @@ Dr Cash/Bank             (gross = net + tax)
 
 ### Notes for consuming clients (Cash Sales)
 
-- There is no guided "Write Cheque" endpoint yet — that still goes through `POST /journals` directly.
+- This is a convenience wrapper, not a separate ledger concept — the resulting journal shows up in `GET /journals` exactly like a hand-built one.
 
 ---
 
@@ -806,4 +806,46 @@ Note the tax direction flips relative to a sale: VAT paid on a purchase is money
 ### Notes for consuming clients (Bills)
 
 - This is a convenience wrapper, not a separate ledger concept — the resulting journal shows up in `GET /journals` and counts toward the supplier's `balance_minor` exactly like a hand-built one.
-- There is no guided "Write Cheque" endpoint yet — that still goes through `POST /journals` directly (e.g. to record paying off this bill later: `Dr Accounts Payable` with `supplierId` set / `Cr Bank`).
+- To pay off this bill later, see [7.12 Cheques](#712-cheques).
+
+---
+
+## 7.12 Cheques
+
+Base path: `/api/v1/cheques` 
+
+Guided endpoint for a payment **out** — the Cash Payments Book entry of manual bookkeeping. Unlike Credit Sale/Cash Sale/Write Bill, there is no single well-known "other side": a cheque might clear part of a supplier's outstanding bill, pay an expense directly, or both in the same cheque. Every line is simply a debit against whatever the payment is for:
+
+```
+Dr <line accountId>(s)   (whatever the cheque pays for)
+    Cr Bank              (gross — the total of all lines)
+```
+
+---
+
+### `POST /cheques` 
+
+Clearing part of a supplier's bill, and paying an office-supplies expense directly, in one cheque:
+```json
+{
+  "clientUuid": "550e8400-e29b-41d4-a716-446655440103",
+  "bankAccountId": "2b3c4d5e-6f7a-4a10-9c1a-4a2b4c1a9c1a",
+  "date": "2026-09-15",
+  "currency": "KES",
+  "reference": "CHQ-0001",
+  "lines": [
+    { "accountId": "<ap-account-id>", "amountMinor": 60000, "supplierId": "<supplier-id>" },
+    { "accountId": "<expense-account-id>", "amountMinor": 15000, "narrative": "Office supplies" }
+  ]
+}
+```
+
+- `lines` takes one entry per debit — at least one is required. A line may optionally carry `customerId` **or** `supplierId` (never both), e.g. to attribute a line to clearing part of that supplier's outstanding bill — see [7.5 Customers](#75-customers) / [7.6 Suppliers](#76-suppliers). Most cheque lines carry neither (a direct expense payment has no party).
+- There is no `taxAccountId`/`taxAmountMinor` pair here, unlike the other three guided endpoints — tax was already booked when the bill or sale it relates to was recorded. If the cheque itself needs a tax split (e.g. paying a one-off expense directly, bypassing a bill), just add another line for it.
+- The response is a full `Journal`, with `source: "PAYMENT"` (the same source manual customer/supplier payments use) and one line per request line (debit) plus Bank (credit, for the sum of all lines).
+- `description` defaults to `"Cheque payment"` if omitted. `reference` is conventionally the cheque number.
+- Posts through the exact same pipeline as `POST /journals` — period, account, and customer/supplier-attribution checks all apply identically: `404 CUSTOMER_NOT_FOUND` / `SUPPLIER_NOT_FOUND` / `ACCOUNT_NOT_FOUND` / `PERIOD_NOT_FOUND`, `422 PERIOD_LOCKED` / `ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE`, `400 VALIDATION_ERROR` if a line carries both `customerId` and `supplierId`.
+
+### Notes for consuming clients (Cheques)
+
+- This is a convenience wrapper, not a separate ledger concept — the resulting journal shows up in `GET /journals` and counts toward the tagged customer's/supplier's `balance_minor` exactly like a hand-built one.

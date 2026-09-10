@@ -242,6 +242,52 @@ export const createWriteBillSchema = z
 
 export type CreateWriteBillDto = z.infer<typeof createWriteBillSchema>;
 
+/**
+ * Guided Write Cheque (the Cash Payments Book entry of manual bookkeeping)
+ * -- a payment OUT, unlike the other three guided endpoints which each
+ * record a new sale/purchase event. Its lines are naturally heterogeneous:
+ * some may clear an existing supplier bill (accountId = AP, supplierId
+ * set), others may pay an expense directly (no party at all) -- so, unlike
+ * Credit Sale/Cash Sale/Write Bill, there is no single well-known "the
+ * other side" account type; every line is just a debit against whatever
+ * account the payment is for:
+ *   Dr <line accountId>(s)  (whatever the cheque is paying for)
+ *     Cr Bank                (gross)
+ * See packages/server/src/modules/cheques.
+ */
+const writeChequeLineSchema = z
+  .object({
+    accountId: uuidSchema,
+    amountMinor: minorUnitsSchema,
+    narrative: z.string().max(500).optional(),
+    /** Optional attribution to a customer/supplier subledger (mutually
+     * exclusive) -- e.g. tag supplierId when this line clears part of
+     * that supplier's outstanding bill. */
+    customerId: uuidSchema.optional(),
+    supplierId: uuidSchema.optional(),
+  })
+  .refine((l) => l.amountMinor > 0, {
+    message: "A cheque line amount must be greater than zero",
+    path: ["amountMinor"],
+  })
+  .refine((l) => !(l.customerId && l.supplierId), {
+    message: "A line carries either a customer or a supplier, never both",
+    path: ["customerId"],
+  });
+
+export const createWriteChequeSchema = z.object({
+  clientUuid: uuidSchema,
+  branchId: uuidSchema.optional(),
+  bankAccountId: uuidSchema,
+  date: accountingDateSchema,
+  currency: currencySchema,
+  reference: z.string().max(100).optional(),
+  description: z.string().max(500).optional(),
+  lines: z.array(writeChequeLineSchema).min(1, "A cheque needs at least one line"),
+});
+
+export type CreateWriteChequeDto = z.infer<typeof createWriteChequeSchema>;
+
 export const createPeriodSchema = z.object({
   startDate: accountingDateSchema,
   endDate: accountingDateSchema,

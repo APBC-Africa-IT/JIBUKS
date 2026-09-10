@@ -115,6 +115,12 @@ tags:
       Guided Write Bill endpoint (the Purchases Day Book entry of manual
       bookkeeping) — the supplier-side mirror of Credit Sale. Posts with
       source BILL.
+  - name: Cheques
+    description: >
+      Guided Write Cheque endpoint (the Cash Payments Book entry of manual
+      bookkeeping) — a payment OUT, whether clearing a supplier bill,
+      paying an expense directly, or both in one cheque. Posts with source
+      PAYMENT.
 
 # Applied to every operation by default (see the per-operation overrides on
 # the two /onboarding operations, which relax this to "token only").
@@ -1137,6 +1143,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  # ── Cheques ─────────────────────────────────────────────────────────
+  /cheques:
+    post:
+      tags: [Cheques]
+      summary: Record a cheque payment (guided Cash Payments Book entry)
+      description: >
+        Builds and posts Dr each line's account (whatever the cheque pays
+        for — clearing part of a supplier's bill, or an expense directly)
+        / Cr Bank (gross), through the same posting pipeline as POST
+        /journals (source PAYMENT). Unlike Credit Sale/Cash Sale/Write
+        Bill, there is no single well-known "other side" — a line may
+        optionally carry customerId or supplierId (never both), e.g. to
+        clear part of that supplier's outstanding balance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWriteChequeRequest'
+            example:
+              clientUuid: "550e8400-e29b-41d4-a716-446655440103"
+              bankAccountId: "2b3c4d5e-6f7a-4a10-9c1a-4a2b4c1a9c1a"
+              date: "2026-09-15"
+              currency: "KES"
+              reference: "CHQ-0001"
+              lines:
+                - accountId: "8a1a185a-c76b-4e0a-9f0e-df5772307a74"
+                  amountMinor: 60000
+                  supplierId: "9a2f3e6c-4a2b-4c1a-9c1a-4a2b4c1a9c1a"
+                - accountId: "f5f2cf8a-4f7d-4a10-a807-66deb74ac350"
+                  amountMinor: 15000
+                  narrative: "Office supplies"
+      responses:
+        '201':
+          description: The posted journal for this cheque payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Journal'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: bankAccountId, a line's accountId, customerId or supplierId not found, or no period covers the given date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: An account is inactive/non-postable, or the covering period is closed/locked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 # ════════════════════════════════════════════════════════════════════
 # Components — reusable security schemes, parameters, schemas, responses
 # ════════════════════════════════════════════════════════════════════
@@ -1823,6 +1885,73 @@ components:
           minimum: 0
           default: 0
           description: Total input tax on the bill, e.g. Kenyan VAT at 16% of the net total.
+
+    WriteChequeLine:
+      type: object
+      required: [accountId, amountMinor]
+      properties:
+        accountId:
+          type: string
+          format: uuid
+          description: Whatever the cheque pays for — an AP account (to clear a bill), an expense, an asset, etc.
+        amountMinor:
+          type: integer
+          minimum: 1
+        narrative: { type: string }
+        customerId:
+          type: string
+          format: uuid
+          description: >
+            Optional attribution to a customer's AR subledger. Mutually
+            exclusive with supplierId; must belong to the caller's tenant.
+        supplierId:
+          type: string
+          format: uuid
+          description: >
+            Optional attribution to a supplier's AP subledger (e.g. this
+            line clears part of that supplier's outstanding bill). Mutually
+            exclusive with customerId; must belong to the caller's tenant.
+    CreateWriteChequeRequest:
+      type: object
+      required: [clientUuid, bankAccountId, date, currency, lines]
+      description: >
+        Guided endpoint for the Cash Payments Book entry of a cheque
+        payment. Unlike the other three guided endpoints, there is no
+        single well-known "other side" — every line is a debit against
+        whatever the payment is for, credited in total to bankAccountId.
+        Posts through the same pipeline as POST /journals (source PAYMENT).
+      properties:
+        clientUuid:
+          type: string
+          format: uuid
+          description: Client-generated identity for the underlying journal.
+        branchId:
+          type: string
+          format: uuid
+          nullable: true
+        bankAccountId:
+          type: string
+          format: uuid
+          description: The Cash or Bank ASSET account credited for the total of all lines.
+        date:
+          type: string
+          format: date
+          description: Must fall within an OPEN period for this tenant.
+        currency:
+          type: string
+          example: "KES"
+        reference:
+          type: string
+          example: "CHQ-0001"
+          description: The cheque number, conventionally.
+        description:
+          type: string
+          description: Defaults to "Cheque payment" when omitted.
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/WriteChequeLine'
 
     # -- Shared error shape (RFC 7807, Section 9.1) --
     ProblemDetails:
