@@ -110,6 +110,11 @@ tags:
       Guided cash-sale endpoint (the Cash Receipts Book entry of manual
       bookkeeping) — payment received immediately, no customer/AR involved.
       Posts with source CASHBOOK.
+  - name: Bills
+    description: >
+      Guided Write Bill endpoint (the Purchases Day Book entry of manual
+      bookkeeping) — the supplier-side mirror of Credit Sale. Posts with
+      source BILL.
 
 # Applied to every operation by default (see the per-operation overrides on
 # the two /onboarding operations, which relax this to "token only").
@@ -1078,6 +1083,60 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  # ── Bills ───────────────────────────────────────────────────────────
+  /bills:
+    post:
+      tags: [Bills]
+      summary: Record a bill (guided Purchases Day Book entry)
+      description: >
+        Builds and posts Dr each expense line (net) / Dr the input tax
+        account (if taxAmountMinor > 0) / Cr Accounts Payable (gross,
+        tagged to supplierId), through the same posting pipeline as POST
+        /journals. The supplier-side mirror of POST /credit-sales — tax on
+        a purchase is a debit (reclaimable), not a credit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWriteBillRequest'
+            example:
+              clientUuid: "550e8400-e29b-41d4-a716-446655440102"
+              supplierId: "9a2f3e6c-4a2b-4c1a-9c1a-4a2b4c1a9c1a"
+              payableAccountId: "8a1a185a-c76b-4e0a-9f0e-df5772307a74"
+              date: "2026-09-15"
+              currency: "KES"
+              reference: "BILL-0001"
+              lines:
+                - expenseAccountId: "f5f2cf8a-4f7d-4a10-a807-66deb74ac350"
+                  amountMinor: 100000
+                  narrative: "Stock purchased"
+              taxAccountId: "4f6c1a4a-2b4c-4c1a-9c1a-4a2b4c1a9c1c"
+              taxAmountMinor: 16000
+      responses:
+        '201':
+          description: The posted journal for this bill
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Journal'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: supplierId, payableAccountId, an expenseAccountId or taxAccountId not found, or no period covers the given date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: An account is inactive/non-postable, or the covering period is closed/locked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 # ════════════════════════════════════════════════════════════════════
 # Components — reusable security schemes, parameters, schemas, responses
 # ════════════════════════════════════════════════════════════════════
@@ -1475,7 +1534,7 @@ components:
     # -- Journals --
     JournalSource:
       type: string
-      enum: [MANUAL, CASHBOOK, PAYMENT, SALE, IMPORT, COMMUNITY, OPENING, REVERSAL]
+      enum: [MANUAL, CASHBOOK, PAYMENT, SALE, BILL, IMPORT, COMMUNITY, OPENING, REVERSAL]
     JournalStatus:
       type: string
       enum: [DRAFT, PENDING_APPROVAL, POSTED]
@@ -1697,6 +1756,73 @@ components:
           minimum: 0
           default: 0
           description: Total tax across the sale, e.g. Kenyan VAT at 16% of the net total.
+
+    BillLine:
+      type: object
+      required: [expenseAccountId, amountMinor]
+      properties:
+        expenseAccountId: { type: string, format: uuid }
+        amountMinor:
+          type: integer
+          minimum: 1
+          description: Net (pre-tax) amount for this expense line.
+        narrative: { type: string }
+    CreateWriteBillRequest:
+      type: object
+      required: [clientUuid, supplierId, payableAccountId, date, currency, lines]
+      description: >
+        Guided endpoint for the Purchases Day Book entry of a bill — the
+        supplier-side mirror of Credit Sale. Composes a balanced journal —
+        Dr each expense line (net) / Dr the input tax account (if any) /
+        Cr Accounts Payable (gross) — and posts it through the same
+        pipeline as POST /journals (source BILL).
+      properties:
+        clientUuid:
+          type: string
+          format: uuid
+          description: Client-generated identity for the underlying journal.
+        branchId:
+          type: string
+          format: uuid
+          nullable: true
+        supplierId:
+          type: string
+          format: uuid
+          description: Must belong to the caller's tenant; tagged onto the AP line.
+        payableAccountId:
+          type: string
+          format: uuid
+          description: The LIABILITY account credited for the gross (net + tax) amount.
+        date:
+          type: string
+          format: date
+          description: Must fall within an OPEN period for this tenant.
+        currency:
+          type: string
+          example: "KES"
+        reference:
+          type: string
+          example: "BILL-0001"
+        description:
+          type: string
+          description: Defaults to "Bill" when omitted.
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/BillLine'
+        taxAccountId:
+          type: string
+          format: uuid
+          description: >
+            ASSET account debited for taxAmountMinor (e.g. Input VAT
+            Recoverable) — unlike a sale's tax, this is reclaimable, not
+            owed. Required whenever taxAmountMinor is greater than zero.
+        taxAmountMinor:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Total input tax on the bill, e.g. Kenyan VAT at 16% of the net total.
 
     # -- Shared error shape (RFC 7807, Section 9.1) --
     ProblemDetails:

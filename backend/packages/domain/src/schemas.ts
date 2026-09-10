@@ -197,6 +197,51 @@ export const createCashSaleSchema = z
 
 export type CreateCashSaleDto = z.infer<typeof createCashSaleSchema>;
 
+/**
+ * Guided Write Bill (the Purchases Day Book entry of manual bookkeeping) --
+ * the supplier-side mirror of Credit Sale. Tax on a purchase is money the
+ * business can reclaim (input VAT), so unlike a sale's tax line, it is a
+ * DEBIT here, not a credit:
+ *   Dr Expense/Asset line(s) (net)
+ *   Dr Input Tax (if any)
+ *     Cr Accounts Payable (gross, tagged to the supplier)
+ * See packages/server/src/modules/bills.
+ */
+const billLineSchema = z
+  .object({
+    expenseAccountId: uuidSchema,
+    amountMinor: minorUnitsSchema,
+    narrative: z.string().max(500).optional(),
+  })
+  .refine((l) => l.amountMinor > 0, {
+    message: "A bill line amount must be greater than zero",
+    path: ["amountMinor"],
+  });
+
+export const createWriteBillSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    branchId: uuidSchema.optional(),
+    supplierId: uuidSchema,
+    payableAccountId: uuidSchema,
+    date: accountingDateSchema,
+    currency: currencySchema,
+    reference: z.string().max(100).optional(),
+    description: z.string().max(500).optional(),
+    lines: z.array(billLineSchema).min(1, "A bill needs at least one expense line"),
+    /** Input tax (e.g. Kenyan VAT) is a single debit against one recoverable
+     * tax account -- multiple tax rates in one bill would need multiple
+     * lines, not modelled here in this first cut. */
+    taxAccountId: uuidSchema.optional(),
+    taxAmountMinor: minorUnitsSchema.default(0),
+  })
+  .refine((r) => r.taxAmountMinor === 0 || r.taxAccountId !== undefined, {
+    message: "taxAccountId is required when taxAmountMinor is greater than zero",
+    path: ["taxAccountId"],
+  });
+
+export type CreateWriteBillDto = z.infer<typeof createWriteBillSchema>;
+
 export const createPeriodSchema = z.object({
   startDate: accountingDateSchema,
   endDate: accountingDateSchema,

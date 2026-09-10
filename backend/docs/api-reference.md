@@ -37,6 +37,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.8 Journals](#78-journals)
 - [7.9 Credit Sales](#79-credit-sales)
 - [7.10 Cash Sales](#710-cash-sales)
+- [7.11 Bills](#711-bills)
 
 ---
 
@@ -572,7 +573,7 @@ Same query parameters (`as_of`) and shape as `GET /customers`, with `balance_min
 ### Notes for consuming clients (Suppliers)
 
 - A journal line may carry `customerId` **or** `supplierId`, never both — `400 VALIDATION_ERROR` otherwise.
-- There is no guided "Write Bill" endpoint yet — attributing a journal line to a supplier today means posting via `POST /journals` directly with `supplierId` set on the relevant line.
+- For the guided purchase flow, see [7.11 Bills](#711-bills) — `POST /bills` builds the balanced expense/AP/tax journal for you. `POST /journals` directly with `supplierId` set is still available for anything that doesn't fit that shape.
 
 ---
 
@@ -758,4 +759,51 @@ Dr Cash/Bank             (gross = net + tax)
 
 ### Notes for consuming clients (Cash Sales)
 
-- There is no guided "Write Bill"/"Write Cheque" endpoint yet — those still go through `POST /journals` directly.
+- There is no guided "Write Cheque" endpoint yet — that still goes through `POST /journals` directly.
+
+---
+
+## 7.11 Bills
+
+Base path: `/api/v1/bills` 
+
+Guided endpoint for the supplier-side mirror of [7.9 Credit Sales](#79-credit-sales) — recording a purchase made on credit. Standard double-entry for a bill:
+
+```
+Dr Expense/Asset line(s)   (net, one per line)
+Dr Input Tax               (if any tax — reclaimable, unlike a sale's tax)
+    Cr Accounts Payable    (gross = net + tax)
+```
+
+Note the tax direction flips relative to a sale: VAT paid on a purchase is money the business can reclaim, so it's a **debit**, not a credit.
+
+---
+
+### `POST /bills` 
+
+```json
+{
+  "clientUuid": "550e8400-e29b-41d4-a716-446655440102",
+  "supplierId": "9a2f3e6c-4a2b-4c1a-9c1a-4a2b4c1a9c1a",
+  "payableAccountId": "8a1a185a-c76b-4e0a-9f0e-df5772307a74",
+  "date": "2026-09-15",
+  "currency": "KES",
+  "reference": "BILL-0001",
+  "lines": [
+    { "expenseAccountId": "f5f2cf8a-4f7d-4a10-a807-66deb74ac350", "amountMinor": 100000, "narrative": "Stock purchased" }
+  ],
+  "taxAccountId": "4f6c1a4a-2b4c-4c1a-9c1a-4a2b4c1a9c1c",
+  "taxAmountMinor": 16000
+}
+```
+
+- `lines` takes one entry per expense line — at least one is required. `amountMinor` on each is the **net** amount; the server sums them for the debit side.
+- `taxAccountId`/`taxAmountMinor` are both optional, but `taxAccountId` is **required** whenever `taxAmountMinor > 0` (`400 VALIDATION_ERROR` otherwise). `taxAccountId` should point at a recoverable-tax ASSET account (e.g. "Input VAT Recoverable"), not a liability.
+- The response is a full `Journal`, with `source: "BILL"` and one line per: each expense line (debit), tax (debit, if present), and AP (credit, `supplierId` tagged).
+- `description` defaults to `"Bill"` if omitted.
+- Posts through the exact same pipeline as `POST /journals` — period, account, and supplier-attribution checks all apply identically: `404 SUPPLIER_NOT_FOUND` / `ACCOUNT_NOT_FOUND` / `PERIOD_NOT_FOUND`, `422 PERIOD_LOCKED` / `ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE`.
+
+### Notes for consuming clients (Bills)
+
+- This is a convenience wrapper, not a separate ledger concept — the resulting journal shows up in `GET /journals` and counts toward the supplier's `balance_minor` exactly like a hand-built one.
+- There is no guided "Write Cheque" endpoint yet — that still goes through `POST /journals` directly (e.g. to record paying off this bill later: `Dr Accounts Payable` with `supplierId` set / `Cr Bank`).
