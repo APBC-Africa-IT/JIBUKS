@@ -36,6 +36,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.7 Periods](#77-periods)
 - [7.8 Journals](#78-journals)
 - [7.9 Credit Sales](#79-credit-sales)
+- [7.10 Cash Sales](#710-cash-sales)
 
 ---
 
@@ -714,4 +715,47 @@ Dr Accounts Receivable   (gross = net + tax)
 ### Notes for consuming clients (Credit Sales)
 
 - This is a convenience wrapper, not a separate ledger concept — the resulting journal shows up in `GET /journals` and counts toward the customer's `balance_minor` exactly like a hand-built one.
-- There is no guided "Cash Sale" or "Write Bill"/"Write Cheque" endpoint yet — those still go through `POST /journals` directly.
+- There is no guided "Write Bill"/"Write Cheque" endpoint yet — those still go through `POST /journals` directly.
+
+---
+
+## 7.10 Cash Sales
+
+Base path: `/api/v1/cash-sales` 
+
+Guided endpoint for a sale paid immediately — no customer, no Accounts Receivable. Standard double-entry for a cash sale:
+
+```
+Dr Cash/Bank             (gross = net + tax)
+    Cr Revenue line(s)   (net, one per line)
+    Cr Tax Payable       (if any tax)
+```
+
+---
+
+### `POST /cash-sales` 
+
+```json
+{
+  "clientUuid": "550e8400-e29b-41d4-a716-446655440101",
+  "receivedAccountId": "1a2b3c4d-5e6f-4a10-9c1a-4a2b4c1a9c1a",
+  "date": "2026-09-15",
+  "currency": "KES",
+  "reference": "RCT-0001",
+  "lines": [
+    { "incomeAccountId": "e5f2cf8a-4f7d-4a10-a807-66deb74ac350", "amountMinor": 50000, "narrative": "Goods sold" }
+  ],
+  "taxAccountId": "3f6c1a4a-2b4c-4c1a-9c1a-4a2b4c1a9c1b",
+  "taxAmountMinor": 8000
+}
+```
+
+- Same `lines` / `taxAccountId` / `taxAmountMinor` rules as [7.9 Credit Sales](#79-credit-sales) — at least one revenue line required, `taxAccountId` required whenever `taxAmountMinor > 0`.
+- No `customerId` field exists here at all — a cash sale never touches a customer's AR subledger, since nothing is owed.
+- The response is a full `Journal`, with `source: "CASHBOOK"` (the same source manual cash-receipt entries use) and one line per: Cash/Bank (debit), each revenue line (credit), and tax (credit, if present).
+- `description` defaults to `"Cash sale"` if omitted.
+- Same error codes as Credit Sale, minus anything customer-related: `404 ACCOUNT_NOT_FOUND` / `PERIOD_NOT_FOUND`, `422 PERIOD_LOCKED` / `ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE`.
+
+### Notes for consuming clients (Cash Sales)
+
+- There is no guided "Write Bill"/"Write Cheque" endpoint yet — those still go through `POST /journals` directly.

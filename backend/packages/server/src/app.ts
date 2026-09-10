@@ -22,6 +22,7 @@ import { suppliersRouter } from "./modules/suppliers/routes.js";
 import { periodsRouter } from "./modules/periods/routes.js";
 import { journalsRouter } from "./modules/journals/routes.js";
 import { creditSalesRouter } from "./modules/creditSales/routes.js";
+import { cashSalesRouter } from "./modules/cashSales/routes.js";
 import { requireAuth0Token } from "./middleware/auth0.js";
 
 export function createApp(): Express {
@@ -59,6 +60,7 @@ export function createApp(): Express {
   app.use("/api/v1/periods", periodsRouter);
   app.use("/api/v1/journals", journalsRouter);
   app.use("/api/v1/credit-sales", creditSalesRouter);
+  app.use("/api/v1/cash-sales", cashSalesRouter);
 
   // Error handler must be registered LAST -- Express identifies it by its
   // four-parameter arity and only routes errors to middleware registered

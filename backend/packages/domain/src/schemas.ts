@@ -122,6 +122,21 @@ export type CreateCustomerDto = z.infer<typeof createCustomerSchema>;
 export type CreateSupplierDto = z.infer<typeof createSupplierSchema>;
 
 /**
+ * Shared revenue-line shape for both guided sale endpoints below: one
+ * income account plus the net (pre-tax) amount for that line.
+ */
+const saleLineSchema = z
+  .object({
+    incomeAccountId: uuidSchema,
+    amountMinor: minorUnitsSchema,
+    narrative: z.string().max(500).optional(),
+  })
+  .refine((l) => l.amountMinor > 0, {
+    message: "A sale line amount must be greater than zero",
+    path: ["amountMinor"],
+  });
+
+/**
  * Guided Credit Sale (the Sales Day Book entry of manual bookkeeping):
  *   Dr Accounts Receivable (gross, tagged to the customer)
  *     Cr Revenue line(s) (net)
@@ -129,17 +144,6 @@ export type CreateSupplierDto = z.infer<typeof createSupplierSchema>;
  * The client supplies the invoice shape; the server computes the AR total
  * and builds the balanced journal -- see packages/server/src/modules/creditSales.
  */
-const creditSaleLineSchema = z
-  .object({
-    incomeAccountId: uuidSchema,
-    amountMinor: minorUnitsSchema,
-    narrative: z.string().max(500).optional(),
-  })
-  .refine((l) => l.amountMinor > 0, {
-    message: "A credit sale line amount must be greater than zero",
-    path: ["amountMinor"],
-  });
-
 export const createCreditSaleSchema = z
   .object({
     clientUuid: uuidSchema,
@@ -150,7 +154,7 @@ export const createCreditSaleSchema = z
     currency: currencySchema,
     reference: z.string().max(100).optional(),
     description: z.string().max(500).optional(),
-    lines: z.array(creditSaleLineSchema).min(1, "A credit sale needs at least one revenue line"),
+    lines: z.array(saleLineSchema).min(1, "A credit sale needs at least one revenue line"),
     /** Tax (e.g. Kenyan VAT) is a single credit against one tax account --
      * multiple tax rates in one sale would need multiple lines, not
      * modelled here in this first cut. */
@@ -163,6 +167,35 @@ export const createCreditSaleSchema = z
   });
 
 export type CreateCreditSaleDto = z.infer<typeof createCreditSaleSchema>;
+
+/**
+ * Guided Cash Sale (the Cash Receipts Book entry of manual bookkeeping) --
+ * payment is received immediately, so there is no customer/AR involved at
+ * all, unlike Credit Sale:
+ *   Dr Cash/Bank (gross)
+ *     Cr Revenue line(s) (net)
+ *     Cr Tax Payable (VAT/sales tax, if any)
+ * See packages/server/src/modules/cashSales.
+ */
+export const createCashSaleSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    branchId: uuidSchema.optional(),
+    receivedAccountId: uuidSchema,
+    date: accountingDateSchema,
+    currency: currencySchema,
+    reference: z.string().max(100).optional(),
+    description: z.string().max(500).optional(),
+    lines: z.array(saleLineSchema).min(1, "A cash sale needs at least one revenue line"),
+    taxAccountId: uuidSchema.optional(),
+    taxAmountMinor: minorUnitsSchema.default(0),
+  })
+  .refine((r) => r.taxAmountMinor === 0 || r.taxAccountId !== undefined, {
+    message: "taxAccountId is required when taxAmountMinor is greater than zero",
+    path: ["taxAccountId"],
+  });
+
+export type CreateCashSaleDto = z.infer<typeof createCashSaleSchema>;
 
 export const createPeriodSchema = z.object({
   startDate: accountingDateSchema,

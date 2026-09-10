@@ -1,0 +1,31 @@
+meta {
+  name: Create Cash Sale
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/cash-sales
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "receivedAccountId": "{{cashAccountId}}",
+    "date": "2026-09-15",
+    "currency": "KES",
+    "reference": "RCT-0001",
+    "lines": [
+      { "incomeAccountId": "{{salesAccountId}}", "amountMinor": 50000, "narrative": "Goods sold" }
+    ],
+    "taxAccountId": "{{vatAccountId}}",
+    "taxAmountMinor": 8000
+  }
+}
