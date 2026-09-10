@@ -121,6 +121,49 @@ export const createSupplierSchema = partySchema;
 export type CreateCustomerDto = z.infer<typeof createCustomerSchema>;
 export type CreateSupplierDto = z.infer<typeof createSupplierSchema>;
 
+/**
+ * Guided Credit Sale (the Sales Day Book entry of manual bookkeeping):
+ *   Dr Accounts Receivable (gross, tagged to the customer)
+ *     Cr Revenue line(s) (net)
+ *     Cr Tax Payable (VAT/sales tax, if any)
+ * The client supplies the invoice shape; the server computes the AR total
+ * and builds the balanced journal -- see packages/server/src/modules/creditSales.
+ */
+const creditSaleLineSchema = z
+  .object({
+    incomeAccountId: uuidSchema,
+    amountMinor: minorUnitsSchema,
+    narrative: z.string().max(500).optional(),
+  })
+  .refine((l) => l.amountMinor > 0, {
+    message: "A credit sale line amount must be greater than zero",
+    path: ["amountMinor"],
+  });
+
+export const createCreditSaleSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    branchId: uuidSchema.optional(),
+    customerId: uuidSchema,
+    receivableAccountId: uuidSchema,
+    date: accountingDateSchema,
+    currency: currencySchema,
+    reference: z.string().max(100).optional(),
+    description: z.string().max(500).optional(),
+    lines: z.array(creditSaleLineSchema).min(1, "A credit sale needs at least one revenue line"),
+    /** Tax (e.g. Kenyan VAT) is a single credit against one tax account --
+     * multiple tax rates in one sale would need multiple lines, not
+     * modelled here in this first cut. */
+    taxAccountId: uuidSchema.optional(),
+    taxAmountMinor: minorUnitsSchema.default(0),
+  })
+  .refine((r) => r.taxAmountMinor === 0 || r.taxAccountId !== undefined, {
+    message: "taxAccountId is required when taxAmountMinor is greater than zero",
+    path: ["taxAccountId"],
+  });
+
+export type CreateCreditSaleDto = z.infer<typeof createCreditSaleSchema>;
+
 export const createPeriodSchema = z.object({
   startDate: accountingDateSchema,
   endDate: accountingDateSchema,

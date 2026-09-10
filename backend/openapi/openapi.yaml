@@ -100,6 +100,11 @@ tags:
     description: Accounting periods and locking (FR-ACC-03)
   - name: Journals
     description: Double-entry journal posting and reversal (FR-ACC-01, FR-ACC-02)
+  - name: Credit Sales
+    description: >
+      Guided sales-invoice endpoint (the Sales Day Book entry of manual
+      bookkeeping) — a thin, opinionated shape over POST /journals for the
+      single most common transaction type. Posts with source SALE.
 
 # Applied to every operation by default (see the per-operation overrides on
 # the two /onboarding operations, which relax this to "token only").
@@ -962,6 +967,60 @@ paths:
                 status: 422
                 detail: "Journal 18230383-... was already reversed by 80430089-..."
 
+  # ── Credit Sales ────────────────────────────────────────────────────
+  /credit-sales:
+    post:
+      tags: [Credit Sales]
+      summary: Record a credit sale (guided Sales Day Book entry)
+      description: >
+        Builds and posts Dr Accounts Receivable (gross, tagged to
+        customerId) / Cr each revenue line (net) / Cr the tax account (if
+        taxAmountMinor > 0), through the same posting pipeline as POST
+        /journals — period, account and customer-attribution checks all
+        apply identically. Returns the resulting journal, with lines.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCreditSaleRequest'
+            example:
+              clientUuid: "550e8400-e29b-41d4-a716-446655440100"
+              customerId: "9a2f3e6c-4a2b-4c1a-9c1a-4a2b4c1a9c1a"
+              receivableAccountId: "541a185a-c76b-4e0a-9f0e-df5772307a74"
+              date: "2026-09-15"
+              currency: "KES"
+              reference: "INV-0001"
+              lines:
+                - incomeAccountId: "e5f2cf8a-4f7d-4a10-a807-66deb74ac350"
+                  amountMinor: 100000
+                  narrative: "Goods sold"
+              taxAccountId: "3f6c1a4a-2b4c-4c1a-9c1a-4a2b4c1a9c1b"
+              taxAmountMinor: 16000
+      responses:
+        '201':
+          description: The posted journal for this credit sale
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Journal'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: customerId, receivableAccountId, an incomeAccountId or taxAccountId not found, or no period covers the given date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: An account is inactive/non-postable, or the covering period is closed/locked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 # ════════════════════════════════════════════════════════════════════
 # Components — reusable security schemes, parameters, schemas, responses
 # ════════════════════════════════════════════════════════════════════
@@ -1359,7 +1418,7 @@ components:
     # -- Journals --
     JournalSource:
       type: string
-      enum: [MANUAL, CASHBOOK, PAYMENT, IMPORT, COMMUNITY, OPENING, REVERSAL]
+      enum: [MANUAL, CASHBOOK, PAYMENT, SALE, IMPORT, COMMUNITY, OPENING, REVERSAL]
     JournalStatus:
       type: string
       enum: [DRAFT, PENDING_APPROVAL, POSTED]
@@ -1465,6 +1524,71 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/JournalLine'
+
+    CreditSaleLine:
+      type: object
+      required: [incomeAccountId, amountMinor]
+      properties:
+        incomeAccountId: { type: string, format: uuid }
+        amountMinor:
+          type: integer
+          minimum: 1
+          description: Net (pre-tax) amount for this revenue line.
+        narrative: { type: string }
+    CreateCreditSaleRequest:
+      type: object
+      required: [clientUuid, customerId, receivableAccountId, date, currency, lines]
+      description: >
+        Guided endpoint for the Sales Day Book entry of a credit sale.
+        Composes a balanced journal — Dr Accounts Receivable (gross) / Cr
+        each revenue line (net) / Cr the tax account (if any) — and posts it
+        through the same pipeline as POST /journals (source SALE).
+      properties:
+        clientUuid:
+          type: string
+          format: uuid
+          description: Client-generated identity for the underlying journal.
+        branchId:
+          type: string
+          format: uuid
+          nullable: true
+        customerId:
+          type: string
+          format: uuid
+          description: Must belong to the caller's tenant; tagged onto the AR line.
+        receivableAccountId:
+          type: string
+          format: uuid
+          description: The ASSET account debited for the gross (net + tax) amount.
+        date:
+          type: string
+          format: date
+          description: Must fall within an OPEN period for this tenant.
+        currency:
+          type: string
+          example: "KES"
+        reference:
+          type: string
+          example: "INV-0001"
+        description:
+          type: string
+          description: Defaults to "Credit sale" when omitted.
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CreditSaleLine'
+        taxAccountId:
+          type: string
+          format: uuid
+          description: >
+            LIABILITY account credited for taxAmountMinor (e.g. VAT Payable).
+            Required whenever taxAmountMinor is greater than zero.
+        taxAmountMinor:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Total tax across the sale, e.g. Kenyan VAT at 16% of the net total.
 
     # -- Shared error shape (RFC 7807, Section 9.1) --
     ProblemDetails:

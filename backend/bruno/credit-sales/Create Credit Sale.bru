@@ -1,0 +1,32 @@
+meta {
+  name: Create Credit Sale
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/credit-sales
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "customerId": "{{customerId}}",
+    "receivableAccountId": "{{arAccountId}}",
+    "date": "2026-09-15",
+    "currency": "KES",
+    "reference": "INV-0001",
+    "lines": [
+      { "incomeAccountId": "{{salesAccountId}}", "amountMinor": 100000, "narrative": "Goods sold" }
+    ],
+    "taxAccountId": "{{vatAccountId}}",
+    "taxAmountMinor": 16000
+  }
+}
