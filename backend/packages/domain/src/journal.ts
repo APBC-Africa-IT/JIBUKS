@@ -13,7 +13,7 @@
 import type { CurrencyCode } from "./currency.js";
 import type { AccountId, BranchId, CustomerId, JournalId, SupplierId, TenantId, UserId, Uuid } from "./ids.js";
 
-export const JOURNAL_SOURCES = ["MANUAL", "CASHBOOK", "PAYMENT", "IMPORT", "COMMUNITY", "OPENING", "REVERSAL"] as const;
+export const JOURNAL_SOURCES = ["MANUAL", "CASHBOOK", "PAYMENT", "SALE", "BILL", "IMPORT", "COMMUNITY", "OPENING", "REVERSAL"] as const;
 export type JournalSource = (typeof JOURNAL_SOURCES)[number];
 
 export const JOURNAL_STATUSES = ["DRAFT", "PENDING_APPROVAL", "POSTED", "REVERSED"] as const;

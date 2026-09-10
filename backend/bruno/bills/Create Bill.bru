@@ -1,0 +1,32 @@
+meta {
+  name: Create Bill
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/bills
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "supplierId": "{{supplierId}}",
+    "payableAccountId": "{{apAccountId}}",
+    "date": "2026-09-15",
+    "currency": "KES",
+    "reference": "BILL-0001",
+    "lines": [
+      { "expenseAccountId": "{{expenseAccountId}}", "amountMinor": 100000, "narrative": "Stock purchased" }
+    ],
+    "taxAccountId": "{{inputVatAccountId}}",
+    "taxAmountMinor": 16000
+  }
+}
