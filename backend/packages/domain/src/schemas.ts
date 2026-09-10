@@ -320,6 +320,16 @@ export const onboardingRequestSchema = z.object({
   userName: z.string().min(1).max(200),
   email: z.string().email().optional(),
   phone: z.string().max(20).optional(),
+  /** Whether this business charges VAT -- determines whether the starter
+   * chart of accounts seeded by onboarding includes VAT Payable/VAT
+   * Recoverable accounts, and lets the frontend decide whether to show tax
+   * fields on the guided sale/bill screens at all. */
+  vatRegistered: z.boolean(),
+  /** The date this tenant's books begin. Onboarding seeds one OPEN period
+   * running from this date through the end of that calendar month, so the
+   * guided Credit Sale/Cash Sale/Write Bill/Write Cheque endpoints work
+   * immediately after sign-up. */
+  periodStartDate: accountingDateSchema,
 });
 
 export type OnboardingRequestDto = z.infer<typeof onboardingRequestSchema>;

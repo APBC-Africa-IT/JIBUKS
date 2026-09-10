@@ -21,6 +21,8 @@ export async function create(req: Request, res: Response): Promise<void> {
     userName: body.userName,
     ...(body.email !== undefined ? { email: body.email } : {}),
     ...(body.phone !== undefined ? { phone: body.phone } : {}),
+    vatRegistered: body.vatRegistered,
+    periodStartDate: body.periodStartDate,
   });
 
   res.status(201).json(result);

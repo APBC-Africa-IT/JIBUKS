@@ -161,9 +161,15 @@ paths:
               tenantType: "BUSINESS"
               baseCurrency: "KES"
               userName: "Jane Wanjiru"
+              vatRegistered: false
+              periodStartDate: "2026-09-01"
       responses:
         '201':
-          description: Tenant and first user created
+          description: >
+            Tenant and first user created, plus one OPEN accounting period
+            and a starter chart of accounts seeded and ready to use with
+            the guided Credit Sale/Cash Sale/Write Bill/Write Cheque
+            endpoints immediately.
           content:
             application/json:
               schema:
@@ -1286,7 +1292,7 @@ components:
     # -- Onboarding --
     OnboardingRequest:
       type: object
-      required: [tenantName, tenantType, baseCurrency, userName]
+      required: [tenantName, tenantType, baseCurrency, userName, vatRegistered, periodStartDate]
       properties:
         tenantName:
           type: string
@@ -1307,6 +1313,21 @@ components:
           format: email
         phone:
           type: string
+        vatRegistered:
+          type: boolean
+          description: >
+            Whether this business charges VAT. Determines whether the
+            starter chart of accounts below includes VAT Payable/VAT
+            Recoverable accounts, and lets the frontend decide whether to
+            show tax fields on the guided sale/bill screens at all.
+        periodStartDate:
+          type: string
+          format: date
+          example: "2026-09-01"
+          description: >
+            The date this tenant's books begin. Onboarding seeds one OPEN
+            accounting period running from this date through the end of
+            that calendar month.
     OnboardingResult:
       type: object
       properties:
@@ -1320,9 +1341,31 @@ components:
             accounting_framework: { type: string }
             plan_tier: { type: string }
             status: { type: string }
+            vat_registered: { type: boolean }
             created_at: { type: string, format: date-time }
         user:
           $ref: '#/components/schemas/User'
+        period:
+          description: The one OPEN period seeded for this tenant, covering periodStartDate through the end of that month.
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            tenant_id: { type: string, format: uuid }
+            start_date: { type: string, format: date }
+            end_date: { type: string, format: date }
+            status: { type: string, enum: [OPEN, CLOSED, LOCKED] }
+        accounts:
+          description: >
+            The starter chart of accounts seeded for this tenant — Cash,
+            Bank, Accounts Receivable, Accounts Payable, Sales Revenue,
+            Purchases, General Expenses, Owner's Equity, plus VAT
+            Payable/VAT Recoverable when vatRegistered was true. Use these
+            account ids directly with the guided Credit Sale/Cash
+            Sale/Write Bill/Write Cheque endpoints — no extra GET /accounts
+            round trip needed right after sign-up.
+          type: array
+          items:
+            $ref: '#/components/schemas/Account'
 
     # -- Users --
     CreateUserRequest:

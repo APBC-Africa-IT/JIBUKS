@@ -20,6 +20,7 @@ export interface TenantRow {
   readonly accounting_framework: string;
   readonly plan_tier: string;
   readonly status: string;
+  readonly vat_registered: boolean;
   readonly created_at: string;
 }
 
@@ -31,6 +32,7 @@ export interface OnboardInput {
   readonly userName: string;
   readonly email?: string;
   readonly phone?: string;
+  readonly vatRegistered: boolean;
 }
 
 export interface OnboardResult {
@@ -54,8 +56,8 @@ export async function onboardTenant(input: OnboardInput): Promise<OnboardResult>
 
   return withTenant(tenantId, async (client) => {
     const tenantResult = await client.query<TenantRow>(
-      `INSERT INTO tenants (id, name, type, base_currency) VALUES ($1, $2, $3, $4) RETURNING *`,
-      [tenantId, input.tenantName, input.tenantType, input.baseCurrency],
+      `INSERT INTO tenants (id, name, type, base_currency, vat_registered) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [tenantId, input.tenantName, input.tenantType, input.baseCurrency, input.vatRegistered],
     );
     const tenant = tenantResult.rows[0]!;
 
