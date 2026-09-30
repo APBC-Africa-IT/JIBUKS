@@ -16,6 +16,7 @@
 
 import type { NextFunction, Request, Response } from "express";
 import { requireAuth0Token } from "./auth0.js";
+import { idempotency } from "./idempotency.js";
 import * as usersService from "../modules/users/service.js";
 
 async function attachResolvedIdentity(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -44,6 +45,8 @@ async function attachResolvedIdentity(req: Request, res: Response, next: NextFun
 
 /**
  * The full chain: verify the token is genuine, THEN resolve it to a real
- * tenant/user. Applied as a pair -- always use both together, in this order.
+ * tenant/user, THEN apply Idempotency-Key handling (Section 9.1) -- which
+ * lives here because keys are tenant-scoped and this is the one chain every
+ * tenant route already uses. Always use the whole chain, in this order.
  */
-export const requireRealIdentity = [requireAuth0Token, attachResolvedIdentity];
+export const requireRealIdentity = [requireAuth0Token, attachResolvedIdentity, idempotency];

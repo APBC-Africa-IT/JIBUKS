@@ -34,7 +34,11 @@ export type DomainErrorCode =
   // users
   | "USER_NOT_FOUND"
   | "USER_ALREADY_EXISTS"
-  | "USER_INACTIVE";
+  | "USER_INACTIVE"
+  // idempotency -- Section 9.1, C-08
+  | "IDEMPOTENCY_KEY_INVALID"
+  | "IDEMPOTENCY_KEY_REUSED"
+  | "IDEMPOTENCY_REQUEST_IN_PROGRESS";
 
 export interface FieldDetail {
   readonly path: string;

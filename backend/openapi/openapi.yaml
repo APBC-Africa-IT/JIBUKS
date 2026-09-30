@@ -214,6 +214,8 @@ paths:
   # ── Users ─────────────────────────────────────────────────────────
   /users:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Users]
       summary: Provision a new user into the CALLER'S OWN tenant
       description: >
@@ -314,6 +316,8 @@ paths:
   # ── Invites ───────────────────────────────────────────────────────
   /invites:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Invites]
       summary: Invite a new user to the caller's tenant
       description: >
@@ -427,6 +431,8 @@ paths:
   # ── Accounts ──────────────────────────────────────────────────────
   /accounts:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Accounts]
       summary: Create an account
       description: Creates a new chart-of-accounts entry for the CALLER'S tenant.
@@ -508,6 +514,7 @@ paths:
         been posted to cannot be deleted — only deactivated. The row and
         its full history are retained.
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/AccountIdPath'
       responses:
         '200':
@@ -527,6 +534,7 @@ paths:
       summary: Reactivate an account
       description: Reverses a prior deactivation, restoring the account to active use.
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/AccountIdPath'
       responses:
         '200':
@@ -543,6 +551,8 @@ paths:
   # ── Customers ─────────────────────────────────────────────────────
   /customers:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Customers]
       summary: Create a customer
       description: Creates a new customer for the CALLER'S tenant.
@@ -620,6 +630,7 @@ paths:
         Marks the customer inactive. Like accounts, a customer is never
         deleted, only deactivated -- history against it stays retrievable.
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/CustomerIdPath'
       responses:
         '200':
@@ -639,6 +650,7 @@ paths:
       summary: Reactivate a customer
       description: Reverses a prior deactivation, restoring the customer to active use.
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/CustomerIdPath'
       responses:
         '200':
@@ -655,6 +667,8 @@ paths:
   # ── Suppliers ─────────────────────────────────────────────────────
   /suppliers:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Suppliers]
       summary: Create a supplier
       description: Creates a new supplier for the CALLER'S tenant.
@@ -732,6 +746,7 @@ paths:
         Marks the supplier inactive. Like accounts, a supplier is never
         deleted, only deactivated -- history against it stays retrievable.
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/SupplierIdPath'
       responses:
         '200':
@@ -751,6 +766,7 @@ paths:
       summary: Reactivate a supplier
       description: Reverses a prior deactivation, restoring the supplier to active use.
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/SupplierIdPath'
       responses:
         '200':
@@ -767,6 +783,8 @@ paths:
   # ── Periods ───────────────────────────────────────────────────────
   /periods:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Periods]
       summary: Create an accounting period
       requestBody:
@@ -832,6 +850,7 @@ paths:
       summary: Close a period
       description: Only an OPEN period can be closed. FR-ACC-03.
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/PeriodIdPath'
       responses:
         '200':
@@ -856,6 +875,7 @@ paths:
         this be restricted to a named permission — not yet enforced, since
         RBAC does not exist yet. Treat as provisional.
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/PeriodIdPath'
       responses:
         '200':
@@ -874,6 +894,8 @@ paths:
   # ── Journals ──────────────────────────────────────────────────────
   /journals:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Journals]
       summary: Create and post a journal
       description: >
@@ -976,6 +998,7 @@ paths:
         there is no field on it that gets updated; the link is one-directional
         (the reversal points at the original, never the reverse).
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/JournalIdPath'
       requestBody:
         required: false
@@ -1013,6 +1036,8 @@ paths:
   # ── Credit Sales ────────────────────────────────────────────────────
   /credit-sales:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Credit Sales]
       summary: Record a credit sale (guided Sales Day Book entry)
       description: >
@@ -1067,6 +1092,8 @@ paths:
   # ── Cash Sales ──────────────────────────────────────────────────────
   /cash-sales:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Cash Sales]
       summary: Record a cash sale (guided Cash Receipts Book entry)
       description: >
@@ -1119,6 +1146,8 @@ paths:
   # ── Bills ───────────────────────────────────────────────────────────
   /bills:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Bills]
       summary: Record a bill (guided Purchases Day Book entry)
       description: >
@@ -1173,6 +1202,8 @@ paths:
   # ── Cheques ─────────────────────────────────────────────────────────
   /cheques:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Cheques]
       summary: Record a cheque payment (guided Cash Payments Book entry)
       description: >
@@ -1229,6 +1260,8 @@ paths:
   # ── Cash Expenses ───────────────────────────────────────────────────
   /cash-expenses:
     post:
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Cash Expenses]
       summary: Record a cash expense (guided Cash Payments Book entry)
       description: >
@@ -1384,6 +1417,24 @@ components:
 
   # ── Path parameters ────────────────────────────────────────────────
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >
+        Optional (Section 9.1, C-08). A client-generated key, 1-255 printable
+        ASCII characters with no spaces -- a fresh UUID, or `operation:clientUuid`.
+        A repeat with the same key and identical request replays the original
+        2xx response (with header `Idempotent-Replayed: true`) without
+        re-executing. Same key with a different request: 422
+        IDEMPOTENCY_KEY_REUSED. Same key while the original is still running:
+        409 IDEMPOTENCY_REQUEST_IN_PROGRESS. A failed (non-2xx) request does
+        not consume its key.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+      example: cash-sale:550e8400-e29b-41d4-a716-446655440101
     AccountIdPath:
       name: id
       in: path
