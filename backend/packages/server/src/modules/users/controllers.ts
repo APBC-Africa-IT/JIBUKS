@@ -3,7 +3,7 @@
  */
 
 import type { Request, Response } from "express";
-import { createUserSchema } from "@jibuks/domain";
+import { createUserSchema, setUserRolesSchema } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as service from "./service.js";
 
@@ -26,6 +26,7 @@ export async function create(req: Request, res: Response): Promise<void> {
       name: body.name,
       ...(body.email !== undefined ? { email: body.email } : {}),
       ...(body.phone !== undefined ? { phone: body.phone } : {}),
+      ...(body.roles !== undefined ? { roles: body.roles } : {}),
     },
     auditContextFrom(req),
   );
@@ -50,6 +51,17 @@ export async function getOne(req: Request, res: Response): Promise<void> {
  * has already thrown 404 USER_NOT_FOUND before this function ever runs.
  */
 export async function me(req: Request, res: Response): Promise<void> {
-  const user = await service.getUser(req.tenantId!, req.actorUserId!);
+  const user = await service.getUserWithAccess(req.tenantId!, req.actorUserId!);
   res.json(user);
+}
+
+export async function getRoles(req: Request, res: Response): Promise<void> {
+  const roles = await service.getUserRoles(req.tenantId!, req.params["id"]!);
+  res.json({ data: roles });
+}
+
+export async function setRoles(req: Request, res: Response): Promise<void> {
+  const body = setUserRolesSchema.parse(req.body);
+  const roles = await service.setUserRoles(req.tenantId!, req.params["id"]!, body.roles, auditContextFrom(req));
+  res.json({ data: roles });
 }

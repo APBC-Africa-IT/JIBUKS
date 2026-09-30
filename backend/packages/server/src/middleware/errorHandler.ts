@@ -43,6 +43,11 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   USER_NOT_FOUND: 404,
   USER_ALREADY_EXISTS: 409,
   USER_INACTIVE: 422,
+  // access control
+  FORBIDDEN: 403,
+  ROLE_NOT_FOUND: 404,
+  ROLE_IMMUTABLE: 422,
+  LAST_OWNER: 422,
   // idempotency -- status codes follow the IETF Idempotency-Key header
   // draft: reuse with a different payload is 422, a concurrent retry of a
   // still-running request is 409.

@@ -6,10 +6,11 @@
 import { Router, type Router as RouterType } from "express";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRealIdentity } from "../../middleware/authContext.js";
+import { requirePermission } from "../../middleware/requirePermission.js";
 import * as controllers from "./controllers.js";
 
 export const creditSalesRouter: RouterType = Router();
 
 creditSalesRouter.use(requireRealIdentity);
 
-creditSalesRouter.post("/", asyncHandler(controllers.create));
+creditSalesRouter.post("/", requirePermission("credit_sales:create"), asyncHandler(controllers.create));

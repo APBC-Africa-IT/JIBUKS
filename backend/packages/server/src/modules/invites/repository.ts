@@ -18,6 +18,7 @@ export interface InviteRow {
   readonly tenant_id: string;
   readonly email: string;
   readonly name: string | null;
+  readonly role: string;
   readonly token_hash: string;
   readonly status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
   readonly invited_by: string;
@@ -31,6 +32,7 @@ export interface CreateInviteInput {
   readonly tenantId: string;
   readonly email: string;
   readonly name?: string;
+  readonly role: string;
   readonly tokenHash: string;
   readonly expiresAt: string;
 }
@@ -39,10 +41,10 @@ export async function createInvite(input: CreateInviteInput, audit: AuditContext
   return withTenant(input.tenantId, async (client) => {
     const id = randomUUID();
     const result = await client.query<InviteRow>(
-      `INSERT INTO invites (id, tenant_id, email, name, token_hash, invited_by, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO invites (id, tenant_id, email, name, role, token_hash, invited_by, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [id, input.tenantId, input.email, input.name ?? null, input.tokenHash, audit.actorUserId, input.expiresAt],
+      [id, input.tenantId, input.email, input.name ?? null, input.role, input.tokenHash, audit.actorUserId, input.expiresAt],
     );
     const invite = result.rows[0]!;
 
@@ -51,7 +53,7 @@ export async function createInvite(input: CreateInviteInput, audit: AuditContext
       action: "CREATE",
       entityType: "invite",
       entityId: invite.id,
-      afterState: { email: invite.email, status: invite.status }, // never log the hash
+      afterState: { email: invite.email, role: invite.role, status: invite.status }, // never log the hash
       context: audit,
     });
 

@@ -12,7 +12,10 @@
  *     `Idempotent-Replayed: true` header, without re-running the handler
  *   - non-2xx outcome: claim released -- the handler's transaction rolled
  *     back, so nothing executed and the client may retry under the same key
- *   - same key, different method/path/body: 422 IDEMPOTENCY_KEY_REUSED
+ *   - same key, different user/method/path/body: 422 IDEMPOTENCY_KEY_REUSED
+ *     (the user is part of the match, so one user can never be handed
+ *     another user's stored response -- replays run before route
+ *     permission guards)
  *   - same key while the original is still running: 409
  *     IDEMPOTENCY_REQUEST_IN_PROGRESS
  *
@@ -53,7 +56,7 @@ function canonicalJson(value: unknown): string {
 
 function requestHash(req: Request): string {
   return createHash("sha256")
-    .update(`${req.method}\n${req.originalUrl}\n${canonicalJson(req.body ?? null)}`)
+    .update(`${req.actorUserId ?? ""}\n${req.method}\n${req.originalUrl}\n${canonicalJson(req.body ?? null)}`)
     .digest("hex");
 }
 

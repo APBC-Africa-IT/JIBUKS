@@ -35,6 +35,11 @@ export type DomainErrorCode =
   | "USER_NOT_FOUND"
   | "USER_ALREADY_EXISTS"
   | "USER_INACTIVE"
+  // access control -- FR-RBAC-01..03
+  | "FORBIDDEN"
+  | "ROLE_NOT_FOUND"
+  | "ROLE_IMMUTABLE"
+  | "LAST_OWNER"
   // idempotency -- Section 9.1, C-08
   | "IDEMPOTENCY_KEY_INVALID"
   | "IDEMPOTENCY_KEY_REUSED"

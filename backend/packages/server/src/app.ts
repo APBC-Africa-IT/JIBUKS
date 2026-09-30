@@ -29,6 +29,7 @@ import { cashExpensesRouter } from "./modules/cashExpenses/routes.js";
 import { trialBalanceRouter } from "./modules/trialBalance/routes.js";
 import { profitAndLossRouter } from "./modules/profitAndLoss/routes.js";
 import { cashFlowRouter } from "./modules/cashFlow/routes.js";
+import { rolesRouter } from "./modules/roles/routes.js";
 import { requireAuth0Token } from "./middleware/auth0.js";
 
 export function createApp(): Express {
@@ -60,6 +61,7 @@ export function createApp(): Express {
   app.use("/api/v1/onboarding", onboardingRouter);
   app.use("/api/v1/invites", invitesRouter);
   app.use("/api/v1/users", usersRouter);
+  app.use("/api/v1/roles", rolesRouter);
   app.use("/api/v1/accounts", accountsRouter);
   app.use("/api/v1/customers", customersRouter);
   app.use("/api/v1/suppliers", suppliersRouter);
