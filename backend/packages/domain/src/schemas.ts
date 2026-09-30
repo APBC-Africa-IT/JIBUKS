@@ -106,21 +106,76 @@ export const createAccountSchema = z.object({
   tags: z.array(z.string().max(50)).max(20).default([]),
 });
 
+/**
+ * Tax identifier (FR-AP-01), e.g. a Kenyan KRA PIN such as "P051234567X".
+ * Deliberately not KRA-specific -- tenants also trade in UGX/RWF etc, where
+ * the identifier format differs. Trimmed and upper-cased so the same PIN
+ * typed two ways compares equal.
+ */
+export const taxIdentifierSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .pipe(
+    z
+      .string()
+      .min(1)
+      .max(50)
+      .regex(/^[A-Z0-9][A-Z0-9 /-]*$/, "Letters, digits, spaces, '-' and '/' only"),
+  );
+
+/** Net payment terms in days (0 = due on receipt). */
+export const paymentTermsDaysSchema = z.number().int().min(0).max(365);
+
 /** Shared shape of a customer/supplier -- a name list, deliberately separate
  * from createAccountSchema (no code, no type, no parent hierarchy). */
-const partySchema = z.object({
+const partyFields = {
   name: z.string().min(1).max(200),
   phone: z.string().max(20).optional(),
   email: z.string().email().optional(),
   address: z.string().max(500).optional(),
   tags: z.array(z.string().max(50)).max(20).default([]),
-});
+  taxIdentifier: taxIdentifierSchema.optional(),
+  paymentTermsDays: paymentTermsDaysSchema.optional(),
+  /** Omit for the tenant's base currency (same convention as accounts). */
+  currency: currencySchema.optional(),
+};
 
-export const createCustomerSchema = partySchema;
-export const createSupplierSchema = partySchema;
+export const createSupplierSchema = z.object(partyFields);
+
+export const createCustomerSchema = z.object({
+  ...partyFields,
+  /** In the customer's currency, integer minor units. Omit for no limit. */
+  creditLimitMinor: minorUnitsSchema.optional(),
+});
 
 export type CreateCustomerDto = z.infer<typeof createCustomerSchema>;
 export type CreateSupplierDto = z.infer<typeof createSupplierSchema>;
+
+/** PATCH semantics: omitted fields are unchanged; null clears an optional one. */
+const updatePartyFields = {
+  name: partyFields.name.optional(),
+  phone: z.string().max(20).nullable().optional(),
+  email: z.string().email().nullable().optional(),
+  address: z.string().max(500).nullable().optional(),
+  tags: z.array(z.string().max(50)).max(20).optional(),
+  taxIdentifier: taxIdentifierSchema.nullable().optional(),
+  paymentTermsDays: paymentTermsDaysSchema.nullable().optional(),
+  currency: currencySchema.nullable().optional(),
+};
+
+const atLeastOneField = (body: object) => Object.keys(body).length > 0;
+
+export const updateSupplierSchema = z
+  .object(updatePartyFields)
+  .refine(atLeastOneField, "Provide at least one field to update");
+
+export const updateCustomerSchema = z
+  .object({ ...updatePartyFields, creditLimitMinor: minorUnitsSchema.nullable().optional() })
+  .refine(atLeastOneField, "Provide at least one field to update");
+
+export type UpdateCustomerDto = z.infer<typeof updateCustomerSchema>;
+export type UpdateSupplierDto = z.infer<typeof updateSupplierSchema>;
 
 /**
  * Shared revenue-line shape for both guided sale endpoints below: one

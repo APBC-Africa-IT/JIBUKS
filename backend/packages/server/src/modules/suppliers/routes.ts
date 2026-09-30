@@ -16,5 +16,6 @@ suppliersRouter.use(requireRealIdentity);
 suppliersRouter.post("/", requirePermission("suppliers:create"), asyncHandler(controllers.create));
 suppliersRouter.get("/", requirePermission("suppliers:view"), asyncHandler(controllers.list));
 suppliersRouter.get("/:id", requirePermission("suppliers:view"), asyncHandler(controllers.getOne));
+suppliersRouter.patch("/:id", requirePermission("suppliers:edit"), asyncHandler(controllers.update));
 suppliersRouter.post("/:id/deactivate", requirePermission("suppliers:edit"), asyncHandler(controllers.deactivate));
 suppliersRouter.post("/:id/reactivate", requirePermission("suppliers:edit"), asyncHandler(controllers.reactivate));

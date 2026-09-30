@@ -4,7 +4,7 @@
  */
 
 import type { Request, Response } from "express";
-import { createSupplierSchema, partyBalanceQuerySchema } from "@jibuks/domain";
+import { createSupplierSchema, partyBalanceQuerySchema, updateSupplierSchema } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as service from "./service.js";
 
@@ -28,6 +28,9 @@ export async function create(req: Request, res: Response): Promise<void> {
       ...(body.email ? { email: body.email } : {}),
       ...(body.address ? { address: body.address } : {}),
       tags: body.tags,
+      ...(body.taxIdentifier !== undefined ? { taxIdentifier: body.taxIdentifier } : {}),
+      ...(body.paymentTermsDays !== undefined ? { paymentTermsDays: body.paymentTermsDays } : {}),
+      ...(body.currency !== undefined ? { currency: body.currency } : {}),
     },
     auditContextFrom(req),
   );
@@ -43,6 +46,12 @@ export async function list(req: Request, res: Response): Promise<void> {
 export async function getOne(req: Request, res: Response): Promise<void> {
   const { as_of } = partyBalanceQuerySchema.parse(req.query);
   const supplier = await service.getSupplier(req.tenantId!, req.params["id"]!, as_of);
+  res.json(supplier);
+}
+
+export async function update(req: Request, res: Response): Promise<void> {
+  const body = updateSupplierSchema.parse(req.body);
+  const supplier = await service.updateSupplier(req.tenantId!, req.params["id"]!, body, auditContextFrom(req));
   res.json(supplier);
 }
 

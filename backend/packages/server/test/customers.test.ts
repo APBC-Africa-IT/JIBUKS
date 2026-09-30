@@ -311,4 +311,139 @@ describe("GET /api/v1/customers (balance_minor)", () => {
     expect(response.status).toBe(404);
     expect(response.body.title).toBe("CUSTOMER_NOT_FOUND");
   });
+
+
+  it("refuses to change currency once the customer has transactions, with 422 PARTY_CURRENCY_LOCKED", async () => {
+    const fixture = await makeBalanceFixture();
+    await request(app)
+      .post("/api/v1/journals")
+      .set("Authorization", await authHeader())
+      .send({
+        clientUuid: randomUUID(),
+        date: "2026-08-15",
+        currency: "KES",
+        description: "Currency lock",
+        source: "MANUAL",
+        lines: [
+          { accountId: fixture.arAccountId, debitMinor: 1000, creditMinor: 0, customerId: fixture.customerId },
+          { accountId: fixture.salesAccountId, debitMinor: 0, creditMinor: 1000 },
+        ],
+      });
+
+    const changed = await request(app)
+      .patch(`/api/v1/customers/${fixture.customerId}`)
+      .set("Authorization", await authHeader())
+      .send({ currency: "USD" });
+    const unchanged = await request(app)
+      .patch(`/api/v1/customers/${fixture.customerId}`)
+      .set("Authorization", await authHeader())
+      .send({ currency: null, paymentTermsDays: 14 });
+
+    expect(changed.status).toBe(422);
+    expect(changed.body.title).toBe("PARTY_CURRENCY_LOCKED");
+    // Re-sending the current value (null = base currency) is not a change.
+    expect(unchanged.status).toBe(200);
+    expect(unchanged.body.payment_terms_days).toBe(14);
+  });
+});
+
+describe("Customer tax identifier, payment terms, currency and credit limit (FR-AR-01)", () => {
+  async function createCustomer(extra: Record<string, unknown> = {}) {
+    const response = await request(app)
+      .post("/api/v1/customers")
+      .set("Authorization", await authHeader())
+      .send({ name: uniqueName("Terms Customer"), ...extra });
+    expect(response.status).toBe(201);
+    return response.body as { id: string };
+  }
+
+  async function patchCustomer(id: string, body: Record<string, unknown>) {
+    return request(app).patch(`/api/v1/customers/${id}`).set("Authorization", await authHeader()).send(body);
+  }
+
+  it("stores the new fields on create, normalising the KRA PIN to upper case", async () => {
+    const response = await request(app)
+      .post("/api/v1/customers")
+      .set("Authorization", await authHeader())
+      .send({ name: uniqueName("KRA Customer"), taxIdentifier: "  p051234567x ", paymentTermsDays: 30, currency: "KES", creditLimitMinor: 50000000 });
+
+    expect(response.status).toBe(201);
+    expect(response.body.tax_identifier).toBe("P051234567X");
+    expect(response.body.payment_terms_days).toBe(30);
+    expect(response.body.currency).toBe("KES");
+    expect(response.body.credit_limit_minor).toBe("50000000");
+  });
+
+  it("defaults the new fields to null (currency null = the tenant's base currency)", async () => {
+    const created = await createCustomer();
+    const fetched = await request(app).get(`/api/v1/customers/${created.id}`).set("Authorization", await authHeader());
+
+    expect(fetched.body.tax_identifier).toBeNull();
+    expect(fetched.body.payment_terms_days).toBeNull();
+    expect(fetched.body.currency).toBeNull();
+  });
+
+  it("rejects out-of-range payment terms, an unsupported currency and a malformed tax identifier", async () => {
+    const badTerms = await request(app)
+      .post("/api/v1/customers")
+      .set("Authorization", await authHeader())
+      .send({ name: uniqueName("Bad"), paymentTermsDays: 366 });
+    const badCurrency = await request(app)
+      .post("/api/v1/customers")
+      .set("Authorization", await authHeader())
+      .send({ name: uniqueName("Bad"), currency: "XYZ" });
+    const badPin = await request(app)
+      .post("/api/v1/customers")
+      .set("Authorization", await authHeader())
+      .send({ name: uniqueName("Bad"), taxIdentifier: "P05#1234" });
+
+    expect(badTerms.status).toBe(400);
+    expect(badCurrency.status).toBe(400);
+    expect(badPin.status).toBe(400);
+  });
+
+  it("PATCH updates only the fields sent, clears a field with null, and audits the change", async () => {
+    const created = await createCustomer({ phone: "+254711000000", taxIdentifier: "A000000001Z" });
+
+    const response = await patchCustomer(created.id, { paymentTermsDays: 7, taxIdentifier: null });
+
+    expect(response.status).toBe(200);
+    expect(response.body.payment_terms_days).toBe(7);
+    expect(response.body.tax_identifier).toBeNull();
+    expect(response.body.phone).toBe("+254711000000");
+
+    const audit = await withTenant(TEST_TENANT_ID, async (client) => {
+      const result = await client.query(
+        `SELECT before_state, after_state FROM audit_logs WHERE entity_type = 'customer' AND entity_id = $1 AND action = 'UPDATE'`,
+        [created.id],
+      );
+      return result.rows;
+    });
+    expect(audit).toHaveLength(1);
+    expect(audit[0].before_state.tax_identifier).toBe("A000000001Z");
+    expect(audit[0].after_state.tax_identifier).toBeNull();
+  });
+
+  it("PATCH rejects an empty body with 400 and an unknown customer with 404", async () => {
+    const created = await createCustomer();
+
+    const empty = await patchCustomer(created.id, {});
+    const missing = await patchCustomer(randomUUID(), { name: "Nobody" });
+
+    expect(empty.status).toBe(400);
+    expect(missing.status).toBe(404);
+    expect(missing.body.title).toBe("CUSTOMER_NOT_FOUND");
+  });
+
+  it("clears the credit limit with null and rejects a negative or fractional one", async () => {
+    const created = await createCustomer({ creditLimitMinor: 100000 });
+
+    const cleared = await patchCustomer(created.id, { creditLimitMinor: null });
+    const negative = await patchCustomer(created.id, { creditLimitMinor: -1 });
+    const fractional = await patchCustomer(created.id, { creditLimitMinor: 100.5 });
+
+    expect(cleared.body.credit_limit_minor).toBeNull();
+    expect(negative.status).toBe(400);
+    expect(fractional.status).toBe(400);
+  });
 });

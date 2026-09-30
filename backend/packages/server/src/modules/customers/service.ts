@@ -10,7 +10,7 @@
 import { DomainError } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
-import type { CustomerRow, CustomerWithBalanceRow } from "./repository.js";
+import type { CustomerRow, CustomerWithBalanceRow, UpdateCustomerInput } from "./repository.js";
 
 export interface CreateCustomerRequest {
   readonly tenantId: string;
@@ -19,6 +19,10 @@ export interface CreateCustomerRequest {
   readonly email?: string;
   readonly address?: string;
   readonly tags?: string[];
+  readonly taxIdentifier?: string;
+  readonly paymentTermsDays?: number;
+  readonly currency?: string;
+  readonly creditLimitMinor?: number;
 }
 
 export async function createCustomer(request: CreateCustomerRequest, audit: AuditContext): Promise<CustomerRow> {
@@ -30,6 +34,10 @@ export async function createCustomer(request: CreateCustomerRequest, audit: Audi
       ...(request.email !== undefined ? { email: request.email } : {}),
       ...(request.address !== undefined ? { address: request.address } : {}),
       ...(request.tags !== undefined ? { tags: request.tags } : {}),
+      ...(request.taxIdentifier !== undefined ? { taxIdentifier: request.taxIdentifier } : {}),
+      ...(request.paymentTermsDays !== undefined ? { paymentTermsDays: request.paymentTermsDays } : {}),
+      ...(request.currency !== undefined ? { currency: request.currency } : {}),
+      ...(request.creditLimitMinor !== undefined ? { creditLimitMinor: request.creditLimitMinor } : {}),
     },
     audit,
   );
@@ -57,6 +65,19 @@ export async function deactivateCustomer(tenantId: string, customerId: string, a
 
 export async function reactivateCustomer(tenantId: string, customerId: string, audit: AuditContext): Promise<CustomerRow> {
   const customer = await repository.reactivateCustomer(tenantId, customerId, audit);
+  if (!customer) {
+    throw new DomainError("CUSTOMER_NOT_FOUND", `Customer ${customerId} not found`);
+  }
+  return customer;
+}
+
+export async function updateCustomer(
+  tenantId: string,
+  customerId: string,
+  request: UpdateCustomerInput,
+  audit: AuditContext,
+): Promise<CustomerRow> {
+  const customer = await repository.updateCustomer(tenantId, customerId, request, audit);
   if (!customer) {
     throw new DomainError("CUSTOMER_NOT_FOUND", `Customer ${customerId} not found`);
   }

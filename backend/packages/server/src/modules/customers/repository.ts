@@ -11,6 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { DomainError } from "@jibuks/domain";
 import { recordAuditLog, withTenant, readAsTenant, type AuditContext } from "@jibuks/db";
 
 export interface CustomerRow {
@@ -22,6 +23,12 @@ export interface CustomerRow {
   readonly address: string | null;
   readonly is_active: boolean;
   readonly tags: string[];
+  readonly tax_identifier: string | null;
+  readonly payment_terms_days: number | null;
+  /** Null means the tenant's base currency. */
+  readonly currency: string | null;
+  /** Integer minor units in the customer's currency, as a string (bigint); null = no limit. */
+  readonly credit_limit_minor: string | null;
   readonly created_at: string;
 }
 
@@ -63,14 +70,18 @@ export interface CreateCustomerInput {
   readonly email?: string;
   readonly address?: string;
   readonly tags?: string[];
+  readonly taxIdentifier?: string;
+  readonly paymentTermsDays?: number;
+  readonly currency?: string;
+  readonly creditLimitMinor?: number;
 }
 
 export async function createCustomer(input: CreateCustomerInput, audit: AuditContext): Promise<CustomerRow> {
   return withTenant(input.tenantId, async (client) => {
     const id = randomUUID();
     const result = await client.query<CustomerRow>(
-      `INSERT INTO customers (id, tenant_id, name, phone, email, address, tags)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO customers (id, tenant_id, name, phone, email, address, tags, tax_identifier, payment_terms_days, currency, credit_limit_minor)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         id,
@@ -80,6 +91,10 @@ export async function createCustomer(input: CreateCustomerInput, audit: AuditCon
         input.email ?? null,
         input.address ?? null,
         input.tags ?? [],
+        input.taxIdentifier ?? null,
+        input.paymentTermsDays ?? null,
+        input.currency ?? null,
+        input.creditLimitMinor ?? null,
       ],
     );
 
@@ -200,6 +215,82 @@ export async function reactivateCustomer(
       entityType: "customer",
       entityId: customer.id,
       beforeState: before.rows[0],
+      afterState: customer,
+      context: audit,
+    });
+
+    return customer;
+  });
+}
+
+export interface UpdateCustomerInput {
+  readonly name?: string | undefined;
+  readonly phone?: string | null | undefined;
+  readonly email?: string | null | undefined;
+  readonly address?: string | null | undefined;
+  readonly tags?: string[] | undefined;
+  readonly taxIdentifier?: string | null | undefined;
+  readonly paymentTermsDays?: number | null | undefined;
+  readonly currency?: string | null | undefined;
+  readonly creditLimitMinor?: number | null | undefined;
+}
+
+const UPDATABLE_COLUMNS: Readonly<Record<keyof UpdateCustomerInput, string>> = {
+  name: "name",
+  phone: "phone",
+  email: "email",
+  address: "address",
+  tags: "tags",
+  taxIdentifier: "tax_identifier",
+  paymentTermsDays: "payment_terms_days",
+  currency: "currency",
+  creditLimitMinor: "credit_limit_minor",
+};
+
+/**
+ * Applies only the fields present in `input` (null clears a column).
+ * Currency can't change once any journal line references this customer --
+ * their balance and credit limit would silently change meaning.
+ */
+export async function updateCustomer(
+  tenantId: string,
+  customerId: string,
+  input: UpdateCustomerInput,
+  audit: AuditContext,
+): Promise<CustomerRow | null> {
+  return withTenant(tenantId, async (client) => {
+    const before = await client.query<CustomerRow>(`SELECT * FROM customers WHERE id = $1 FOR UPDATE`, [customerId]);
+    const existing = before.rows[0];
+    if (!existing) {
+      return null;
+    }
+
+    if (input.currency !== undefined && input.currency !== existing.currency) {
+      const used = await client.query(`SELECT 1 FROM journal_lines WHERE customer_id = $1 LIMIT 1`, [customerId]);
+      if (used.rows.length > 0) {
+        throw new DomainError(
+          "PARTY_CURRENCY_LOCKED",
+          `Customer ${customerId} already has transactions; its currency can no longer be changed`,
+        );
+      }
+    }
+
+    const entries = (Object.keys(UPDATABLE_COLUMNS) as (keyof UpdateCustomerInput)[]).filter(
+      (key) => input[key] !== undefined,
+    );
+    const assignments = entries.map((key, i) => `${UPDATABLE_COLUMNS[key]} = $${i + 2}`);
+    const result = await client.query<CustomerRow>(
+      `UPDATE customers SET ${assignments.join(", ")} WHERE id = $1 RETURNING *`,
+      [customerId, ...entries.map((key) => input[key])],
+    );
+    const customer = result.rows[0]!;
+
+    await recordAuditLog(client, {
+      tenantId,
+      action: "UPDATE",
+      entityType: "customer",
+      entityId: customer.id,
+      beforeState: existing,
       afterState: customer,
       context: audit,
     });

@@ -16,5 +16,6 @@ customersRouter.use(requireRealIdentity);
 customersRouter.post("/", requirePermission("customers:create"), asyncHandler(controllers.create));
 customersRouter.get("/", requirePermission("customers:view"), asyncHandler(controllers.list));
 customersRouter.get("/:id", requirePermission("customers:view"), asyncHandler(controllers.getOne));
+customersRouter.patch("/:id", requirePermission("customers:edit"), asyncHandler(controllers.update));
 customersRouter.post("/:id/deactivate", requirePermission("customers:edit"), asyncHandler(controllers.deactivate));
 customersRouter.post("/:id/reactivate", requirePermission("customers:edit"), asyncHandler(controllers.reactivate));
