@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { DomainError, isSystemRoleKey, type SystemRoleKey } from "@jibuks/domain";
+import { DomainError, SYSTEM_ROLE_KEYS, isSystemRoleKey, type SystemRoleKey } from "@jibuks/domain";
 import { recordAuditLog, withTenant, readAsTenant, type AuditContext } from "@jibuks/db";
 
 /** A transaction-scoped client, as handed out by withTenant. */
@@ -123,6 +123,8 @@ export async function updateRole(
   });
 }
 
+// Same order as GET /roles: built-ins in catalogue order, then custom roles
+// by name. (Not created_at -- rows assigned in one transaction share it.)
 const ASSIGNMENTS_SQL = `
   SELECT ur.system_role, ur.role_id,
          r.name AS role_name, r.description AS role_description,
@@ -130,11 +132,11 @@ const ASSIGNMENTS_SQL = `
     FROM user_roles ur
     LEFT JOIN roles r ON r.id = ur.role_id
    WHERE ur.user_id = $1
-   ORDER BY ur.created_at ASC`;
+   ORDER BY array_position($2::text[], ur.system_role) NULLS LAST, lower(r.name), ur.role_id`;
 
 export async function listAssignments(tenantId: string, userId: string): Promise<AssignmentRow[]> {
   return readAsTenant(tenantId, async (client) => {
-    const result = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [userId]);
+    const result = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [userId, SYSTEM_ROLE_KEYS]);
     return result.rows;
   });
 }
@@ -194,7 +196,7 @@ export async function replaceAssignments(
   return withTenant(tenantId, async (client) => {
     await client.query(`SELECT pg_advisory_xact_lock(hashtext('user_roles:' || $1))`, [tenantId]);
 
-    const before = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [userId]);
+    const before = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [userId, SYSTEM_ROLE_KEYS]);
     await client.query(`DELETE FROM user_roles WHERE user_id = $1`, [userId]);
     await insertAssignments(client, tenantId, userId, roleRefs, audit.actorUserId);
 
@@ -208,7 +210,7 @@ export async function replaceAssignments(
       throw new DomainError("LAST_OWNER", "A business must keep at least one active Owner");
     }
 
-    const after = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [userId]);
+    const after = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [userId, SYSTEM_ROLE_KEYS]);
     await recordAuditLog(client, {
       tenantId,
       action: "UPDATE",
