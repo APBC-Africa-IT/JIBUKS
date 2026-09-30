@@ -66,7 +66,7 @@ export async function closePeriod(tenantId: string, periodId: string, audit: Aud
  * rather than silently absent inside a shared code path.
  */
 export async function reopenPeriod(tenantId: string, periodId: string, audit: AuditContext): Promise<PeriodRow> {
-  // TODO(RBAC): require a named "period.reopen" permission here once roles exist.
+  // Gated by the dedicated "periods:reopen" permission at the route (FR-ACC-03).
   const period = await repository.getPeriodById(tenantId, periodId);
   if (!period) {
     throw new DomainError("PERIOD_NOT_FOUND", `Period ${periodId} not found`);

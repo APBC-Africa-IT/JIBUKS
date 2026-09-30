@@ -15,6 +15,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - All endpoints are under `/api/v1` (SRS Section 9.1).
 - **Every request requires** `Authorization: Bearer <token>`, where `<token>` is a genuine, Auth0-issued, RS256-signed JWT, **except** `GET /invites/{token}` (the public invite preview). This platform never sees, stores, or processes a password — identity is delegated entirely to Auth0 (constraint C-03). See [§7 Authentication](#7-authentication) below for the full flow.
 - There is **no** `X-Tenant-Id` / `X-Actor-User-Id` header support. Tenant and actor are always derived from the verified token itself — a client can never claim to belong to a tenant that isn't genuinely theirs.
+- **Every tenant endpoint requires a specific permission**; without it the response is `403 FORBIDDEN`. See [Roles and permissions](#roles-and-permissions).
 - Every `POST` endpoint except `/onboarding` and `/invites/{token}/accept` accepts an optional `Idempotency-Key` header, making retries safe. See [Idempotency-Key header](#idempotency-key-header).
 - Error responses follow [RFC 7807](https://tools.ietf.org/html/rfc7807) problem-detail format: `{ type, title, status, detail, errors? }`.
 - Money fields are always integer minor units (e.g. cents) with a separate currency code — never decimals. **Example:** a sale of 1000.50 KES is sent/received as `debitMinor: 100050` (1000.50 × 100, since KES has 2 decimal places). Not every currency has 2 decimal places — UGX and RWF have 0, so `1500` UGX is *already* the full minor-unit value, not something to further multiply. Always convert using the specific currency's decimal count, never a hardcoded ×100.
@@ -29,6 +30,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 
 - [7. Authentication](#7-authentication)
 - [Idempotency-Key header](#idempotency-key-header)
+- [Roles and permissions](#roles-and-permissions)
 - [7.1 Onboarding](#71-onboarding)
 - [7.2 Users](#72-users)
 - [7.3 Invites](#73-invites)
@@ -45,6 +47,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.14 Trial Balance](#714-trial-balance)
 - [7.15 Profit & Loss](#715-profit--loss)
 - [7.16 Cash Flow](#716-cash-flow)
+- [7.17 Roles](#717-roles)
 
 ---
 
@@ -78,19 +81,82 @@ An **unauthenticated** request (missing/invalid/expired token) gets `401 UNAUTHO
 SRS Section 9.1 / C-08. Send `Idempotency-Key: <key>` on any `POST` to make it safe to retry — after a timeout, a dropped connection, or an offline-queue replay. **Currently optional**; requests without it behave exactly as before.
 
 - **Key:** 1–255 printable ASCII characters, no spaces. Use a fresh UUID per logical operation, or reuse the record's `clientUuid` as `operation:clientUuid` (e.g. `cash-sale:550e8400-…`) — `@jibuks/domain` exports `idempotencyKey(clientUuid, operation)` for exactly this.
-- **Scope:** per tenant. Keys are currently kept indefinitely.
+- **Scope:** per tenant, and tied to the user who first sent it. The same key from a different user gets `422 IDEMPOTENCY_KEY_REUSED`. Keys are currently kept indefinitely.
 
 | Situation | Response |
 |---|---|
 | First request with this key | Runs normally |
-| Repeat with the same key and identical method, path and body (JSON key order doesn't matter) | The **original** 2xx status and body, replayed without re-executing, plus header `Idempotent-Replayed: true` |
-| Same key, different method, path or body | `422 IDEMPOTENCY_KEY_REUSED` |
+| Repeat by the same user with the same key and identical method, path and body (JSON key order doesn't matter) | The **original** 2xx status and body, replayed without re-executing, plus header `Idempotent-Replayed: true` |
+| Same key, different user, method, path or body | `422 IDEMPOTENCY_KEY_REUSED` |
 | Same key while the original request is still running | `409 IDEMPOTENCY_REQUEST_IN_PROGRESS` — wait briefly and retry |
 | Malformed key | `400 IDEMPOTENCY_KEY_INVALID` |
 
 **Failed requests don't consume the key.** If the original returns any non-2xx (validation error, locked period, etc.), nothing was saved, so the client can fix the request and resend under the **same** key.
 
 **Without the header**, a retried posting still can't double-post, since `clientUuid` is unique per tenant, but the retry gets `409 DUPLICATE_VALUE` instead of the original result. For anything a client may retry automatically (all cashbook/journal postings), send the header.
+
+---
+
+## Roles and permissions
+
+FR-RBAC-01/02, FR-MIC-08. Each user has one or more **roles**, and each role grants a set of **permissions** named `module:action` (e.g. `journals:create`). The server checks the required permission on every request; a caller without it gets:
+
+```json
+{
+  "type": "tag:jibuks,2026:error/FORBIDDEN",
+  "title": "FORBIDDEN",
+  "status": 403,
+  "detail": "This action requires the \"journals:create\" permission"
+}
+```
+
+**Built-in roles** exist in every business and can't be edited:
+
+| Role | Can do |
+|---|---|
+| `OWNER` | Everything, including managing users, roles and invites. |
+| `ACCOUNTANT` | All bookkeeping, period close/reopen, journal reversal, reports. Can view users/roles but not change them. |
+| `CASHIER` | Record cash sales and cash expenses; view accounts, customers, suppliers. |
+| `VIEWER` | Read-only: every `:view` permission, including reports. |
+| `AGENT` | Record cash sales only; view accounts and customers. (Micro-trader tier.) |
+
+For micro-traders (FR-MIC-08), show only **Owner, Cashier and Agent**. All five exist in every business; which ones the app offers is a presentation choice.
+
+A business can also create **custom roles** from the permission catalogue (see [§7.17](#717-roles)). A user with several roles gets the union of their permissions. A deactivated custom role grants nothing.
+
+**Who gets which role:**
+- Whoever onboards a business becomes its `OWNER`.
+- An invitee gets the role named on the invite (`role` on `POST /invites`), defaulting to `VIEWER`.
+- `POST /users` takes an optional `roles` array, also defaulting to `["VIEWER"]`.
+- Every user who existed before roles were introduced became an `OWNER`, so nobody lost access.
+- A business must always keep at least one active `OWNER`. Any role change that would remove the last one is refused with `422 LAST_OWNER`.
+
+**In the app:** call `GET /users/me` on load. It returns the user's `roles` and effective `permissions`, so you can hide buttons the user can't use. This is only a convenience: the server enforces every permission regardless.
+
+**Permission per endpoint:**
+
+| Endpoint | Permission |
+|---|---|
+| `GET /users/me` | none — any signed-in user |
+| `GET /users`, `GET /users/{id}`, `GET /users/{id}/roles` | `users:view` |
+| `POST /users` | `users:create` |
+| `PUT /users/{id}/roles` | `users:edit` |
+| `GET /roles`, `GET /roles/{id}`, `GET /roles/permissions` | `roles:view` |
+| `POST /roles` | `roles:create` |
+| `PATCH /roles/{id}`, `POST /roles/{id}/deactivate` / `reactivate` | `roles:edit` |
+| `GET /invites` / `POST /invites` | `invites:view` / `invites:create` |
+| `GET /accounts…` / `POST /accounts` / `POST /accounts/{id}/deactivate` / `reactivate` | `accounts:view` / `accounts:create` / `accounts:edit` |
+| Customers, Suppliers | same pattern: `customers:*`, `suppliers:*` |
+| `GET /periods…` / `POST /periods` | `periods:view` / `periods:create` |
+| `POST /periods/{id}/close` | `periods:close` |
+| `POST /periods/{id}/reopen` | `periods:reopen` |
+| `GET /journals…` / `POST /journals` / `POST /journals/{id}/reverse` | `journals:view` / `journals:create` / `journals:reverse` |
+| `POST /credit-sales` | `credit_sales:create` |
+| `POST /cash-sales` | `cash_sales:create` |
+| `POST /bills` | `bills:create` |
+| `POST /cheques` | `cheques:create` |
+| `POST /cash-expenses` | `cash_expenses:create` |
+| `GET /trial-balance`, `GET /profit-and-loss`, `GET /cash-flow` | `reports:view` |
 
 ---
 
@@ -238,6 +304,7 @@ Creates a user in the **caller's own** tenant — the tenant is always taken fro
 | `name` | string | ✅ Yes | Display name. Max 200 chars. |
 | `email` | string | No | Contact email. |
 | `phone` | string | No | Contact phone. |
+| `roles` | string[] | No | Role references: built-in keys (`"CASHIER"`) or custom role ids. Defaults to `["VIEWER"]`. `404 ROLE_NOT_FOUND` for an unknown or deactivated custom role. |
 
 **Success Response:** `201 Created` — same shape as a user object in `POST /onboarding`'s response. The audit log records the **caller** as the actor — not the new teammate.
 
@@ -249,7 +316,19 @@ Creates a user in the **caller's own** tenant — the tenant is always taken fro
 
 Returns the caller's own user record. **Use this on app load to decide whether to show onboarding or go straight into the app** — much more reliable than guessing locally on-device, since it works correctly across reinstalls and for invited teammates too, not just onboarded owners.
 
-**Success Response:** `200 OK` — same shape as a user object elsewhere.
+**Success Response:** `200 OK` — the user object, plus the caller's roles and effective permissions:
+```json
+{
+  "id": "6b377361-1a90-4dfd-b2e1-9b93eb1bddde",
+  "name": "Jane Wanjiku",
+  "...": "other user fields as elsewhere",
+  "roles": [
+    { "id": "CASHIER", "name": "Cashier", "description": "Records cash sales and cash expenses.", "system": true, "isActive": true, "permissions": ["accounts:view", "customers:view", "suppliers:view", "cash_sales:create", "cash_expenses:create"] }
+  ],
+  "permissions": ["accounts:view", "cash_expenses:create", "cash_sales:create", "customers:view", "suppliers:view"]
+}
+```
+Needs no permission. Every signed-in user can call it.
 
 **Error Response:** `404 USER_NOT_FOUND` — this identity has never onboarded or been invited/accepted anywhere. Show the onboarding screen in this case.
 
@@ -259,9 +338,21 @@ Returns the caller's own user record. **Use this on app load to decide whether t
 
 List / fetch users in the caller's tenant. Standard shapes, see `POST /users`'s response for the object shape.
 
+---
+
+### `GET /users/{id}/roles` / `PUT /users/{id}/roles`
+
+`GET` returns `{ "data": [ ...role objects... ] }` (`users:view`). `PUT` **replaces** the user's full set of roles (`users:edit`):
+
+```json
+{ "roles": ["CASHIER", "5d0c7a4e-8f5e-4a52-9d53-1c2b3a4d5e6f"] }
+```
+
+Returns the new assignments in the same `{ "data": [...] }` shape. Errors: `400 VALIDATION_ERROR` (empty list, over 10, repeats), `404 USER_NOT_FOUND`, `404 ROLE_NOT_FOUND` (unknown or deactivated custom role), `422 LAST_OWNER` (would leave the business with no active Owner — nothing is changed).
+
 ### Notes for consuming clients (Users)
 
-- Every user added to a tenant currently has **full access** to everything in that tenant — no role/permission system yet.
+- Access is role-based; see [Roles and permissions](#roles-and-permissions).
 
 ---
 
@@ -292,7 +383,8 @@ An existing tenant user invites someone by email.
 ```json
 {
   "email": "colleague@example.com",
-  "name": "Colleague Name"
+  "name": "Colleague Name",
+  "role": "CASHIER"
 }
 ```
 
@@ -300,6 +392,7 @@ An existing tenant user invites someone by email.
 |---|---|---|---|
 | `email` | string | ✅ Yes | The invitee's real email address — the invite is sent here. |
 | `name` | string | No | Optional display name to prefill. |
+| `role` | string | No | Role the invitee gets on accepting: a built-in key or a custom role id. Defaults to `VIEWER`. `404 ROLE_NOT_FOUND` for an unknown or deactivated custom role. |
 
 **Success Response:** `201 Created` 
 ```json
@@ -308,6 +401,7 @@ An existing tenant user invites someone by email.
   "tenant_id": "5f56fb3e-34fe-4609-a5b1-8ea36c806c85",
   "email": "colleague@example.com",
   "name": "Colleague Name",
+  "role": "CASHIER",
   "status": "PENDING",
   "invited_by": "6b377361-1a90-4dfd-b2e1-9b93eb1bddde",
   "accepted_by": null,
@@ -1104,3 +1198,69 @@ GET /cash-flow?accountId=<cash-id>&accountId=<bank-id>&from=2026-09-01&to=2026-0
 ### Notes for consuming clients (Cash Flow)
 
 - This is intentionally the simplest defensible Cash Flow shape for a micro-cashbook product — a categorized Operating/Investing/Financing statement is a known future enhancement, not an oversight.
+
+---
+
+## 7.17 Roles
+
+Base path: `/api/v1/roles`. See [Roles and permissions](#roles-and-permissions) for the model.
+
+A **role object** looks the same for built-in and custom roles:
+
+```json
+{
+  "id": "5d0c7a4e-8f5e-4a52-9d53-1c2b3a4d5e6f",
+  "name": "Stock Clerk",
+  "description": "Records supplier bills",
+  "system": false,
+  "isActive": true,
+  "permissions": ["suppliers:view", "bills:create"]
+}
+```
+
+A built-in role's `id` is its key (`"CASHIER"`) and `system` is `true`. Anywhere a role is referenced (`roles` on users, `role` on invites), pass either form.
+
+### `GET /roles`
+
+`roles:view`. `{ "data": [...] }`: the five built-in roles first, then the business's custom roles by name.
+
+### `GET /roles/permissions`
+
+`roles:view`. `{ "data": ["users:view", "users:create", ...] }`: the full permission catalogue that custom roles are built from.
+
+### `GET /roles/{id}`
+
+`roles:view`. One role, by built-in key or custom id. `404 ROLE_NOT_FOUND` otherwise.
+
+### `POST /roles`
+
+`roles:create`. Creates a custom role.
+
+```json
+{
+  "name": "Stock Clerk",
+  "description": "Records supplier bills",
+  "permissions": ["suppliers:view", "bills:create"]
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | ✅ Yes | Max 100 chars. Unique per business, ignoring case (`409 DUPLICATE_VALUE` otherwise). |
+| `description` | string | No | Max 500 chars. |
+| `permissions` | string[] | ✅ Yes | At least one, no repeats, each from `GET /roles/permissions` (`400 VALIDATION_ERROR` otherwise). |
+
+`201 Created` with the role object.
+
+### `PATCH /roles/{id}`
+
+`roles:edit`. Send any of `name`, `description` (or `null` to clear), `permissions`. `permissions` replaces the whole list. Built-in roles return `422 ROLE_IMMUTABLE`. Changes apply to everyone holding the role on their very next request.
+
+### `POST /roles/{id}/deactivate` / `POST /roles/{id}/reactivate`
+
+`roles:edit`. A deactivated role stays assigned to its users but grants nothing, and can't be newly assigned (`404 ROLE_NOT_FOUND`). Roles are never deleted, so audit history that references them stays readable.
+
+### Notes for consuming clients (Roles)
+
+- Offer micro-traders only Owner, Cashier and Agent (FR-MIC-08); hide custom roles and the permission catalogue from them entirely.
+- Permissions are re-read on every request, so role changes take effect immediately. There's no need to log the user out.

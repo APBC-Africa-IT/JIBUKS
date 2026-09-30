@@ -10,6 +10,7 @@ import { z } from "zod";
 import { CURRENCIES } from "./currency.js";
 import { ACCOUNT_TYPES } from "./accounts.js";
 import { JOURNAL_SOURCES } from "./journal.js";
+import { PERMISSIONS, SYSTEM_ROLE_KEYS } from "./permissions.js";
 
 export const uuidSchema = z.string().uuid();
 
@@ -361,11 +362,16 @@ export const createPeriodSchema = z.object({
 
 export type CreatePeriodDto = z.infer<typeof createPeriodSchema>;
 
+/** A role reference: a built-in role key ("CASHIER") or a custom role's id. */
+export const roleRefSchema = z.union([z.enum(SYSTEM_ROLE_KEYS), uuidSchema]);
+
 export const createUserSchema = z.object({
   externalIdpSubject: z.string().min(1).max(500),
   name: z.string().min(1).max(200),
   email: z.string().email().optional(),
   phone: z.string().max(20).optional(),
+  /** Defaults to [DEFAULT_ROLE] (least privilege) when omitted. */
+  roles: z.array(roleRefSchema).min(1).max(10).optional(),
 });
 
 export type CreateUserDto = z.infer<typeof createUserSchema>;
@@ -373,6 +379,8 @@ export type CreateUserDto = z.infer<typeof createUserSchema>;
 export const createInviteSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1).max(200).optional(),
+  /** Role the invitee receives on accepting. Defaults to DEFAULT_ROLE. */
+  role: roleRefSchema.optional(),
 });
 
 export const acceptInviteSchema = z.object({
@@ -409,3 +417,40 @@ export const paginationSchema = z.object({
 export type JournalInputDto = z.infer<typeof journalInputSchema>;
 export type CreateAccountDto = z.infer<typeof createAccountSchema>;
 export type PaginationDto = z.infer<typeof paginationSchema>;
+// ---------------------------------------------------------------------
+// Roles -- FR-RBAC-01/02
+// ---------------------------------------------------------------------
+
+const permissionListSchema = z
+  .array(z.enum(PERMISSIONS))
+  .min(1)
+  .refine((list) => new Set(list).size === list.length, "Permissions must not repeat");
+
+export const createRoleSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  description: z.string().max(500).optional(),
+  permissions: permissionListSchema,
+});
+
+export type CreateRoleDto = z.infer<typeof createRoleSchema>;
+
+export const updateRoleSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    description: z.string().max(500).nullable().optional(),
+    permissions: permissionListSchema.optional(),
+  })
+  .refine((body) => Object.keys(body).length > 0, "Provide at least one field to update");
+
+export type UpdateRoleDto = z.infer<typeof updateRoleSchema>;
+
+/** Replaces a user's full set of role assignments. */
+export const setUserRolesSchema = z.object({
+  roles: z
+    .array(roleRefSchema)
+    .min(1)
+    .max(10)
+    .refine((list) => new Set(list).size === list.length, "Roles must not repeat"),
+});
+
+export type SetUserRolesDto = z.infer<typeof setUserRolesSchema>;

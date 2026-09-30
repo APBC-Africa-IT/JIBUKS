@@ -8,5 +8,7 @@ declare namespace Express {
   export interface Request {
     tenantId?: string;
     actorUserId?: string;
+    /** Effective permissions, loaded lazily by requirePermission. */
+    permissions?: ReadonlySet<import("@jibuks/domain").Permission>;
   }
 }

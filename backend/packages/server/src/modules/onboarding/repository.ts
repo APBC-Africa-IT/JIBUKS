@@ -11,6 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import { recordAuditLog, withTenant } from "@jibuks/db";
+import * as rolesService from "../roles/service.js";
 
 export interface TenantRow {
   readonly id: string;
@@ -68,6 +69,10 @@ export async function onboardTenant(input: OnboardInput): Promise<OnboardResult>
       [userId, tenantId, input.externalIdpSubject, input.userName, input.email ?? null, input.phone ?? null],
     );
     const user = userResult.rows[0];
+
+    // The founding user is the tenant's first Owner (FR-RBAC-01) -- in the
+    // same transaction, so a tenant can never exist without one.
+    await rolesService.assignInitialRoles(client, tenantId, userId, ["OWNER"], userId);
 
     await recordAuditLog(client, {
       tenantId,

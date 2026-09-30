@@ -14,13 +14,14 @@
 import { Router, type Router as RouterType } from "express";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRealIdentity } from "../../middleware/authContext.js";
+import { requirePermission } from "../../middleware/requirePermission.js";
 import { requireAuth0Token } from "../../middleware/auth0.js";
 import * as controllers from "./controllers.js";
 
 export const invitesRouter: RouterType = Router();
 
-invitesRouter.post("/", requireRealIdentity, asyncHandler(controllers.create));
-invitesRouter.get("/", requireRealIdentity, asyncHandler(controllers.list));
+invitesRouter.post("/", requireRealIdentity, requirePermission("invites:create"), asyncHandler(controllers.create));
+invitesRouter.get("/", requireRealIdentity, requirePermission("invites:view"), asyncHandler(controllers.list));
 
 // Deliberately BEFORE any auth middleware -- public, matches the file
 // header. Preview must never require login, since its whole purpose is

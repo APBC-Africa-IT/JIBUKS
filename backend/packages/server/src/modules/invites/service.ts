@@ -3,11 +3,12 @@
  */
 
 import { randomBytes, createHash } from "node:crypto";
-import { DomainError } from "@jibuks/domain";
+import { DEFAULT_ROLE, DomainError } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
 import type { InviteRow } from "./repository.js";
 import * as usersService from "../users/service.js";
+import * as rolesService from "../roles/service.js";
 import { sendInviteEmail } from "../../email/resend.js";
 
 const INVITE_EXPIRY_DAYS = 7;
@@ -42,9 +43,14 @@ export interface CreateInviteRequest {
   readonly tenantName: string;
   readonly email: string;
   readonly name?: string;
+  /** Built-in key or custom role id; defaults to DEFAULT_ROLE. */
+  readonly role?: string;
 }
 
 export async function createInvite(request: CreateInviteRequest, audit: AuditContext): Promise<Omit<InviteRow, "token_hash">> {
+  const role = request.role ?? DEFAULT_ROLE;
+  await rolesService.assertAssignable(request.tenantId, [role]);
+
   const token = generateToken();
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -54,6 +60,7 @@ export async function createInvite(request: CreateInviteRequest, audit: AuditCon
       tenantId: request.tenantId,
       email: request.email,
       ...(request.name !== undefined ? { name: request.name } : {}),
+      role,
       tokenHash,
       expiresAt,
     },
@@ -142,6 +149,7 @@ export async function acceptInvite(
     externalIdpSubject,
     name,
     email: invite.email,
+    role: invite.role,
   });
 
   await repository.markInviteAccepted(invite.id, user.id);

@@ -26,6 +26,10 @@ export interface UserRow {
   readonly created_at: string;
 }
 
+/** Runs inside the user-creating transaction, e.g. to assign roles, so a
+ * user never exists without them. */
+export type AfterUserInsert = (client: Parameters<Parameters<typeof withTenant>[1]>[0], user: UserRow) => Promise<void>;
+
 export interface CreateUserInput {
   readonly tenantId: string;
   readonly externalIdpSubject: string;
@@ -34,7 +38,11 @@ export interface CreateUserInput {
   readonly phone?: string;
 }
 
-export async function createUser(input: CreateUserInput, audit: AuditContext): Promise<UserRow> {
+export async function createUser(
+  input: CreateUserInput,
+  audit: AuditContext,
+  afterInsert: AfterUserInsert,
+): Promise<UserRow> {
   return withTenant(input.tenantId, async (client) => {
     const id = randomUUID();
     const result = await client.query<UserRow>(
@@ -44,6 +52,7 @@ export async function createUser(input: CreateUserInput, audit: AuditContext): P
       [id, input.tenantId, input.externalIdpSubject, input.name, input.email ?? null, input.phone ?? null],
     );
     const user = result.rows[0]!;
+    await afterInsert(client, user);
 
     // The authenticated caller is the actor -- see file header.
     await recordAuditLog(client, {
@@ -94,7 +103,7 @@ export async function findUserByExternalIdpSubject(externalIdpSubject: string): 
  * onboarding's same reasoning). Distinct from createUser(), which always
  * requires and attributes to a real, separate, authenticated caller.
  */
-export async function createUserSelfAttributed(input: CreateUserInput): Promise<UserRow> {
+export async function createUserSelfAttributed(input: CreateUserInput, afterInsert: AfterUserInsert): Promise<UserRow> {
   return withTenant(input.tenantId, async (client) => {
     const id = randomUUID();
     const result = await client.query<UserRow>(
@@ -104,6 +113,7 @@ export async function createUserSelfAttributed(input: CreateUserInput): Promise<
       [id, input.tenantId, input.externalIdpSubject, input.name, input.email ?? null, input.phone ?? null],
     );
     const user = result.rows[0]!;
+    await afterInsert(client, user);
 
     await recordAuditLog(client, {
       tenantId: input.tenantId,

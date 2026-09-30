@@ -38,6 +38,7 @@ export async function create(req: Request, res: Response): Promise<void> {
       tenantName: tenant,
       email: body.email,
       ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.role !== undefined ? { role: body.role } : {}),
     },
     auditContextFrom(req),
   );
