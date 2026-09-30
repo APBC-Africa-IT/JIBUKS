@@ -1,0 +1,19 @@
+meta {
+  name: List Roles
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/roles
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires roles:view. Built-in roles (OWNER, ACCOUNTANT, CASHIER, VIEWER, AGENT) first, then custom roles.
+}

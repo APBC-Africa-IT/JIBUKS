@@ -1,0 +1,30 @@
+meta {
+  name: Update Role
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/roles/{{roleId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "permissions": ["suppliers:view", "suppliers:create", "bills:create"]
+  }
+}
+
+vars:pre-request {
+  roleId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  Requires roles:edit. Custom roles only; built-in roles return 422 ROLE_IMMUTABLE. permissions replaces the whole list.
+}

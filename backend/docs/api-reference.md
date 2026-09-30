@@ -48,6 +48,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.15 Profit & Loss](#715-profit--loss)
 - [7.16 Cash Flow](#716-cash-flow)
 - [7.17 Roles](#717-roles)
+- [7.18 Payments](#718-payments)
 
 ---
 
@@ -116,9 +117,9 @@ FR-RBAC-01/02, FR-MIC-08. Each user has one or more **roles**, and each role gra
 |---|---|
 | `OWNER` | Everything, including managing users, roles and invites. |
 | `ACCOUNTANT` | All bookkeeping, period close/reopen, journal reversal, reports. Can view users/roles but not change them. |
-| `CASHIER` | Record cash sales and cash expenses; view accounts, customers, suppliers. |
+| `CASHIER` | Record cash sales and cash expenses, collect M-Pesa payments; view accounts, customers, suppliers. |
 | `VIEWER` | Read-only: every `:view` permission, including reports. |
-| `AGENT` | Record cash sales only; view accounts and customers. (Micro-trader tier.) |
+| `AGENT` | Record cash sales and collect M-Pesa payments; view accounts and customers. (Micro-trader tier.) |
 
 For micro-traders (FR-MIC-08), show only **Owner, Cashier and Agent**. All five exist in every business; which ones the app offers is a presentation choice.
 
@@ -156,6 +157,8 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /bills` | `bills:create` |
 | `POST /cheques` | `cheques:create` |
 | `POST /cash-expenses` | `cash_expenses:create` |
+| `POST /payments/mpesa/stk-push` | `payments:create` |
+| `GET /payments`, `GET /payments/{id}` | `payments:view` |
 | `GET /trial-balance`, `GET /profit-and-loss`, `GET /cash-flow` | `reports:view` |
 
 ---
@@ -237,6 +240,7 @@ The new user's `external_idp_subject` is taken directly from the verified token'
   "accounts": [
     { "id": "...", "code": "1000", "name": "Cash", "type": "ASSET", "is_active": true, "is_postable": true },
     { "id": "...", "code": "1010", "name": "Bank", "type": "ASSET", "is_active": true, "is_postable": true },
+    { "id": "...", "code": "1020", "name": "M-Pesa", "type": "ASSET", "is_active": true, "is_postable": true },
     { "id": "...", "code": "1100", "name": "Accounts Receivable", "type": "ASSET", "is_active": true, "is_postable": true },
     { "id": "...", "code": "2000", "name": "Accounts Payable", "type": "LIABILITY", "is_active": true, "is_postable": true },
     { "id": "...", "code": "3000", "name": "Owner's Equity", "type": "EQUITY", "is_active": true, "is_postable": true },
@@ -247,7 +251,7 @@ The new user's `external_idp_subject` is taken directly from the verified token'
 }
 ```
 
-**The starter chart of accounts** always includes Cash, Bank, Accounts Receivable, Accounts Payable, Owner's Equity, Sales Revenue, Purchases, and General Expenses (codes `1000`–`5100` above). If `vatRegistered: true`, two more accounts are added: `1200` VAT Recoverable (Input VAT, an ASSET — used as `taxAccountId` on `POST /bills`) and `2100` VAT Payable (Output VAT, a LIABILITY — used as `taxAccountId` on `POST /credit-sales`/`POST /cash-sales`).
+**The starter chart of accounts** always includes Cash, Bank, M-Pesa (`1020`, where M-Pesa collections land — see [7.18 Payments](#718-payments)), Accounts Receivable, Accounts Payable, Owner's Equity, Sales Revenue, Purchases, and General Expenses (codes `1000`–`5100` above). If `vatRegistered: true`, two more accounts are added: `1200` VAT Recoverable (Input VAT, an ASSET — used as `taxAccountId` on `POST /bills`) and `2100` VAT Payable (Output VAT, a LIABILITY — used as `taxAccountId` on `POST /credit-sales`/`POST /cash-sales`).
 
 **Use these account ids directly** with `POST /credit-sales`, `POST /cash-sales`, `POST /bills`, and `POST /cheques` — no extra `GET /accounts` round trip is needed right after sign-up. A user can still rename, deactivate, or add more accounts later via the `/accounts` endpoints; nothing about this starter set is special or protected.
 
@@ -1300,3 +1304,108 @@ A built-in role's `id` is its key (`"CASHIER"`) and `system` is `true`. Anywhere
 
 - Offer micro-traders only Owner, Cashier and Agent (FR-MIC-08); hide custom roles and the permission catalogue from them entirely.
 - Permissions are re-read on every request, so role changes take effect immediately. There's no need to log the user out.
+
+---
+
+## 7.18 Payments
+
+Base path: `/api/v1/payments`. Mobile-money collection (FR-PAY-01..07). **Phase 1 supports M-Pesa STK push** ("Lipa na M-Pesa Online"): the app asks for a payment, the customer gets an M-Pesa PIN prompt on their phone, and once they approve it the money is posted to the ledger automatically.
+
+**The flow, from the app's side:**
+
+1. `POST /payments/mpesa/stk-push` → `202 Accepted` with a payment in status `PENDING`. Show "Check your phone to approve".
+2. Poll `GET /payments/{id}` every few seconds until `status` is no longer `PENDING`. The customer has about a minute to respond.
+3. `SUCCEEDED` → done; `journal_id` is the posted journal. `CANCELLED` / `FAILED` → show `result_desc` and offer to retry with a **new** `clientUuid`.
+
+Behind the scenes, Safaricom calls the server back. The server doesn't trust that callback on its own; it confirms the result with Safaricom before posting anything.
+
+### `POST /payments/mpesa/stk-push`
+
+`payments:create`. Accepts `Idempotency-Key`.
+
+```json
+{
+  "clientUuid": "7d2c1e0a-5b6f-4a8e-9c3d-2f1e0a9b8c7d",
+  "phone": "0712345678",
+  "currency": "KES",
+  "amountMinor": 150000,
+  "receivedAccountId": "<the M-Pesa account, code 1020>",
+  "creditAccountId": "<Sales Revenue, or Accounts Receivable>",
+  "customerId": "<optional>",
+  "accountReference": "INV-0042"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `clientUuid` | uuid | ✅ Yes | Identifies this collection. **The same value never prompts the customer twice.** Without `Idempotency-Key` a repeat gets `409`; with it, the original response. |
+| `phone` | string | ✅ Yes | Kenyan mobile number in any common form: `0712345678`, `712345678`, `+254712345678`, `254 712 345 678`, and `01…` numbers too. Returned normalised as `254712345678`. |
+| `currency` | string | ✅ Yes | Must be `"KES"`. |
+| `amountMinor` | integer | ✅ Yes | **Whole shillings only**: a multiple of 100 (`150000` = KES 1,500). KES 1 to KES 250,000. |
+| `receivedAccountId` | uuid | ✅ Yes | Debited when the money arrives. Normally the **M-Pesa** account (`1020`). |
+| `creditAccountId` | uuid | ✅ Yes | Credited when the money arrives: **Sales Revenue** for a straightforward sale, or **Accounts Receivable** (with `customerId`) when a customer is paying what they owe. |
+| `customerId` | uuid | No | Tags the credit line to this customer, so it reduces their balance. |
+| `accountReference` | string | No | Up to 12 chars, shown on the customer's phone. Defaults to `JIBUKS`. |
+| `description` | string | No | Used as the journal description. |
+
+Both accounts (and the customer) are validated **before** the customer is prompted, so nobody gets charged for a payment that can't be posted.
+
+**Success Response:** `202 Accepted`, a payment object (see below) with `status: "PENDING"`.
+
+**Error Response:**
+- `400 VALIDATION_ERROR`: bad phone, fractional shillings, non-KES, etc.
+- `404`: unknown account or customer.
+- `409 DUPLICATE_VALUE`: `clientUuid` already used.
+- `422 ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE`.
+- `502 PAYMENT_PROVIDER_ERROR`: M-Pesa refused the request or couldn't be reached. The payment is recorded as `FAILED` and nothing reached the customer's phone.
+- `503 PAYMENTS_NOT_CONFIGURED`: M-Pesa credentials aren't set on this server.
+
+### `GET /payments/{id}`
+
+`payments:view`. **Poll this for the outcome.** If a payment has been `PENDING` for over a minute, the server re-checks it with Safaricom before answering, so a lost callback still resolves.
+
+```json
+{
+  "id": "5e0f9c1a-...",
+  "client_uuid": "7d2c1e0a-5b6f-4a8e-9c3d-2f1e0a9b8c7d",
+  "provider": "MPESA",
+  "method": "STK_PUSH",
+  "status": "SUCCEEDED",
+  "amount_minor": "150000",
+  "currency": "KES",
+  "phone": "254712345678",
+  "account_reference": "INV-0042",
+  "received_account_id": "...",
+  "credit_account_id": "...",
+  "customer_id": null,
+  "checkout_request_id": "ws_CO_300920261045123456",
+  "result_code": "0",
+  "result_desc": "The service request is processed successfully.",
+  "mpesa_receipt_number": "TIF1234ABC",
+  "transaction_date": "2026-09-30",
+  "journal_id": "9c1a2b3c-...",
+  "posting_error": null,
+  "created_at": "2026-09-30T07:45:12.000Z",
+  "completed_at": "2026-09-30T07:45:31.000Z"
+}
+```
+
+| `status` | Meaning |
+|---|---|
+| `PENDING` | Waiting for the customer / Safaricom. |
+| `SUCCEEDED` | Money received and confirmed with Safaricom. Normally `journal_id` is set. |
+| `CANCELLED` | The customer dismissed the prompt (`result_code` `"1032"`). |
+| `FAILED` | Anything else: insufficient funds (`"1"`), wrong PIN (`"2001"`), phone unreachable (`"1037"`), or M-Pesa refused the request. See `result_desc`. |
+
+> ⚠️ **`SUCCEEDED` with `journal_id: null`** means the money **did arrive** but couldn't be posted, and `posting_error` says why (e.g. no open period covers the date, or Safaricom reported a different amount). Show it as received but needing attention. Never tell the customer it failed.
+
+### `GET /payments`
+
+`payments:view`. `{ "data": [...] }`, newest first, up to 200.
+
+### Notes for consuming clients (Payments)
+
+- Only M-Pesa STK push for now. Paybill/Till payments that customers start from their own phone (C2B) come with reconciliation.
+- On **staging**, payments use Safaricom's **sandbox**: no real money moves.
+- `amount_minor` is returned as a string, like other money fields.
+- `POST /hooks/stk/...` in the OpenAPI spec is Safaricom's callback, not for apps.

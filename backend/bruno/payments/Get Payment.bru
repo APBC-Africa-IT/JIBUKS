@@ -1,0 +1,23 @@
+meta {
+  name: Get Payment
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/payments/{{paymentId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  paymentId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  Poll for the outcome. PENDING for over a minute triggers a re-check with Safaricom.
+}

@@ -76,6 +76,17 @@ tags:
     description: >
       Provisioning additional users into an ALREADY-EXISTING tenant. Always
       requires a fully resolved identity (genuine token + existing user).
+  - name: Payments
+    description: >
+      Mobile-money collection (FR-PAY-01..07). Phase 1: M-Pesa STK push
+      ("Lipa na M-Pesa Online") -- the customer gets a PIN prompt on their
+      phone; the outcome arrives asynchronously from Safaricom, is
+      confirmed with Daraja, then posted to the ledger. Poll
+      GET /payments/{id} for the result.
+  - name: Provider Callbacks
+    description: >
+      Called by payment providers, not by apps. No bearer token -- each
+      payment's callback URL carries its own secret.
   - name: Roles
     description: >
       Role-based access control (FR-RBAC-01/02). Every tenant endpoint
@@ -400,6 +411,143 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+
+  # ── Payments ──────────────────────────────────────────────────────
+  /payments/mpesa/stk-push:
+    post:
+      tags: [Payments]
+      summary: Collect a payment by M-Pesa STK push
+      description: >
+        Requires `payments:create`. Sends a PIN prompt to the customer's
+        phone and returns 202 with a PENDING payment. On confirmed success
+        the server posts Dr `receivedAccountId` / Cr `creditAccountId`
+        (tagged with `customerId` if given). A repeat with the same
+        `clientUuid` never prompts twice: 409 without an Idempotency-Key,
+        the original response with one.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStkPushRequest'
+            example:
+              clientUuid: "7d2c1e0a-5b6f-4a8e-9c3d-2f1e0a9b8c7d"
+              phone: "0712345678"
+              currency: KES
+              amountMinor: 150000
+              receivedAccountId: "1a2b3c4d-5e6f-4a10-9c1a-4a2b4c1a9c1a"
+              creditAccountId: "2b3c4d5e-6f70-4a10-9c1a-4a2b4c1a9c1b"
+              accountReference: "INV-0042"
+      responses:
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '202':
+          description: Prompt sent; the payment is PENDING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/DuplicateValue'
+        '502':
+          description: PAYMENT_PROVIDER_ERROR -- M-Pesa refused or couldn't be reached; the payment is recorded as FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: PAYMENTS_NOT_CONFIGURED -- M-Pesa credentials aren't set on this server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /payments:
+    get:
+      tags: [Payments]
+      summary: List recent payments
+      description: "Requires `payments:view`. Newest first, at most 200."
+      responses:
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '200':
+          description: Payments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /payments/{id}:
+    get:
+      tags: [Payments]
+      summary: Get a payment (poll this for the outcome)
+      description: >
+        Requires `payments:view`. If the payment has been PENDING for over
+        a minute, the server re-checks it with Daraja before answering, so
+        a lost callback still resolves.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '200':
+          description: The payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /hooks/stk/{tenantId}/{paymentId}/{token}:
+    post:
+      tags: [Provider Callbacks]
+      summary: M-Pesa STK callback (called by Safaricom)
+      description: >
+        Not for apps. The URL is generated per payment and handed to
+        Daraja; the final segment is a one-off secret. A wrong secret,
+        unknown payment or mismatched CheckoutRequestID gets 404. Repeats
+        are acknowledged and ignored.
+      security: []
+      parameters:
+        - { name: tenantId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: paymentId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: token, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Daraja's stkCallback payload ({ Body: { stkCallback: {...} } }).
+      responses:
+        '200':
+          description: Acknowledged
+          content:
+            application/json:
+              example: { ResultCode: 0, ResultDesc: Accepted }
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   # ── Roles ─────────────────────────────────────────────────────────
   /roles:
@@ -2135,6 +2283,8 @@ components:
         - "bills:create"
         - "cheques:create"
         - "cash_expenses:create"
+        - "payments:view"
+        - "payments:create"
         - "reports:view"
     RoleRef:
       type: string
@@ -2204,6 +2354,84 @@ components:
               description: Effective permissions -- the union across all active roles.
               items:
                 $ref: '#/components/schemas/Permission'
+
+    # -- Payments --
+    CreateStkPushRequest:
+      type: object
+      required: [clientUuid, phone, currency, amountMinor, receivedAccountId, creditAccountId]
+      properties:
+        clientUuid:
+          type: string
+          format: uuid
+          description: The collection's identity; the same value never prompts twice.
+        phone:
+          type: string
+          description: Kenyan mobile in any common form (0712345678, +254712345678, ...); normalised to 2547XXXXXXXX.
+        currency:
+          type: string
+          enum: [KES]
+        amountMinor:
+          type: integer
+          description: Whole shillings only (multiple of 100), KES 1 to KES 250,000.
+          minimum: 100
+          maximum: 25000000
+        receivedAccountId:
+          type: string
+          format: uuid
+          description: Debited on success -- normally the M-Pesa account (code 1020).
+        creditAccountId:
+          type: string
+          format: uuid
+          description: Credited on success -- an income account, or Accounts Receivable with customerId.
+        customerId:
+          type: string
+          format: uuid
+          description: Tags the credit line to this customer's subledger.
+        accountReference:
+          type: string
+          maxLength: 12
+          description: Shown on the customer's phone. Defaults to "JIBUKS".
+        description: { type: string, maxLength: 500 }
+    Payment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        client_uuid: { type: string, format: uuid }
+        provider: { type: string, enum: [MPESA] }
+        method: { type: string, enum: [STK_PUSH] }
+        status:
+          type: string
+          enum: [PENDING, SUCCEEDED, FAILED, CANCELLED]
+        amount_minor: { type: string, description: 64-bit-safe integer string }
+        currency: { type: string }
+        phone: { type: string, example: "254712345678" }
+        account_reference: { type: string }
+        description: { type: string, nullable: true }
+        received_account_id: { type: string, format: uuid }
+        credit_account_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid, nullable: true }
+        merchant_request_id: { type: string, nullable: true }
+        checkout_request_id: { type: string, nullable: true }
+        result_code:
+          type: string
+          nullable: true
+          description: M-Pesa's result code, e.g. "0" success, "1032" cancelled by user, "1" insufficient funds.
+        result_desc: { type: string, nullable: true }
+        mpesa_receipt_number: { type: string, nullable: true, example: "TIF1234ABC" }
+        transaction_date: { type: string, format: date, nullable: true }
+        journal_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The posted journal. Null on a SUCCEEDED payment means posting failed -- see posting_error.
+        posting_error:
+          type: string
+          nullable: true
+          description: Why a SUCCEEDED payment wasn't posted (e.g. no open period). The money did arrive; needs review.
+        initiated_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time, nullable: true }
 
     # -- Invites --
     CreateInviteRequest:

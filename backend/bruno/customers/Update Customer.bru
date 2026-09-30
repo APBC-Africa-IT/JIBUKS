@@ -1,0 +1,32 @@
+meta {
+  name: Update Customer
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/customers/{{customerId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "paymentTermsDays": 14,
+    "creditLimitMinor": 20000000,
+    "taxIdentifier": "A012345678B"
+  }
+}
+
+vars:pre-request {
+  customerId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  Requires customers:edit. Send only fields to change; null clears one. Currency is locked once the customer has transactions (422 PARTY_CURRENCY_LOCKED).
+}

@@ -67,11 +67,14 @@ interface StarterAccount {
 
 /** A minimal starter chart of accounts -- exactly what the four guided
  * endpoints (Credit Sale, Cash Sale, Write Bill, Write Cheque) need to
- * work immediately: Cash/Bank, AR, AP, Sales, Purchases, Owner's Equity,
+ * work immediately: Cash/Bank/M-Pesa, AR, AP, Sales, Purchases, Owner's Equity,
  * and VAT Payable/Recoverable for a VAT-registered tenant. */
 const STARTER_ACCOUNTS: readonly StarterAccount[] = [
   { code: "1000", name: "Cash", type: "ASSET" },
   { code: "1010", name: "Bank", type: "ASSET" },
+  // Kept apart from Cash and Bank so it can be reconciled against the
+  // M-Pesa statement (FR-PAY-05).
+  { code: "1020", name: "M-Pesa", type: "ASSET" },
   { code: "1100", name: "Accounts Receivable", type: "ASSET" },
   { code: "1200", name: "VAT Recoverable (Input VAT)", type: "ASSET", vatOnly: true },
   { code: "2000", name: "Accounts Payable", type: "LIABILITY" },

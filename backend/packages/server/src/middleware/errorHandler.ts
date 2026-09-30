@@ -49,6 +49,10 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   ROLE_NOT_FOUND: 404,
   ROLE_IMMUTABLE: 422,
   LAST_OWNER: 422,
+  // payments
+  PAYMENT_NOT_FOUND: 404,
+  PAYMENTS_NOT_CONFIGURED: 503,
+  PAYMENT_PROVIDER_ERROR: 502,
   // idempotency -- status codes follow the IETF Idempotency-Key header
   // draft: reuse with a different payload is 422, a concurrent retry of a
   // still-running request is 409.

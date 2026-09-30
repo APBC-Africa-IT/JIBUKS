@@ -1,0 +1,31 @@
+meta {
+  name: Update Supplier
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/suppliers/{{supplierId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "paymentTermsDays": 30,
+    "taxIdentifier": "P051234567X"
+  }
+}
+
+vars:pre-request {
+  supplierId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  Requires suppliers:edit. Send only fields to change; null clears one. Currency is locked once the supplier has transactions (422 PARTY_CURRENCY_LOCKED).
+}

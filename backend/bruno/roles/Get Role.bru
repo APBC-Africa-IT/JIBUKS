@@ -1,0 +1,23 @@
+meta {
+  name: Get Role
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/roles/{{roleId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  roleId: CASHIER
+}
+
+docs {
+  A built-in key (e.g. CASHIER) or a custom role id.
+}

@@ -1,0 +1,37 @@
+meta {
+  name: STK Push
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/payments/mpesa/stk-push
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "phone": "{{mpesaPhone}}",
+    "currency": "KES",
+    "amountMinor": 100,
+    "receivedAccountId": "{{mpesaAccountId}}",
+    "creditAccountId": "{{salesAccountId}}",
+    "accountReference": "TEST-001",
+    "description": "Bruno test"
+  }
+}
+
+docs {
+  Requires payments:create. Sends an M-Pesa PIN prompt to mpesaPhone; answers 202 PENDING.
+  Then run "Get Payment" with the returned id until status is no longer PENDING.
+  amountMinor 100 = KES 1 (whole shillings only). On staging this is the Daraja sandbox: no real money moves.
+  Set mpesaPhone and mpesaAccountId (the tenant's M-Pesa account, code 1020) in the environment first.
+}
