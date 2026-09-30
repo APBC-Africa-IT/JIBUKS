@@ -47,6 +47,8 @@ export const PERMISSIONS = [
   "bills:create",
   "cheques:create",
   "cash_expenses:create",
+  "payments:view",
+  "payments:create",
   "reports:view",
 ] as const;
 
@@ -97,13 +99,15 @@ export const SYSTEM_ROLES: Readonly<Record<SystemRoleKey, SystemRole>> = {
   CASHIER: {
     key: "CASHIER",
     name: "Cashier",
-    description: "Records cash sales and cash expenses.",
+    description: "Records cash sales and cash expenses, and collects M-Pesa payments.",
     permissions: [
       "accounts:view",
       "customers:view",
       "suppliers:view",
       "cash_sales:create",
       "cash_expenses:create",
+      "payments:view",
+      "payments:create",
     ],
   },
   VIEWER: {
@@ -115,8 +119,8 @@ export const SYSTEM_ROLES: Readonly<Record<SystemRoleKey, SystemRole>> = {
   AGENT: {
     key: "AGENT",
     name: "Agent",
-    description: "Records cash sales only (micro-trader tier).",
-    permissions: ["accounts:view", "customers:view", "cash_sales:create"],
+    description: "Records cash sales and collects M-Pesa payments (micro-trader tier).",
+    permissions: ["accounts:view", "customers:view", "cash_sales:create", "payments:view", "payments:create"],
   },
 };
 

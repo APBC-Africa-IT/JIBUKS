@@ -1,0 +1,19 @@
+meta {
+  name: Get User Roles
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v1/users/{{userId}}/roles
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  userId: 00000000-0000-4000-8000-000000000000
+}

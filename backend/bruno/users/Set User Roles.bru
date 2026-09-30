@@ -1,0 +1,30 @@
+meta {
+  name: Set User Roles
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/api/v1/users/{{userId}}/roles
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "roles": ["CASHIER"]
+  }
+}
+
+vars:pre-request {
+  userId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  Requires users:edit. Replaces ALL of the user's roles. 422 LAST_OWNER if it would leave the business without an active Owner.
+}

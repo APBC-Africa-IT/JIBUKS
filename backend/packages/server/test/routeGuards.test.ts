@@ -10,6 +10,7 @@ import type { Router } from "express";
 import { createApp } from "../src/app.js";
 import { onboardingRouter } from "../src/modules/onboarding/routes.js";
 import { invitesRouter } from "../src/modules/invites/routes.js";
+import { hooksRouter } from "../src/modules/payments/routes.js";
 
 interface Layer {
   regexp?: RegExp;
@@ -17,11 +18,13 @@ interface Layer {
   route?: { path: string; methods: Record<string, boolean>; stack: Layer[] };
 }
 
-/** Routes that run BEFORE a user has a tenant, so no role can apply. */
+/** Routes with no signed-in tenant user, so no role can apply. */
 const UNGUARDED: ReadonlyArray<{ router: Router; method: string; path: string }> = [
   { router: onboardingRouter, method: "post", path: "/" },
   { router: invitesRouter, method: "get", path: "/:token" },
   { router: invitesRouter, method: "post", path: "/:token/accept" },
+  // Safaricom's STK callback: authenticated by the secret in its URL.
+  { router: hooksRouter, method: "post", path: "/stk/:tenantId/:paymentId/:token" },
 ];
 
 function isExempt(router: Router, method: string, path: string): boolean {

@@ -148,7 +148,7 @@ describe("onboarding service (direct)", () => {
     });
 
     const codes = result.accounts.map((a) => a.code).sort();
-    expect(codes).toEqual(["1000", "1010", "1100", "2000", "3000", "4000", "5000", "5100"]);
+    expect(codes).toEqual(["1000", "1010", "1020", "1100", "2000", "3000", "4000", "5000", "5100"]);
     expect(result.accounts.every((a) => a.is_active)).toBe(true);
   });
 
@@ -164,7 +164,7 @@ describe("onboarding service (direct)", () => {
     });
 
     const codes = result.accounts.map((a) => a.code).sort();
-    expect(codes).toEqual(["1000", "1010", "1100", "1200", "2000", "2100", "3000", "4000", "5000", "5100"]);
+    expect(codes).toEqual(["1000", "1010", "1020", "1100", "1200", "2000", "2100", "3000", "4000", "5000", "5100"]);
   });
 
   it("can immediately record a credit sale using the seeded period and accounts, end to end", async () => {

@@ -1,0 +1,19 @@
+meta {
+  name: Deactivate Role
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/roles/{{roleId}}/deactivate
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  roleId: 00000000-0000-4000-8000-000000000000
+}

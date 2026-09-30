@@ -509,3 +509,50 @@ export const setUserRolesSchema = z.object({
 });
 
 export type SetUserRolesDto = z.infer<typeof setUserRolesSchema>;
+
+// ---------------------------------------------------------------------
+// Payments -- FR-PAY-01/06, IF-PAY-01
+// ---------------------------------------------------------------------
+
+/**
+ * A Kenyan mobile number in any common form -- "0712345678",
+ * "712345678", "+254712345678", "254712345678" (also 01xx numbers) --
+ * normalised to the 2547XXXXXXXX / 2541XXXXXXXX form M-Pesa requires.
+ */
+export const kenyanMobileSchema = z
+  .string()
+  .transform((raw) => raw.replace(/[\s-]/g, ""))
+  .pipe(
+    z
+      .string()
+      .regex(/^(?:\+?254|0)?[17]\d{8}$/, "Must be a Kenyan mobile number, e.g. 0712345678 or +254712345678"),
+  )
+  .transform((digits) => `254${digits.slice(-9)}`);
+
+/**
+ * Initiate an M-Pesa STK push (Lipa na M-Pesa Online). On success the
+ * money is posted as Dr receivedAccountId (the M-Pesa account) /
+ * Cr creditAccountId -- an income account for a cash-style sale, or
+ * Accounts Receivable with customerId set when settling what a customer
+ * owes.
+ */
+export const createStkPushSchema = z.object({
+  /** Also the collection's identity: a retry with the same clientUuid never
+   * triggers a second prompt (FR-PAY-06). */
+  clientUuid: uuidSchema,
+  phone: kenyanMobileSchema,
+  /** KES only; M-Pesa collects whole shillings, so a multiple of 100. */
+  currency: z.literal("KES"),
+  amountMinor: minorUnitsSchema
+    .refine((n) => n >= 100, "The minimum M-Pesa amount is KES 1")
+    .refine((n) => n % 100 === 0, "M-Pesa collects whole shillings only (amountMinor must be a multiple of 100)")
+    .refine((n) => n <= 25_000_000, "M-Pesa's per-transaction limit is KES 250,000"),
+  receivedAccountId: uuidSchema,
+  creditAccountId: uuidSchema,
+  customerId: uuidSchema.optional(),
+  /** Shown on the customer's phone; M-Pesa truncates it to 12 characters. */
+  accountReference: z.string().trim().min(1).max(12).optional(),
+  description: z.string().max(500).optional(),
+});
+
+export type CreateStkPushDto = z.infer<typeof createStkPushSchema>;

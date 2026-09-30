@@ -1,0 +1,19 @@
+meta {
+  name: List Permissions
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/roles/permissions
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires roles:view. The catalogue custom roles are built from.
+}

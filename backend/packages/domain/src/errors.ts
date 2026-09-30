@@ -41,6 +41,10 @@ export type DomainErrorCode =
   | "ROLE_NOT_FOUND"
   | "ROLE_IMMUTABLE"
   | "LAST_OWNER"
+  // payments -- FR-PAY-01..07
+  | "PAYMENT_NOT_FOUND"
+  | "PAYMENTS_NOT_CONFIGURED"
+  | "PAYMENT_PROVIDER_ERROR"
   // idempotency -- Section 9.1, C-08
   | "IDEMPOTENCY_KEY_INVALID"
   | "IDEMPOTENCY_KEY_REUSED"

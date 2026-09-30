@@ -30,6 +30,7 @@ import { trialBalanceRouter } from "./modules/trialBalance/routes.js";
 import { profitAndLossRouter } from "./modules/profitAndLoss/routes.js";
 import { cashFlowRouter } from "./modules/cashFlow/routes.js";
 import { rolesRouter } from "./modules/roles/routes.js";
+import { hooksRouter, paymentsRouter } from "./modules/payments/routes.js";
 import { requireAuth0Token } from "./middleware/auth0.js";
 
 export function createApp(): Express {
@@ -75,6 +76,9 @@ export function createApp(): Express {
   app.use("/api/v1/trial-balance", trialBalanceRouter);
   app.use("/api/v1/profit-and-loss", profitAndLossRouter);
   app.use("/api/v1/cash-flow", cashFlowRouter);
+  app.use("/api/v1/payments", paymentsRouter);
+  // Provider callbacks (no bearer token) -- see payments/routes.ts.
+  app.use("/api/v1/hooks", hooksRouter);
 
   // Error handler must be registered LAST -- Express identifies it by its
   // four-parameter arity and only routes errors to middleware registered
