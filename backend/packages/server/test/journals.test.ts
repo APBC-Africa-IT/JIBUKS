@@ -224,7 +224,9 @@ describe("POST /api/v1/journals", () => {
     const response = await request(app)
       .post("/api/v1/journals")
       .set("Authorization", await authHeader())
-      .send(balancedJournalBody(fixture, { date: "2099-01-01" }));
+      // Outside periods.test.ts's random 2030-2929 range, whose periods
+      // persist in the shared test tenant across runs.
+      .send(balancedJournalBody(fixture, { date: "1999-01-01" }));
 
     expect(response.status).toBe(404);
     expect(response.body.title).toBe("PERIOD_NOT_FOUND");
