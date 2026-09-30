@@ -612,8 +612,11 @@ Create a new customer for the tenant.
   "name": "Jane Trader",
   "phone": "+254700000000",
   "email": "jane@example.com",
-  "address": null,
-  "tags": []
+  "tags": [],
+  "taxIdentifier": "A012345678B",
+  "paymentTermsDays": 30,
+  "currency": "KES",
+  "creditLimitMinor": 50000000
 }
 ```
 
@@ -624,6 +627,10 @@ Create a new customer for the tenant.
 | `email` | string | No | Must be a valid email if given. |
 | `address` | string | No | Max 500 chars. |
 | `tags` | string[] | No | Defaults to `[]`. |
+| `taxIdentifier` | string | No | Tax ID, e.g. KRA PIN. Trimmed and upper-cased (`" p051234567x"` is stored as `"P051234567X"`). Max 50 chars: letters, digits, spaces, `-`, `/`. Not KRA-specific, since tenants also trade in UGX/RWF etc. |
+| `paymentTermsDays` | integer | No | Net payment terms in days, 0–365 (0 = due on receipt). Will drive invoice due dates. |
+| `currency` | string | No | The customer's default currency (ISO 4217, from the supported list). **Omit to use the business's base currency**; it's then returned as `null`, the same convention as accounts. |
+| `creditLimitMinor` | integer | No | Credit limit in the customer's currency, integer minor units (`50000000` = KES 500,000.00). Omit for no limit. **Stored and returned only; not yet enforced** on credit sales. |
 
 **Success Response:** `201 Created` — same shape as `GET /customers/{id}` below, minus `balance_minor` (a brand-new customer has no journal history yet).
 
@@ -652,14 +659,34 @@ List / fetch customers for the caller's tenant. Each customer includes a server-
   "address": null,
   "is_active": true,
   "tags": [],
+  "tax_identifier": "A012345678B",
+  "payment_terms_days": 30,
+  "currency": "KES",
+  "credit_limit_minor": "50000000",
   "created_at": "2026-07-30T10:25:50.110Z",
   "balance_minor": "150000"
 }
 ```
 
+`credit_limit_minor` comes back as a **string** (64-bit value), like `balance_minor`. `null` means no limit.
+
 `balance_minor` is the net of `POSTED` journal lines **tagged with this customer's id** (via `customerId` on a journal line — see [7.8 Journals](#78-journals)), on the debit side (AR-like: a customer owing money is a debit balance). It is not tied to any particular account — a customer can be tagged on lines against different accounts and the balance still nets correctly.
 
 **Error Response:** `400 VALIDATION_ERROR` (malformed `as_of`), `404 CUSTOMER_NOT_FOUND` — doesn't exist, or belongs to a different tenant (indistinguishable by design).
+
+---
+
+### `PATCH /customers/{id}`
+
+`customers:edit`. Updates a customer. Send **only the fields to change**; omitted fields stay as they are, and `null` clears an optional field (`name` and `tags` can't be null):
+
+```json
+{ "paymentTermsDays": 14, "taxIdentifier": null }
+```
+
+Accepts every field from `POST /customers`. Returns the updated customer (without `balance_minor`).
+
+**Error Response:** `400 VALIDATION_ERROR` (including an empty body), `404 CUSTOMER_NOT_FOUND`, `422 PARTY_CURRENCY_LOCKED`. **Currency can't change once any journal line references the customer**, because their balance and credit limit would silently change meaning. Re-sending the current value is fine.
 
 ---
 
@@ -684,9 +711,9 @@ Mirrors [7.5 Customers](#75-customers) exactly, except a supplier's `balance_min
 
 ### `POST /suppliers` 
 
-Same request shape as `POST /customers`, e.g.:
+Same request shape as `POST /customers`, **except there's no `creditLimitMinor`**, e.g.:
 ```json
-{ "name": "Acme Supplies", "phone": "+254711111111" }
+{ "name": "Acme Supplies", "phone": "+254711111111", "taxIdentifier": "P051234567X", "paymentTermsDays": 30 }
 ```
 
 **Error Response:** `401 Unauthorized`, `400 VALIDATION_ERROR`.
@@ -706,12 +733,21 @@ Same query parameters (`as_of`) and shape as `GET /customers`, with `balance_min
   "address": null,
   "is_active": true,
   "tags": [],
+  "tax_identifier": "P051234567X",
+  "payment_terms_days": 30,
+  "currency": null,
   "created_at": "2026-07-30T10:25:50.110Z",
   "balance_minor": "80000"
 }
 ```
 
 **Error Response:** `400 VALIDATION_ERROR` (malformed `as_of`), `404 SUPPLIER_NOT_FOUND`.
+
+---
+
+### `PATCH /suppliers/{id}`
+
+`suppliers:edit`. Same rules as [`PATCH /customers/{id}`](#patch-customersid), including `422 PARTY_CURRENCY_LOCKED`, and `404 SUPPLIER_NOT_FOUND`.
 
 ---
 

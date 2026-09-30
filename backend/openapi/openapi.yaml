@@ -911,6 +911,47 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+    patch:
+      tags: [Customers]
+      summary: Update a customer
+      description: >
+        Requires `customers:edit`. Send only the fields to change; null clears an
+        optional field. Currency is locked once any journal line references
+        the customer (422 PARTY_CURRENCY_LOCKED).
+      parameters:
+        - $ref: '#/components/parameters/CustomerIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerRequest'
+            example:
+              paymentTermsDays: 30
+              taxIdentifier: "P051234567X"
+      responses:
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '200':
+          description: The updated customer (without balance_minor)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: PARTY_CURRENCY_LOCKED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /customers/{id}/deactivate:
     post:
       tags: [Customers]
@@ -1036,6 +1077,47 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Suppliers]
+      summary: Update a supplier
+      description: >
+        Requires `suppliers:edit`. Send only the fields to change; null clears an
+        optional field. Currency is locked once any journal line references
+        the supplier (422 PARTY_CURRENCY_LOCKED).
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSupplierRequest'
+            example:
+              paymentTermsDays: 30
+              taxIdentifier: "P051234567X"
+      responses:
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '200':
+          description: The updated supplier (without balance_minor)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: PARTY_CURRENCY_LOCKED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
   /suppliers/{id}/deactivate:
     post:
@@ -2240,6 +2322,25 @@ components:
           example: "1500000"
 
     # -- Customers --
+    UpdateCustomerRequest:
+      type: object
+      minProperties: 1
+      description: Omitted fields are unchanged; null clears an optional field.
+      properties:
+        name: { type: string, maxLength: 200 }
+        phone: { type: string, maxLength: 20, nullable: true }
+        email: { type: string, format: email, nullable: true }
+        address: { type: string, maxLength: 500, nullable: true }
+        tags:
+          type: array
+          items: { type: string }
+        taxIdentifier: { type: string, maxLength: 50, nullable: true }
+        paymentTermsDays: { type: integer, minimum: 0, maximum: 365, nullable: true }
+        currency:
+          type: string
+          nullable: true
+          description: Can't change once the party has transactions (422 PARTY_CURRENCY_LOCKED).
+        creditLimitMinor: { type: integer, minimum: 0, nullable: true }
     CreateCustomerRequest:
       type: object
       required: [name]
@@ -2256,6 +2357,26 @@ components:
           items:
             type: string
           default: []
+        taxIdentifier:
+          type: string
+          maxLength: 50
+          description: Tax identifier, e.g. KRA PIN. Trimmed and upper-cased; letters, digits, spaces, '-' and '/'.
+          example: "P051234567X"
+        paymentTermsDays:
+          type: integer
+          minimum: 0
+          maximum: 365
+          description: Net payment terms in days (0 = due on receipt).
+          example: 30
+        currency:
+          type: string
+          description: ISO 4217 code of a supported currency. Omit to use the tenant's base currency.
+          example: "KES"
+        creditLimitMinor:
+          type: integer
+          minimum: 0
+          description: Credit limit in the customer's currency, integer minor units. Omit for no limit.
+          example: 50000000
     Customer:
       type: object
       properties:
@@ -2270,6 +2391,17 @@ components:
           type: array
           items:
             type: string
+        tax_identifier: { type: string, nullable: true }
+        payment_terms_days: { type: integer, nullable: true }
+        currency:
+          type: string
+          nullable: true
+          description: Null means the tenant's base currency.
+        credit_limit_minor:
+          type: string
+          nullable: true
+          description: Credit limit, integer minor units as a 64-bit-safe string. Null means no limit.
+          example: "50000000"
         created_at: { type: string, format: date-time }
         balance_minor:
           type: string
@@ -2283,6 +2415,24 @@ components:
           example: "150000"
 
     # -- Suppliers --
+    UpdateSupplierRequest:
+      type: object
+      minProperties: 1
+      description: Omitted fields are unchanged; null clears an optional field.
+      properties:
+        name: { type: string, maxLength: 200 }
+        phone: { type: string, maxLength: 20, nullable: true }
+        email: { type: string, format: email, nullable: true }
+        address: { type: string, maxLength: 500, nullable: true }
+        tags:
+          type: array
+          items: { type: string }
+        taxIdentifier: { type: string, maxLength: 50, nullable: true }
+        paymentTermsDays: { type: integer, minimum: 0, maximum: 365, nullable: true }
+        currency:
+          type: string
+          nullable: true
+          description: Can't change once the party has transactions (422 PARTY_CURRENCY_LOCKED).
     CreateSupplierRequest:
       type: object
       required: [name]
@@ -2299,6 +2449,21 @@ components:
           items:
             type: string
           default: []
+        taxIdentifier:
+          type: string
+          maxLength: 50
+          description: Tax identifier, e.g. KRA PIN. Trimmed and upper-cased; letters, digits, spaces, '-' and '/'.
+          example: "P051234567X"
+        paymentTermsDays:
+          type: integer
+          minimum: 0
+          maximum: 365
+          description: Net payment terms in days (0 = due on receipt).
+          example: 30
+        currency:
+          type: string
+          description: ISO 4217 code of a supported currency. Omit to use the tenant's base currency.
+          example: "KES"
     Supplier:
       type: object
       properties:
@@ -2313,6 +2478,12 @@ components:
           type: array
           items:
             type: string
+        tax_identifier: { type: string, nullable: true }
+        payment_terms_days: { type: integer, nullable: true }
+        currency:
+          type: string
+          nullable: true
+          description: Null means the tenant's base currency.
         created_at: { type: string, format: date-time }
         balance_minor:
           type: string

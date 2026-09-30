@@ -31,6 +31,7 @@ export type DomainErrorCode =
   // customers / suppliers
   | "CUSTOMER_NOT_FOUND"
   | "SUPPLIER_NOT_FOUND"
+  | "PARTY_CURRENCY_LOCKED"
   // users
   | "USER_NOT_FOUND"
   | "USER_ALREADY_EXISTS"

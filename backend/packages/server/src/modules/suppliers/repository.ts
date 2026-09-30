@@ -10,6 +10,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { DomainError } from "@jibuks/domain";
 import { recordAuditLog, withTenant, readAsTenant, type AuditContext } from "@jibuks/db";
 
 export interface SupplierRow {
@@ -21,6 +22,10 @@ export interface SupplierRow {
   readonly address: string | null;
   readonly is_active: boolean;
   readonly tags: string[];
+  readonly tax_identifier: string | null;
+  readonly payment_terms_days: number | null;
+  /** Null means the tenant's base currency. */
+  readonly currency: string | null;
   readonly created_at: string;
 }
 
@@ -58,14 +63,17 @@ export interface CreateSupplierInput {
   readonly email?: string;
   readonly address?: string;
   readonly tags?: string[];
+  readonly taxIdentifier?: string;
+  readonly paymentTermsDays?: number;
+  readonly currency?: string;
 }
 
 export async function createSupplier(input: CreateSupplierInput, audit: AuditContext): Promise<SupplierRow> {
   return withTenant(input.tenantId, async (client) => {
     const id = randomUUID();
     const result = await client.query<SupplierRow>(
-      `INSERT INTO suppliers (id, tenant_id, name, phone, email, address, tags)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO suppliers (id, tenant_id, name, phone, email, address, tags, tax_identifier, payment_terms_days, currency)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         id,
@@ -75,6 +83,9 @@ export async function createSupplier(input: CreateSupplierInput, audit: AuditCon
         input.email ?? null,
         input.address ?? null,
         input.tags ?? [],
+        input.taxIdentifier ?? null,
+        input.paymentTermsDays ?? null,
+        input.currency ?? null,
       ],
     );
 
@@ -195,6 +206,80 @@ export async function reactivateSupplier(
       entityType: "supplier",
       entityId: supplier.id,
       beforeState: before.rows[0],
+      afterState: supplier,
+      context: audit,
+    });
+
+    return supplier;
+  });
+}
+
+export interface UpdateSupplierInput {
+  readonly name?: string | undefined;
+  readonly phone?: string | null | undefined;
+  readonly email?: string | null | undefined;
+  readonly address?: string | null | undefined;
+  readonly tags?: string[] | undefined;
+  readonly taxIdentifier?: string | null | undefined;
+  readonly paymentTermsDays?: number | null | undefined;
+  readonly currency?: string | null | undefined;
+}
+
+const UPDATABLE_COLUMNS: Readonly<Record<keyof UpdateSupplierInput, string>> = {
+  name: "name",
+  phone: "phone",
+  email: "email",
+  address: "address",
+  tags: "tags",
+  taxIdentifier: "tax_identifier",
+  paymentTermsDays: "payment_terms_days",
+  currency: "currency",
+};
+
+/**
+ * Applies only the fields present in `input` (null clears a column).
+ * Currency can't change once any journal line references this supplier --
+ * their balance and credit limit would silently change meaning.
+ */
+export async function updateSupplier(
+  tenantId: string,
+  supplierId: string,
+  input: UpdateSupplierInput,
+  audit: AuditContext,
+): Promise<SupplierRow | null> {
+  return withTenant(tenantId, async (client) => {
+    const before = await client.query<SupplierRow>(`SELECT * FROM suppliers WHERE id = $1 FOR UPDATE`, [supplierId]);
+    const existing = before.rows[0];
+    if (!existing) {
+      return null;
+    }
+
+    if (input.currency !== undefined && input.currency !== existing.currency) {
+      const used = await client.query(`SELECT 1 FROM journal_lines WHERE supplier_id = $1 LIMIT 1`, [supplierId]);
+      if (used.rows.length > 0) {
+        throw new DomainError(
+          "PARTY_CURRENCY_LOCKED",
+          `Supplier ${supplierId} already has transactions; its currency can no longer be changed`,
+        );
+      }
+    }
+
+    const entries = (Object.keys(UPDATABLE_COLUMNS) as (keyof UpdateSupplierInput)[]).filter(
+      (key) => input[key] !== undefined,
+    );
+    const assignments = entries.map((key, i) => `${UPDATABLE_COLUMNS[key]} = $${i + 2}`);
+    const result = await client.query<SupplierRow>(
+      `UPDATE suppliers SET ${assignments.join(", ")} WHERE id = $1 RETURNING *`,
+      [supplierId, ...entries.map((key) => input[key])],
+    );
+    const supplier = result.rows[0]!;
+
+    await recordAuditLog(client, {
+      tenantId,
+      action: "UPDATE",
+      entityType: "supplier",
+      entityId: supplier.id,
+      beforeState: existing,
       afterState: supplier,
       context: audit,
     });

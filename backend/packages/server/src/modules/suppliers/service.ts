@@ -9,7 +9,7 @@
 import { DomainError } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
-import type { SupplierRow, SupplierWithBalanceRow } from "./repository.js";
+import type { SupplierRow, SupplierWithBalanceRow, UpdateSupplierInput } from "./repository.js";
 
 export interface CreateSupplierRequest {
   readonly tenantId: string;
@@ -18,6 +18,9 @@ export interface CreateSupplierRequest {
   readonly email?: string;
   readonly address?: string;
   readonly tags?: string[];
+  readonly taxIdentifier?: string;
+  readonly paymentTermsDays?: number;
+  readonly currency?: string;
 }
 
 export async function createSupplier(request: CreateSupplierRequest, audit: AuditContext): Promise<SupplierRow> {
@@ -29,6 +32,9 @@ export async function createSupplier(request: CreateSupplierRequest, audit: Audi
       ...(request.email !== undefined ? { email: request.email } : {}),
       ...(request.address !== undefined ? { address: request.address } : {}),
       ...(request.tags !== undefined ? { tags: request.tags } : {}),
+      ...(request.taxIdentifier !== undefined ? { taxIdentifier: request.taxIdentifier } : {}),
+      ...(request.paymentTermsDays !== undefined ? { paymentTermsDays: request.paymentTermsDays } : {}),
+      ...(request.currency !== undefined ? { currency: request.currency } : {}),
     },
     audit,
   );
@@ -56,6 +62,19 @@ export async function deactivateSupplier(tenantId: string, supplierId: string, a
 
 export async function reactivateSupplier(tenantId: string, supplierId: string, audit: AuditContext): Promise<SupplierRow> {
   const supplier = await repository.reactivateSupplier(tenantId, supplierId, audit);
+  if (!supplier) {
+    throw new DomainError("SUPPLIER_NOT_FOUND", `Supplier ${supplierId} not found`);
+  }
+  return supplier;
+}
+
+export async function updateSupplier(
+  tenantId: string,
+  supplierId: string,
+  request: UpdateSupplierInput,
+  audit: AuditContext,
+): Promise<SupplierRow> {
+  const supplier = await repository.updateSupplier(tenantId, supplierId, request, audit);
   if (!supplier) {
     throw new DomainError("SUPPLIER_NOT_FOUND", `Supplier ${supplierId} not found`);
   }
