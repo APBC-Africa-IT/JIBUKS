@@ -43,6 +43,12 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   USER_NOT_FOUND: 404,
   USER_ALREADY_EXISTS: 409,
   USER_INACTIVE: 422,
+  // idempotency -- status codes follow the IETF Idempotency-Key header
+  // draft: reuse with a different payload is 422, a concurrent retry of a
+  // still-running request is 409.
+  IDEMPOTENCY_KEY_INVALID: 400,
+  IDEMPOTENCY_KEY_REUSED: 422,
+  IDEMPOTENCY_REQUEST_IN_PROGRESS: 409,
 };
 
 /** Recognisable shape of a node-postgres error, without depending on `pg`

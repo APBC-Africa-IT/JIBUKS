@@ -15,6 +15,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - All endpoints are under `/api/v1` (SRS Section 9.1).
 - **Every request requires** `Authorization: Bearer <token>`, where `<token>` is a genuine, Auth0-issued, RS256-signed JWT, **except** `GET /invites/{token}` (the public invite preview). This platform never sees, stores, or processes a password — identity is delegated entirely to Auth0 (constraint C-03). See [§7 Authentication](#7-authentication) below for the full flow.
 - There is **no** `X-Tenant-Id` / `X-Actor-User-Id` header support. Tenant and actor are always derived from the verified token itself — a client can never claim to belong to a tenant that isn't genuinely theirs.
+- Every `POST` endpoint except `/onboarding` and `/invites/{token}/accept` accepts an optional `Idempotency-Key` header, making retries safe. See [Idempotency-Key header](#idempotency-key-header).
 - Error responses follow [RFC 7807](https://tools.ietf.org/html/rfc7807) problem-detail format: `{ type, title, status, detail, errors? }`.
 - Money fields are always integer minor units (e.g. cents) with a separate currency code — never decimals. **Example:** a sale of 1000.50 KES is sent/received as `debitMinor: 100050` (1000.50 × 100, since KES has 2 decimal places). Not every currency has 2 decimal places — UGX and RWF have 0, so `1500` UGX is *already* the full minor-unit value, not something to further multiply. Always convert using the specific currency's decimal count, never a hardcoded ×100.
 - Date fields (e.g. `start_date`, `date`) are always plain calendar dates (`YYYY-MM-DD`), with no time component, per Section 9.1.
@@ -27,6 +28,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 ## Table of Contents
 
 - [7. Authentication](#7-authentication)
+- [Idempotency-Key header](#idempotency-key-header)
 - [7.1 Onboarding](#71-onboarding)
 - [7.2 Users](#72-users)
 - [7.3 Invites](#73-invites)
@@ -68,6 +70,27 @@ An **unauthenticated** request (missing/invalid/expired token) gets `401 UNAUTHO
 > ⚠️ Each real client app (the React Native app, a future web app) needs its own dedicated Auth0 **Native** or **Single Page Application** registration, with its own Client ID and its own callback URL — never reuse the developer test/M2M applications used to build this API. Whichever app is used, it must also be explicitly **authorized on the relevant API** (Auth0 dashboard → the API → Application Access / "Always grant all permissions") — a real, easy-to-miss step; skipping it produces an `invalid_request` / "Client is not authorized to access resource server" error, not a helpful hint pointing at this setting.
 
 **Token expiry and refresh:** access tokens are short-lived; implement standard refresh-token handling via whichever Auth0 SDK the client uses, so users aren't forced to re-authenticate constantly. Logging out is entirely client-side (just discard the stored token) — there is no server-side session to end, since every request is independently verified from the token alone. Logging back in later works automatically and indefinitely: the token's `sub` claim never changes for a given person, so the same Auth0 account always resolves to the same platform user and tenant, no matter how many times they log out and back in.
+
+---
+
+## Idempotency-Key header
+
+SRS Section 9.1 / C-08. Send `Idempotency-Key: <key>` on any `POST` to make it safe to retry — after a timeout, a dropped connection, or an offline-queue replay. **Currently optional**; requests without it behave exactly as before.
+
+- **Key:** 1–255 printable ASCII characters, no spaces. Use a fresh UUID per logical operation, or reuse the record's `clientUuid` as `operation:clientUuid` (e.g. `cash-sale:550e8400-…`) — `@jibuks/domain` exports `idempotencyKey(clientUuid, operation)` for exactly this.
+- **Scope:** per tenant. Keys are currently kept indefinitely.
+
+| Situation | Response |
+|---|---|
+| First request with this key | Runs normally |
+| Repeat with the same key and identical method, path and body (JSON key order doesn't matter) | The **original** 2xx status and body, replayed without re-executing, plus header `Idempotent-Replayed: true` |
+| Same key, different method, path or body | `422 IDEMPOTENCY_KEY_REUSED` |
+| Same key while the original request is still running | `409 IDEMPOTENCY_REQUEST_IN_PROGRESS` — wait briefly and retry |
+| Malformed key | `400 IDEMPOTENCY_KEY_INVALID` |
+
+**Failed requests don't consume the key.** If the original returns any non-2xx (validation error, locked period, etc.), nothing was saved, so the client can fix the request and resend under the **same** key.
+
+**Without the header**, a retried posting still can't double-post, since `clientUuid` is unique per tenant, but the retry gets `409 DUPLICATE_VALUE` instead of the original result. For anything a client may retry automatically (all cashbook/journal postings), send the header.
 
 ---
 
