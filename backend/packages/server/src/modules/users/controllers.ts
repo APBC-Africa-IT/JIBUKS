@@ -34,7 +34,7 @@ export async function create(req: Request, res: Response): Promise<void> {
 }
 
 export async function list(req: Request, res: Response): Promise<void> {
-  const users = await service.listUsers(req.tenantId!);
+  const users = await service.listUsersWithRoles(req.tenantId!);
   res.json({ data: users });
 }
 

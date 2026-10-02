@@ -282,7 +282,20 @@ async function settle(tenantId: string, paymentId: string): Promise<void> {
   await postToLedger(completed, Number(metadataValue(cb, "Amount")));
 }
 
-async function postToLedger(payment: PaymentRow, paidShillings: number): Promise<void> {
+/** Posts the journal as `actor` -- the initiating user, or whoever reposts. */
+async function postToLedger(
+  payment: PaymentRow,
+  paidShillings: number,
+  actor: AuditContext = { actorUserId: payment.initiated_by },
+): Promise<void> {
+  // An earlier attempt may have posted the journal but died before
+  // linking it; the journal's clientUuid is the payment id.
+  const existing = await journalsService.findJournalByClientUuid(payment.tenant_id, payment.id);
+  if (existing) {
+    await repository.setPostingResult(payment.tenant_id, payment.id, existing.id, null);
+    return;
+  }
+
   const amountMinor = Number(payment.amount_minor);
   if (Math.round(paidShillings * 100) !== amountMinor) {
     await repository.setPostingResult(
@@ -322,7 +335,7 @@ async function postToLedger(payment: PaymentRow, paidShillings: number): Promise
             : []),
         ],
       },
-      { actorUserId: payment.initiated_by },
+      actor,
     );
     await repository.setPostingResult(payment.tenant_id, payment.id, journal.id, null);
   } catch (err) {
@@ -356,6 +369,34 @@ export async function getPayment(tenantId: string, paymentId: string): Promise<P
     }
   }
   return toView(payment);
+}
+
+/**
+ * Retries posting a payment whose money arrived but couldn't be posted
+ * (SUCCEEDED with journal_id null) -- e.g. after the period was reopened or
+ * an account reactivated. Same checks as the first attempt, so a payment
+ * whose paid amount differs from the requested amount still won't post.
+ * Answers with the payment either way: journal_id set on success,
+ * posting_error updated otherwise.
+ */
+export async function repostPayment(tenantId: string, paymentId: string, audit: AuditContext): Promise<PaymentView> {
+  const payment = isUuid(paymentId) ? await repository.getPayment(tenantId, paymentId) : null;
+  if (!payment) {
+    throw new DomainError("PAYMENT_NOT_FOUND", `Payment ${paymentId} not found`);
+  }
+  if (payment.status !== "SUCCEEDED" || payment.journal_id !== null) {
+    throw new DomainError(
+      "PAYMENT_NOT_REPOSTABLE",
+      payment.journal_id !== null
+        ? `Payment ${paymentId} is already posted (journal ${payment.journal_id})`
+        : `Payment ${paymentId} is ${payment.status.toLowerCase()}; only a received payment that wasn't posted can be reposted`,
+    );
+  }
+
+  const cb = extractCallback(payment.callback_payload);
+  const paidShillings = cb ? Number(metadataValue(cb, "Amount")) : Number(payment.amount_minor) / 100;
+  await postToLedger(payment, paidShillings, audit);
+  return toView((await repository.getPayment(tenantId, paymentId))!);
 }
 
 export async function listPayments(tenantId: string): Promise<PaymentView[]> {

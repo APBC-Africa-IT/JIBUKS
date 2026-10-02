@@ -66,6 +66,8 @@ servers:
       laptop or vice versa.
 
 tags:
+  - name: Tenant
+    description: The caller's own business, incl. plan_tier.
   - name: Onboarding
     description: >
       Self-service sign-up. Creates a brand-new tenant and its first user
@@ -279,7 +281,7 @@ paths:
                 detail: "A user for this identity already exists (id ...)"
     get:
       tags: [Users]
-      summary: List users in the caller's tenant
+      summary: List users in the caller's tenant, each with their roles
       responses:
         '403':
           $ref: '#/components/responses/Forbidden'
@@ -293,7 +295,7 @@ paths:
                   data:
                     type: array
                     items:
-                      $ref: '#/components/schemas/User'
+                      $ref: '#/components/schemas/UserWithRoles'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -519,6 +521,58 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /payments/{id}/repost:
+    post:
+      tags: [Payments]
+      summary: Retry posting a received payment that wasn't posted
+      description: >
+        Requires `payments:create`. For a SUCCEEDED payment with journal_id
+        null, once its cause (e.g. a missing or closed period) is fixed.
+        Answers 200 with the payment either way: journal_id set if it
+        posted, otherwise posting_error says why. Never posts twice.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '200':
+          description: The payment after the attempt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: PAYMENT_NOT_REPOSTABLE -- not SUCCEEDED, or already posted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /tenant:
+    get:
+      tags: [Tenant]
+      summary: The caller's own business
+      description: >
+        Any signed-in user. plan_tier STARTER is the micro-trader tier: offer
+        Owner, Cashier and Agent only. GROWTH and ENTERPRISE: all roles and
+        custom roles.
+      responses:
+        '200':
+          description: The tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /hooks/stk/{tenantId}/{paymentId}/{token}:
     post:
@@ -2345,6 +2399,30 @@ components:
           maxItems: 10
           items:
             $ref: '#/components/schemas/RoleRef'
+    UserWithRoles:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          properties:
+            roles:
+              type: array
+              items:
+                $ref: '#/components/schemas/Role'
+    Tenant:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        type: { type: string, enum: [BUSINESS, NGO, HOUSEHOLD] }
+        base_currency: { type: string }
+        accounting_framework: { type: string, enum: [IFRS, GAAP, IPSAS] }
+        plan_tier:
+          type: string
+          enum: [STARTER, GROWTH, ENTERPRISE]
+          description: STARTER = micro-trader (every business starts here).
+        status: { type: string, enum: [ACTIVE, SUSPENDED] }
+        vat_registered: { type: boolean }
+        created_at: { type: string, format: date-time }
     UserWithAccess:
       allOf:
         - $ref: '#/components/schemas/User'

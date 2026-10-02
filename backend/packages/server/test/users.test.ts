@@ -86,6 +86,18 @@ describe("GET /api/v1/users", () => {
     expect(response.body.data.some((u: { id: string }) => u.id === TEST_USER_ID)).toBe(true);
   });
 
+  it("includes each user's roles, matching GET /users/:id/roles", async () => {
+    const response = await request(app).get("/api/v1/users").set("Authorization", await authHeader());
+    const users = response.body.data as Array<{ id: string; roles: Array<{ id: string }> }>;
+
+    const me = users.find((u) => u.id === TEST_USER_ID)!;
+    expect(me.roles.map((r) => r.id)).toContain("OWNER");
+    for (const user of users.slice(0, 3)) {
+      const single = await request(app).get(`/api/v1/users/${user.id}/roles`).set("Authorization", await authHeader());
+      expect(user.roles).toEqual(single.body.data);
+    }
+  });
+
   it("rejects a request with no Authorization header", async () => {
     const response = await request(app).get("/api/v1/users");
     expect(response.status).toBe(401);

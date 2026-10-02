@@ -1,0 +1,20 @@
+meta {
+  name: Get Tenant
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/tenant
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  The caller's own business. Any signed-in user. plan_tier STARTER = micro-trader
+  (offer Owner, Cashier, Agent only); GROWTH / ENTERPRISE = all roles + custom roles.
+}

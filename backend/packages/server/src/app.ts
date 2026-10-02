@@ -31,6 +31,7 @@ import { profitAndLossRouter } from "./modules/profitAndLoss/routes.js";
 import { cashFlowRouter } from "./modules/cashFlow/routes.js";
 import { rolesRouter } from "./modules/roles/routes.js";
 import { hooksRouter, paymentsRouter } from "./modules/payments/routes.js";
+import { tenantRouter } from "./modules/tenants/routes.js";
 import { requireAuth0Token } from "./middleware/auth0.js";
 
 export function createApp(): Express {
@@ -61,6 +62,7 @@ export function createApp(): Express {
   // Section 9.1: all endpoints are under /api/v1.
   app.use("/api/v1/onboarding", onboardingRouter);
   app.use("/api/v1/invites", invitesRouter);
+  app.use("/api/v1/tenant", tenantRouter);
   app.use("/api/v1/users", usersRouter);
   app.use("/api/v1/roles", rolesRouter);
   app.use("/api/v1/accounts", accountsRouter);

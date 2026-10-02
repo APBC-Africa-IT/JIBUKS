@@ -427,6 +427,55 @@ describe("POST /api/v1/hooks/stk/... (Safaricom callback)", () => {
   });
 });
 
+describe("POST /api/v1/payments/:id/repost", () => {
+  it("posts a received-but-unposted payment once its period exists, then refuses to post it again", async () => {
+    const fixture = await makeFixture();
+    const pushed = await push(pushBody(fixture));
+    // A month no other test uses, so the period can be created here.
+    const year = 2930 + Math.floor(Math.random() * 60);
+    const month = String(1 + Math.floor(Math.random() * 12)).padStart(2, "0");
+    const payload = successCallback(pushed.body.checkout_request_id, 1500);
+    const item = payload.Body.stkCallback.CallbackMetadata.Item.find((i) => i.Name === "TransactionDate")!;
+    item.Value = Number(`${year}${month}15102115`);
+    await request(app).post(lastCallbackPath()).send(payload);
+
+    const stillMissing = await request(app).post(`/api/v1/payments/${pushed.body.id}/repost`).set("Authorization", await authHeader());
+    expect(stillMissing.status).toBe(200);
+    expect(stillMissing.body).toMatchObject({ status: "SUCCEEDED", journal_id: null });
+    expect(stillMissing.body.posting_error).toMatch(/period/i);
+
+    await withTenant(TEST_TENANT_ID, async (client) => {
+      await client.query(`INSERT INTO periods (tenant_id, start_date, end_date) VALUES ($1, $2, $3)`, [
+        TEST_TENANT_ID,
+        `${year}-${month}-01`,
+        `${year}-${month}-28`,
+      ]);
+    });
+    const reposted = await request(app).post(`/api/v1/payments/${pushed.body.id}/repost`).set("Authorization", await authHeader());
+    const again = await request(app).post(`/api/v1/payments/${pushed.body.id}/repost`).set("Authorization", await authHeader());
+
+    expect(reposted.status).toBe(200);
+    expect(reposted.body.journal_id).not.toBeNull();
+    expect(reposted.body.posting_error).toBeNull();
+    const lines = await journalLines(reposted.body.journal_id);
+    expect(lines.find((l) => l.account_id === fixture.mpesaAccountId)).toMatchObject({ debit_minor: "150000" });
+    expect(again.status).toBe(422);
+    expect(again.body.title).toBe("PAYMENT_NOT_REPOSTABLE");
+  });
+
+  it("refuses a payment that hasn't succeeded with 422, and an unknown one with 404", async () => {
+    const fixture = await makeFixture();
+    const pending = await push(pushBody(fixture));
+
+    const notYet = await request(app).post(`/api/v1/payments/${pending.body.id}/repost`).set("Authorization", await authHeader());
+    const unknown = await request(app).post(`/api/v1/payments/${randomUUID()}/repost`).set("Authorization", await authHeader());
+
+    expect(notYet.status).toBe(422);
+    expect(notYet.body.title).toBe("PAYMENT_NOT_REPOSTABLE");
+    expect(unknown.status).toBe(404);
+  });
+});
+
 describe("GET /api/v1/payments/:id", () => {
   it("resolves a stale PENDING payment whose callback never came, via Daraja's status query", async () => {
     const fixture = await makeFixture();

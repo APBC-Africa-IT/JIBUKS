@@ -208,17 +208,28 @@ export async function completeIfPending(
 }
 
 /** Records the outcome of posting a SUCCEEDED payment to the ledger. */
+/**
+ * Records the outcome of posting a payment. A failure never overwrites a
+ * journal already linked -- a repost racing the original posting (or
+ * another repost) can't undo the one that succeeded.
+ */
 export async function setPostingResult(
   tenantId: string,
   paymentId: string,
   journalId: string | null,
   postingError: string | null,
-): Promise<PaymentRow> {
-  return withTenant(tenantId, async (client) => {
-    const result = await client.query<PaymentRow>(
-      `UPDATE payments SET journal_id = $2, posting_error = $3 WHERE id = $1 RETURNING *`,
-      [paymentId, journalId, postingError],
-    );
-    return result.rows[0]!;
+): Promise<void> {
+  await withTenant(tenantId, async (client) => {
+    if (journalId !== null) {
+      await client.query(`UPDATE payments SET journal_id = $2, posting_error = NULL WHERE id = $1`, [
+        paymentId,
+        journalId,
+      ]);
+    } else {
+      await client.query(`UPDATE payments SET posting_error = $2 WHERE id = $1 AND journal_id IS NULL`, [
+        paymentId,
+        postingError,
+      ]);
+    }
   });
 }
