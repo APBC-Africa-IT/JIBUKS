@@ -24,6 +24,7 @@ import type { AuditContext } from "@jibuks/db";
 import * as accountsService from "../accounts/service.js";
 import * as customersService from "../customers/service.js";
 import * as journalsService from "../journals/service.js";
+import { todayInNairobi } from "../periods/service.js";
 import * as repository from "./repository.js";
 import type { PaymentRow } from "./repository.js";
 import { getDarajaClient } from "./daraja.js";
@@ -165,10 +166,6 @@ function toAccountingDate(raw: unknown): string | null {
     return null;
   }
   return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
-}
-
-function todayInNairobi(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi" }).format(new Date());
 }
 
 function failureStatus(resultCode: string): "CANCELLED" | "FAILED" {

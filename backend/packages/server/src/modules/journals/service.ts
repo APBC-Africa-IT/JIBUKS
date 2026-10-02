@@ -133,6 +133,7 @@ function serializeLinesForRepository(
 
 export async function createJournal(request: CreateJournalRequest, audit: AuditContext): Promise<JournalWithLines> {
   await validatePartyAttribution(request.tenantId, request.lines);
+  await periodsService.ensureCurrentPeriodForDate(request.tenantId, request.date, audit);
   const context = await buildPostingContext(request.tenantId);
 
   const validated = validateForPosting(
@@ -211,6 +212,7 @@ export async function reverseJournal(
     clientUuid: randomUUID(),
   });
 
+  await periodsService.ensureCurrentPeriodForDate(tenantId, reversalInput.date, audit);
   const context = await buildPostingContext(tenantId);
   const validated = validateForPosting(reversalInput, context);
 

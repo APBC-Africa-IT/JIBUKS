@@ -1320,6 +1320,10 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Periods]
       summary: Create an accounting period
+      description: >
+        Not needed for the current month: any posting dated in the current
+        calendar month (Kenya time) with no covering period opens that month's
+        period automatically. Use this for other months.
       requestBody:
         required: true
         content:

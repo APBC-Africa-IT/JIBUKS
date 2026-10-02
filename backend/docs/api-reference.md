@@ -16,7 +16,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - **Every request requires** `Authorization: Bearer <token>`, where `<token>` is a genuine, Auth0-issued, RS256-signed JWT, **except** `GET /invites/{token}` (the public invite preview). This platform never sees, stores, or processes a password — identity is delegated entirely to Auth0 (constraint C-03). See [§7 Authentication](#7-authentication) below for the full flow.
 - There is **no** `X-Tenant-Id` / `X-Actor-User-Id` header support. Tenant and actor are always derived from the verified token itself — a client can never claim to belong to a tenant that isn't genuinely theirs.
 - **Every tenant endpoint requires a specific permission**; without it the response is `403 FORBIDDEN`. See [Roles and permissions](#roles-and-permissions).
-- Every `POST` endpoint except `/onboarding` and `/invites/{token}/accept` accepts an optional `Idempotency-Key` header, making retries safe. See [Idempotency-Key header](#idempotency-key-header).
+- Every `POST`, `PUT` and `PATCH` endpoint except `/onboarding` and `/invites/{token}/accept` accepts an optional `Idempotency-Key` header, making retries safe. See [Idempotency-Key header](#idempotency-key-header).
 - Error responses follow [RFC 7807](https://tools.ietf.org/html/rfc7807) problem-detail format: `{ type, title, status, detail, errors? }`.
 - Money fields are always integer minor units (e.g. cents) with a separate currency code — never decimals. **Example:** a sale of 1000.50 KES is sent/received as `debitMinor: 100050` (1000.50 × 100, since KES has 2 decimal places). Not every currency has 2 decimal places — UGX and RWF have 0, so `1500` UGX is *already* the full minor-unit value, not something to further multiply. Always convert using the specific currency's decimal count, never a hardcoded ×100.
 - Date fields (e.g. `start_date`, `date`) are always plain calendar dates (`YYYY-MM-DD`), with no time component, per Section 9.1.
@@ -79,7 +79,7 @@ An **unauthenticated** request (missing/invalid/expired token) gets `401 UNAUTHO
 
 ## Idempotency-Key header
 
-SRS Section 9.1 / C-08. Send `Idempotency-Key: <key>` on any `POST` to make it safe to retry — after a timeout, a dropped connection, or an offline-queue replay. **Currently optional**; requests without it behave exactly as before.
+SRS Section 9.1 / C-08. Send `Idempotency-Key: <key>` on any `POST`, `PUT` or `PATCH` to make it safe to retry — after a timeout, a dropped connection, or an offline-queue replay. **Currently optional**; requests without it behave exactly as before.
 
 - **Key:** 1–255 printable ASCII characters, no spaces. Use a fresh UUID per logical operation, or reuse the record's `clientUuid` as `operation:clientUuid` (e.g. `cash-sale:550e8400-…`) — `@jibuks/domain` exports `idempotencyKey(clientUuid, operation)` for exactly this.
 - **Scope:** per tenant, and tied to the user who first sent it. The same key from a different user gets `422 IDEMPOTENCY_KEY_REUSED`. Keys are currently kept indefinitely.
@@ -772,6 +772,8 @@ Base path: `/api/v1/periods`
 
 A journal can only be posted into an **open** period covering its date.
 
+**The current month opens automatically.** When anything is posted (journals, the guided sale/bill/cheque/expense endpoints, reversals, M-Pesa payments) dated in the current calendar month (Kenya time) and no period covers that date, the server first opens a period for that month — the whole month, or just the gap left by existing periods. Nobody needs `periods:create` for this, so Cashier and Agent can keep posting across month boundaries. It never opens any other month, and never reopens or bypasses a closed/locked period.
+
 ---
 
 ### `POST /periods` 
@@ -806,11 +808,12 @@ Only an `OPEN` period can be closed. `422 PERIOD_LOCKED` otherwise.
 
 ### `POST /periods/{id}/reopen` 
 
-> ⚠️ **Not yet permission-gated** — any authenticated tenant user can reopen any period. RBAC will change this; treat as provisional.
+Requires the dedicated `periods:reopen` permission (FR-ACC-03).
 
 ### Notes for consuming clients (Periods)
 
-- `POST /journals` fails with `404 PERIOD_NOT_FOUND` if no period covers its date, or `422 PERIOD_LOCKED` if the covering period is closed/locked.
+- `POST /journals` fails with `404 PERIOD_NOT_FOUND` if no period covers its date **and the date isn't in the current month** (e.g. a backdated entry into a month that was never opened), or `422 PERIOD_LOCKED` if the covering period is closed/locked.
+- Clients don't need to check for or create the current month's period before posting.
 
 ---
 
