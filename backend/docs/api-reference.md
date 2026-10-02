@@ -251,7 +251,7 @@ The new user's `external_idp_subject` is taken directly from the verified token'
 }
 ```
 
-**The starter chart of accounts** always includes Cash, Bank, M-Pesa (`1020`, where M-Pesa collections land — see [7.18 Payments](#718-payments)), Accounts Receivable, Accounts Payable, Owner's Equity, Sales Revenue, Purchases, and General Expenses (codes `1000`–`5100` above). If `vatRegistered: true`, two more accounts are added: `1200` VAT Recoverable (Input VAT, an ASSET — used as `taxAccountId` on `POST /bills`) and `2100` VAT Payable (Output VAT, a LIABILITY — used as `taxAccountId` on `POST /credit-sales`/`POST /cash-sales`).
+**The starter chart of accounts** always includes Cash, Bank, M-Pesa (`1020`, `system_key: "MPESA"`, where M-Pesa collections land — see [7.18 Payments](#718-payments)), Accounts Receivable, Accounts Payable, Owner's Equity, Sales Revenue, Purchases, and General Expenses (codes `1000`–`5100` above). If `vatRegistered: true`, two more accounts are added: `1200` VAT Recoverable (Input VAT, an ASSET — used as `taxAccountId` on `POST /bills`) and `2100` VAT Payable (Output VAT, a LIABILITY — used as `taxAccountId` on `POST /credit-sales`/`POST /cash-sales`).
 
 **Use these account ids directly** with `POST /credit-sales`, `POST /cash-sales`, `POST /bills`, and `POST /cheques` — no extra `GET /accounts` round trip is needed right after sign-up. A user can still rename, deactivate, or add more accounts later via the `/accounts` endpoints; nothing about this starter set is special or protected.
 
@@ -1332,7 +1332,6 @@ Behind the scenes, Safaricom calls the server back. The server doesn't trust tha
   "phone": "0712345678",
   "currency": "KES",
   "amountMinor": 150000,
-  "receivedAccountId": "<the M-Pesa account, code 1020>",
   "creditAccountId": "<Sales Revenue, or Accounts Receivable>",
   "customerId": "<optional>",
   "accountReference": "INV-0042"
@@ -1345,13 +1344,15 @@ Behind the scenes, Safaricom calls the server back. The server doesn't trust tha
 | `phone` | string | ✅ Yes | Kenyan mobile number in any common form: `0712345678`, `712345678`, `+254712345678`, `254 712 345 678`, and `01…` numbers too. Returned normalised as `254712345678`. |
 | `currency` | string | ✅ Yes | Must be `"KES"`. |
 | `amountMinor` | integer | ✅ Yes | **Whole shillings only**: a multiple of 100 (`150000` = KES 1,500). KES 1 to KES 250,000. |
-| `receivedAccountId` | uuid | ✅ Yes | Debited when the money arrives. Normally the **M-Pesa** account (`1020`). |
+| `receivedAccountId` | uuid | No | Debited when the money arrives. **Leave it out**: the server uses the business's M-Pesa account, creating it if it doesn't have one (see below). Only send it to receive into a different account. |
 | `creditAccountId` | uuid | ✅ Yes | Credited when the money arrives: **Sales Revenue** for a straightforward sale, or **Accounts Receivable** (with `customerId`) when a customer is paying what they owe. |
 | `customerId` | uuid | No | Tags the credit line to this customer, so it reduces their balance. |
 | `accountReference` | string | No | Up to 12 chars, shown on the customer's phone. Defaults to `JIBUKS`. |
 | `description` | string | No | Used as the journal description. |
 
 Both accounts (and the customer) are validated **before** the customer is prompted, so nobody gets charged for a payment that can't be posted.
+
+**The M-Pesa account** is the account with `system_key: "MPESA"` in `GET /accounts`. The server finds it by that key, never by its code. New businesses get it at `1020`. A business that has none (onboarded before M-Pesa existed) gets one created on its first collection, at `1020`, or the next free code if the business already uses `1020` for something else; that existing account is never touched. No `accounts:create` permission is needed, so a Cashier's first collection works too. To show the M-Pesa balance, find the account with `system_key: "MPESA"`; it may not exist until the first collection.
 
 **Success Response:** `202 Accepted`, a payment object (see below) with `status: "PENDING"`.
 

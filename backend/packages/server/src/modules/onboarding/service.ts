@@ -24,7 +24,7 @@ import * as usersService from "../users/service.js";
 import * as periodsService from "../periods/service.js";
 import type { PeriodRow } from "../periods/repository.js";
 import * as accountsService from "../accounts/service.js";
-import type { AccountRow } from "../accounts/repository.js";
+import type { AccountRow, SystemAccountKey } from "../accounts/repository.js";
 import * as repository from "./repository.js";
 import type { OnboardResult } from "./repository.js";
 
@@ -63,6 +63,7 @@ interface StarterAccount {
   readonly type: AccountType;
   /** Only seeded when the tenant is VAT-registered. */
   readonly vatOnly?: boolean;
+  readonly systemKey?: SystemAccountKey;
 }
 
 /** A minimal starter chart of accounts -- exactly what the four guided
@@ -74,7 +75,7 @@ const STARTER_ACCOUNTS: readonly StarterAccount[] = [
   { code: "1010", name: "Bank", type: "ASSET" },
   // Kept apart from Cash and Bank so it can be reconciled against the
   // M-Pesa statement (FR-PAY-05).
-  { code: "1020", name: "M-Pesa", type: "ASSET" },
+  { code: "1020", name: "M-Pesa", type: "ASSET", systemKey: "MPESA" },
   { code: "1100", name: "Accounts Receivable", type: "ASSET" },
   { code: "1200", name: "VAT Recoverable (Input VAT)", type: "ASSET", vatOnly: true },
   { code: "2000", name: "Accounts Payable", type: "LIABILITY" },
@@ -109,7 +110,13 @@ export async function onboard(request: OnboardRequest): Promise<OnboardServiceRe
     }
     accounts.push(
       await accountsService.createAccount(
-        { tenantId: tenant.id, code: starter.code, name: starter.name, type: starter.type },
+        {
+          tenantId: tenant.id,
+          code: starter.code,
+          name: starter.name,
+          type: starter.type,
+          ...(starter.systemKey ? { systemKey: starter.systemKey } : {}),
+        },
         audit,
       ),
     );

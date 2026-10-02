@@ -531,7 +531,8 @@ export const kenyanMobileSchema = z
 
 /**
  * Initiate an M-Pesa STK push (Lipa na M-Pesa Online). On success the
- * money is posted as Dr receivedAccountId (the M-Pesa account) /
+ * money is posted as Dr receivedAccountId (default: the tenant's M-Pesa
+ * account, created if missing) /
  * Cr creditAccountId -- an income account for a cash-style sale, or
  * Accounts Receivable with customerId set when settling what a customer
  * owes.
@@ -547,7 +548,7 @@ export const createStkPushSchema = z.object({
     .refine((n) => n >= 100, "The minimum M-Pesa amount is KES 1")
     .refine((n) => n % 100 === 0, "M-Pesa collects whole shillings only (amountMinor must be a multiple of 100)")
     .refine((n) => n <= 25_000_000, "M-Pesa's per-transaction limit is KES 250,000"),
-  receivedAccountId: uuidSchema,
+  receivedAccountId: uuidSchema.optional(),
   creditAccountId: uuidSchema,
   customerId: uuidSchema.optional(),
   /** Shown on the customer's phone; M-Pesa truncates it to 12 characters. */
