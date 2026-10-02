@@ -43,6 +43,43 @@ export async function findPeriodForDate(tenantId: string, date: string): Promise
   return repository.findPeriodForDate(tenantId, date);
 }
 
+/** Today's calendar date in Kenya (yyyy-mm-dd), where JIBUKS tenants trade. */
+export function todayInNairobi(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi" }).format(now);
+}
+
+function lastDayOfMonth(date: string): string {
+  const [year, month] = date.split("-").map(Number) as [number, number];
+  const last = new Date(Date.UTC(year, month, 0));
+  return last.toISOString().slice(0, 10);
+}
+
+/**
+ * Called before every posting. If no period covers `date` and `date` is in
+ * the current calendar month, opens that month's period, so day-to-day
+ * posting never stops at a month boundary -- including for roles that
+ * can't manage periods (Cashier, Agent).
+ *
+ * Deliberately narrow: an earlier or later month is never opened
+ * implicitly (that is a bookkeeping decision, made via POST /periods), and
+ * a CLOSED or LOCKED period is never touched -- the posting then fails
+ * with PERIOD_NOT_FOUND / PERIOD_LOCKED as before.
+ */
+export async function ensureCurrentPeriodForDate(
+  tenantId: string,
+  date: string,
+  audit: AuditContext,
+  today: string = todayInNairobi(),
+): Promise<void> {
+  if (date.slice(0, 7) !== today.slice(0, 7)) {
+    return;
+  }
+  if (await repository.findPeriodForDate(tenantId, date)) {
+    return;
+  }
+  await repository.createPeriodCoveringDate(tenantId, date, `${date.slice(0, 7)}-01`, lastDayOfMonth(date), audit);
+}
+
 export async function closePeriod(tenantId: string, periodId: string, audit: AuditContext): Promise<PeriodRow> {
   const period = await repository.getPeriodById(tenantId, periodId);
   if (!period) {

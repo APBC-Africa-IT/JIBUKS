@@ -79,6 +79,61 @@ export async function findPeriodForDate(tenantId: string, date: string): Promise
   });
 }
 
+/**
+ * Opens a period for `date`, spanning [monthStart, monthEnd] narrowed so it
+ * never overlaps an existing period, unless one already covers `date`.
+ * A per-tenant advisory lock serialises this, so two postings racing on
+ * the 1st of the month can't both create one. Returns the period covering
+ * `date` either way.
+ */
+export async function createPeriodCoveringDate(
+  tenantId: string,
+  date: string,
+  monthStart: string,
+  monthEnd: string,
+  audit: AuditContext,
+): Promise<PeriodRow> {
+  return withTenant(tenantId, async (client) => {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('periods:' || $1))`, [tenantId]);
+
+    const covering = await client.query<PeriodRow>(
+      `SELECT * FROM periods WHERE start_date <= $1 AND end_date >= $1 LIMIT 1`,
+      [date],
+    );
+    if (covering.rows[0]) {
+      return covering.rows[0];
+    }
+
+    // Shrink the month around `date` to the gap left by neighbouring periods.
+    const bounds = await client.query<{ start_date: string; end_date: string }>(
+      `SELECT
+         GREATEST($2::date, (SELECT MAX(end_date) + 1 FROM periods WHERE end_date < $1 AND end_date >= $2)) AS start_date,
+         LEAST($3::date, (SELECT MIN(start_date) - 1 FROM periods WHERE start_date > $1 AND start_date <= $3)) AS end_date`,
+      [date, monthStart, monthEnd],
+    );
+    const { start_date, end_date } = bounds.rows[0]!;
+
+    const result = await client.query<PeriodRow>(
+      `INSERT INTO periods (id, tenant_id, start_date, end_date)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [randomUUID(), tenantId, start_date, end_date],
+    );
+    const period = result.rows[0]!;
+
+    await recordAuditLog(client, {
+      tenantId,
+      action: "CREATE",
+      entityType: "period",
+      entityId: period.id,
+      afterState: period,
+      context: audit,
+    });
+
+    return period;
+  });
+}
+
 export async function setPeriodStatus(
   tenantId: string,
   periodId: string,
