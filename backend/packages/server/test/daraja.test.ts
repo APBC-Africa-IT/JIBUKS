@@ -6,7 +6,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getDarajaClient, setDarajaClientForTesting } from "../src/modules/payments/daraja.js";
+import {
+  getDarajaClient,
+  setDarajaClientForTesting,
+  StkPushOutcomeUnknownError,
+} from "../src/modules/payments/daraja.js";
 
 const ENV = {
   MPESA_ENV: "sandbox",
@@ -41,6 +45,50 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   setDarajaClientForTesting(undefined);
+});
+
+const PUSH = {
+  phone: "254712345678",
+  amountShillings: 1,
+  accountReference: "TEST",
+  transactionDesc: "Test",
+  callbackUrl: "https://staging.example.test/cb",
+};
+
+/** OAuth answers normally (unless `failToken`); every other call throws like a timeout. */
+function stubTimeouts(failToken = false) {
+  const signals: unknown[] = [];
+  vi.stubGlobal("fetch", async (url: string, init?: { signal?: unknown }) => {
+    signals.push(init?.signal);
+    if (url.includes("/oauth/") && !failToken) {
+      return new Response(JSON.stringify({ access_token: "tok", expires_in: "3599" }), { status: 200 });
+    }
+    throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+  });
+  return signals;
+}
+
+describe("Daraja timeouts", () => {
+  it("reports a push that timed out after sending as outcome-unknown, not failed", async () => {
+    const signals = stubTimeouts();
+
+    await expect(getDarajaClient().stkPush(PUSH)).rejects.toBeInstanceOf(StkPushOutcomeUnknownError);
+    // Every call carries a timeout signal.
+    expect(signals).toHaveLength(2);
+    expect(signals.every((s) => s instanceof AbortSignal)).toBe(true);
+  });
+
+  it("reports a push that failed at the token step as a definite provider error", async () => {
+    stubTimeouts(true);
+
+    await expect(getDarajaClient().stkPush(PUSH)).rejects.toMatchObject({ code: "PAYMENT_PROVIDER_ERROR" });
+  });
+
+  it("reports a timed-out status query as a provider error (the payment is re-checked later)", async () => {
+    stubTimeouts();
+
+    await expect(getDarajaClient().stkQuery("ws_CO_1")).rejects.toMatchObject({ code: "PAYMENT_PROVIDER_ERROR" });
+  });
 });
 
 describe("Daraja STK query", () => {

@@ -43,6 +43,22 @@ export type StkQueryResult =
   | { readonly state: "pending" }
   | { readonly state: "complete"; readonly resultCode: string; readonly resultDesc: string };
 
+/**
+ * The STK push request may or may not have reached Safaricom: it timed out
+ * or the connection dropped after it was sent. The customer may have been
+ * prompted, so the payment must NOT be reported as failed -- Safaricom's
+ * callback, if one comes, says what happened.
+ */
+export class StkPushOutcomeUnknownError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StkPushOutcomeUnknownError";
+  }
+}
+
+/** How long any single Daraja call may take before it's abandoned. */
+const REQUEST_TIMEOUT_MS = 20_000;
+
 export interface DarajaClient {
   readonly callbackBaseUrl: string;
   stkPush(request: StkPushRequest): Promise<StkPushResponse>;
@@ -137,6 +153,7 @@ function createHttpDarajaClient(config: DarajaConfig): DarajaClient {
     try {
       response = await fetch(`${config.baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
         headers: { authorization: `Basic ${basic}` },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
       throw providerError(`Could not reach M-Pesa: ${(err as Error).message}`);
@@ -150,19 +167,35 @@ function createHttpDarajaClient(config: DarajaConfig): DarajaClient {
     return cachedToken.value;
   }
 
-  async function post(path: string, payload: object): Promise<{ status: number; body: Record<string, unknown> }> {
+  /**
+   * `outcomeUnknownOnNetworkError`: a timeout or dropped connection after
+   * the token step means the request may have been acted on -- reported as
+   * StkPushOutcomeUnknownError instead of a definite provider error. (A
+   * token failure is always definite: nothing was sent yet.)
+   */
+  async function post(
+    path: string,
+    payload: object,
+    outcomeUnknownOnNetworkError = false,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
     const token = await accessToken();
+    const networkError = (err: unknown) => {
+      const message = `Could not reach M-Pesa: ${(err as Error).message}`;
+      return outcomeUnknownOnNetworkError ? new StkPushOutcomeUnknownError(message) : providerError(message);
+    };
     let response: Response;
+    let text: string;
     try {
       response = await fetch(`${config.baseUrl}${path}`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
+      text = await response.text();
     } catch (err) {
-      throw providerError(`Could not reach M-Pesa: ${(err as Error).message}`);
+      throw networkError(err);
     }
-    const text = await response.text();
     let body: Record<string, unknown> = {};
     try {
       body = JSON.parse(text) as Record<string, unknown>;
@@ -181,7 +214,7 @@ function createHttpDarajaClient(config: DarajaConfig): DarajaClient {
 
     async stkPush(request) {
       const timestamp = darajaTimestamp();
-      const { status, body } = await post("/mpesa/stkpush/v1/processrequest", {
+      const payload = {
         BusinessShortCode: config.shortcode,
         Password: password(timestamp),
         Timestamp: timestamp,
@@ -193,7 +226,9 @@ function createHttpDarajaClient(config: DarajaConfig): DarajaClient {
         CallBackURL: request.callbackUrl,
         AccountReference: request.accountReference,
         TransactionDesc: request.transactionDesc,
-      });
+      };
+      // Once sent, a timeout leaves the outcome unknown -- see post().
+      const { status, body } = await post("/mpesa/stkpush/v1/processrequest", payload, true);
       if (status !== 200 || String(body["ResponseCode"]) !== "0") {
         const reason = (body["errorMessage"] ?? body["ResponseDescription"] ?? `HTTP ${status}`) as string;
         throw providerError(`M-Pesa did not accept the payment request: ${reason}`);

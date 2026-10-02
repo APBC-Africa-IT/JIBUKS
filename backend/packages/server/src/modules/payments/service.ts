@@ -28,13 +28,25 @@ import * as journalsService from "../journals/service.js";
 import { todayInNairobi } from "../periods/service.js";
 import * as repository from "./repository.js";
 import type { PaymentRow } from "./repository.js";
-import { getDarajaClient } from "./daraja.js";
+import { getDarajaClient, StkPushOutcomeUnknownError } from "./daraja.js";
 
 /** M-Pesa result code for "cancelled by the user" on the phone prompt. */
 const RESULT_CANCELLED_BY_USER = "1032";
 
 /** A PENDING payment older than this is re-checked with Daraja when read. */
 const RECHECK_AFTER_MS = 60_000;
+
+/**
+ * A push whose outcome is unknown (timed out) can't be queried -- Daraja
+ * never returned its CheckoutRequestID. If no callback has arrived by
+ * then, it is marked FAILED. The prompt itself expires in about a minute,
+ * so this leaves wide margin; a callback arriving later still revives it
+ * (adoptCheckoutRequest), so money is never lost.
+ */
+const OUTCOME_UNKNOWN_EXPIRY_MS = 5 * 60_000;
+
+const NO_RESPONSE_DESC =
+  "No response from M-Pesa. If the customer was charged, this payment will update automatically.";
 
 const DEFAULT_ACCOUNT_REFERENCE = "JIBUKS";
 
@@ -147,6 +159,12 @@ export async function initiateStkPush(request: InitiateStkPushRequest, audit: Au
     );
     return toView(updated);
   } catch (err) {
+    if (err instanceof StkPushOutcomeUnknownError) {
+      // The customer may have been prompted. Stay PENDING and let the
+      // callback decide; GET /payments/{id} expires it if none comes.
+      console.error(`STK push for payment ${payment.id} has an unknown outcome:`, err.message);
+      return toView(payment);
+    }
     // Nothing reached the customer's phone -- record the failure (the row
     // stays visible for audit) and report it honestly.
     const message = err instanceof Error ? err.message : String(err);
@@ -205,12 +223,26 @@ export async function handleStkCallback(
   if (!isUuid(tenantId) || !isUuid(paymentId)) {
     throw notFound;
   }
-  const payment = await repository.getPayment(tenantId, paymentId);
+  let payment = await repository.getPayment(tenantId, paymentId);
   if (!payment || !tokenMatches(token, payment.callback_token_hash)) {
     throw notFound;
   }
   const cb = extractCallback(body);
-  if (!cb || !payment.checkout_request_id || cb.CheckoutRequestID !== payment.checkout_request_id) {
+  if (!cb?.CheckoutRequestID) {
+    throw notFound;
+  }
+  if (!payment.checkout_request_id) {
+    // The push timed out before Daraja told us its ids (or this callback
+    // beat markPushed). The secret URL proves the payment; take its ids.
+    payment =
+      (await repository.adoptCheckoutRequest(
+        tenantId,
+        paymentId,
+        cb.MerchantRequestID ?? null,
+        cb.CheckoutRequestID,
+      )) ?? (await repository.getPayment(tenantId, paymentId))!; // adopted concurrently
+  }
+  if (cb.CheckoutRequestID !== payment.checkout_request_id) {
     throw notFound;
   }
   if (payment.status !== "PENDING") {
@@ -357,8 +389,18 @@ export async function getPayment(tenantId: string, paymentId: string): Promise<P
   if (!payment) {
     throw new DomainError("PAYMENT_NOT_FOUND", `Payment ${paymentId} not found`);
   }
+  const age = Date.now() - new Date(payment.created_at).getTime();
+  // A push with an unknown outcome and no callback since: give up on it.
+  if (payment.status === "PENDING" && !payment.checkout_request_id && age > OUTCOME_UNKNOWN_EXPIRY_MS) {
+    payment =
+      (await repository.completeIfPending(tenantId, paymentId, {
+        status: "FAILED",
+        resultCode: null,
+        resultDesc: NO_RESPONSE_DESC,
+      })) ?? (await repository.getPayment(tenantId, paymentId))!;
+  }
   // Covers a lost or delayed callback: re-check a stale PENDING payment.
-  if (payment.status === "PENDING" && Date.now() - new Date(payment.created_at).getTime() > RECHECK_AFTER_MS) {
+  if (payment.status === "PENDING" && age > RECHECK_AFTER_MS) {
     try {
       await settle(tenantId, paymentId);
       payment = (await repository.getPayment(tenantId, paymentId))!;

@@ -136,6 +136,56 @@ export async function markPushed(
   });
 }
 
+/**
+ * Attaches Safaricom's request ids to a payment that never learned them --
+ * its push timed out (outcome unknown), or the callback beat markPushed.
+ * Safaricom calling back proves the push arrived, so a payment marked
+ * FAILED without a result code (our own "no response" / provider-error
+ * verdict, never Safaricom's) goes back to PENDING to take the callback.
+ * Returns null if the payment already has ids or a Safaricom result.
+ */
+export async function adoptCheckoutRequest(
+  tenantId: string,
+  paymentId: string,
+  merchantRequestId: string | null,
+  checkoutRequestId: string,
+): Promise<PaymentRow | null> {
+  return withTenant(tenantId, async (client) => {
+    const before = await client.query<PaymentRow>(
+      `SELECT * FROM payments
+        WHERE id = $1 AND checkout_request_id IS NULL
+          AND (status = 'PENDING' OR (status = 'FAILED' AND result_code IS NULL))
+        FOR UPDATE`,
+      [paymentId],
+    );
+    const existing = before.rows[0];
+    if (!existing) {
+      return null;
+    }
+    const result = await client.query<PaymentRow>(
+      `UPDATE payments
+          SET merchant_request_id = $2, checkout_request_id = $3,
+              status = 'PENDING', result_desc = NULL, completed_at = NULL
+        WHERE id = $1
+       RETURNING *`,
+      [paymentId, merchantRequestId, checkoutRequestId],
+    );
+    const payment = result.rows[0]!;
+    if (existing.status !== "PENDING") {
+      await recordAuditLog(client, {
+        tenantId,
+        action: "UPDATE",
+        entityType: "payment",
+        entityId: payment.id,
+        beforeState: auditView(existing),
+        afterState: auditView(payment),
+        context: { actorUserId: existing.initiated_by },
+      });
+    }
+    return payment;
+  });
+}
+
 /** Keeps a successful callback while its confirmation is outstanding. */
 export async function storeCallbackPayload(tenantId: string, paymentId: string, payload: unknown): Promise<void> {
   await withTenant(tenantId, async (client) => {
@@ -207,7 +257,6 @@ export async function completeIfPending(
   });
 }
 
-/** Records the outcome of posting a SUCCEEDED payment to the ledger. */
 /**
  * Records the outcome of posting a payment. A failure never overwrites a
  * journal already linked -- a repost racing the original posting (or

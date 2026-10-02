@@ -1366,12 +1366,14 @@ All accounts (and the customer) are validated **before** the customer is prompte
 
 **Success Response:** `202 Accepted`, a payment object (see below) with `status: "PENDING"`.
 
+If M-Pesa doesn't answer in time (about 20 s), the response is still `202 PENDING`, but with `checkout_request_id: null`: the customer **may** have been prompted. Poll as usual and **don't offer a retry while it's PENDING**, or the customer could pay twice. If they approve, Safaricom's callback completes it normally. If nothing comes within 5 minutes, it becomes `FAILED` with `result_desc` "No response from M-Pesa…"; offer a retry then. Should Safaricom report a payment after that, it switches to `SUCCEEDED` by itself, so money is never lost.
+
 **Error Response:**
 - `400 VALIDATION_ERROR`: bad phone, fractional shillings, non-KES, `taxAmountMinor` without `taxAccountId` or not below `amountMinor`, etc.
 - `404`: unknown account or customer.
 - `409 DUPLICATE_VALUE`: `clientUuid` already used.
 - `422 ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE`.
-- `502 PAYMENT_PROVIDER_ERROR`: M-Pesa refused the request or couldn't be reached. The payment is recorded as `FAILED` and nothing reached the customer's phone.
+- `502 PAYMENT_PROVIDER_ERROR`: M-Pesa refused the request, or couldn't be reached before anything was sent. The payment is recorded as `FAILED` and nothing reached the customer's phone; retry with a new `clientUuid`. (A timeout **after** sending is not a 502; see above.)
 - `503 PAYMENTS_NOT_CONFIGURED`: M-Pesa credentials aren't set on this server.
 
 ### `GET /payments/{id}`
