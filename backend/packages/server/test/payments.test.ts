@@ -14,6 +14,7 @@ import { closePool, withTenant } from "@jibuks/db";
 import { createApp } from "../src/app.js";
 import {
   setDarajaClientForTesting,
+  StkPushOutcomeUnknownError,
   type DarajaClient,
   type StkPushRequest,
   type StkQueryResult,
@@ -424,6 +425,60 @@ describe("POST /api/v1/hooks/stk/... (Safaricom callback)", () => {
     expect(payment.body.status).toBe("SUCCEEDED");
     expect(payment.body.journal_id).toBeNull();
     expect(payment.body.posting_error).toMatch(/period/i);
+  });
+});
+
+describe("STK push with an unknown outcome (timed out)", () => {
+  it("stays PENDING instead of failing, then takes the callback's ids and posts", async () => {
+    const fixture = await makeFixture();
+    daraja.pushError = new StkPushOutcomeUnknownError("Could not reach M-Pesa: timeout");
+
+    const pushed = await push(pushBody(fixture));
+
+    expect(pushed.status).toBe(202);
+    expect(pushed.body).toMatchObject({ status: "PENDING", checkout_request_id: null });
+
+    const checkoutRequestId = `ws_CO_${randomUUID()}`;
+    const callback = await request(app).post(lastCallbackPath()).send(successCallback(checkoutRequestId, 1500));
+    const payment = await getPayment(pushed.body.id);
+
+    expect(callback.status).toBe(200);
+    expect(daraja.queries).toEqual([checkoutRequestId]); // still confirmed with Safaricom
+    expect(payment.body).toMatchObject({ status: "SUCCEEDED", checkout_request_id: checkoutRequestId, posting_error: null });
+    expect(payment.body.journal_id).not.toBeNull();
+  });
+
+  it("expires to FAILED when no callback comes, and a late success callback still revives and posts it", async () => {
+    const fixture = await makeFixture();
+    daraja.pushError = new StkPushOutcomeUnknownError("Could not reach M-Pesa: timeout");
+    const pushed = await push(pushBody(fixture));
+    await withTenant(TEST_TENANT_ID, async (client) => {
+      await client.query(`UPDATE payments SET created_at = now() - interval '6 minutes' WHERE id = $1`, [pushed.body.id]);
+    });
+
+    const expired = await getPayment(pushed.body.id);
+
+    expect(expired.body).toMatchObject({ status: "FAILED", result_code: null });
+    expect(expired.body.result_desc).toMatch(/no response from m-pesa/i);
+
+    const checkoutRequestId = `ws_CO_${randomUUID()}`;
+    await request(app).post(lastCallbackPath()).send(successCallback(checkoutRequestId, 1500));
+    const revived = await getPayment(pushed.body.id);
+
+    expect(revived.body).toMatchObject({ status: "SUCCEEDED", checkout_request_id: checkoutRequestId });
+    expect(revived.body.journal_id).not.toBeNull();
+  });
+
+  it("never adopts a callback for a payment Safaricom already answered", async () => {
+    const fixture = await makeFixture();
+    const pushed = await push(pushBody(fixture));
+    await request(app).post(lastCallbackPath()).send(failureCallback(pushed.body.checkout_request_id, 1032, "Request cancelled by user"));
+
+    const stray = await request(app).post(lastCallbackPath()).send(successCallback(`ws_CO_${randomUUID()}`, 1500));
+    const payment = await getPayment(pushed.body.id);
+
+    expect(stray.status).toBe(404);
+    expect(payment.body.status).toBe("CANCELLED");
   });
 });
 

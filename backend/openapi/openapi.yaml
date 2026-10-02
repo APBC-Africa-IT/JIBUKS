@@ -461,7 +461,11 @@ paths:
         '409':
           $ref: '#/components/responses/DuplicateValue'
         '502':
-          description: PAYMENT_PROVIDER_ERROR -- M-Pesa refused or couldn't be reached; the payment is recorded as FAILED
+          description: >
+            PAYMENT_PROVIDER_ERROR -- M-Pesa refused, or couldn't be reached
+            before anything was sent; the payment is recorded as FAILED. A
+            timeout after sending instead answers 202 PENDING with
+            checkout_request_id null (the customer may have been prompted).
           content:
             application/json:
               schema:
