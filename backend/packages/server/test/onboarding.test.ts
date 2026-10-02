@@ -150,6 +150,8 @@ describe("onboarding service (direct)", () => {
     const codes = result.accounts.map((a) => a.code).sort();
     expect(codes).toEqual(["1000", "1010", "1020", "1100", "2000", "3000", "4000", "5000", "5100"]);
     expect(result.accounts.every((a) => a.is_active)).toBe(true);
+    // The M-Pesa account is found by system key, not by its code.
+    expect(result.accounts.filter((a) => a.system_key === "MPESA").map((a) => a.code)).toEqual(["1020"]);
   });
 
   it("seeds a VAT-registered tenant with VAT Payable and VAT Recoverable accounts too", async () => {

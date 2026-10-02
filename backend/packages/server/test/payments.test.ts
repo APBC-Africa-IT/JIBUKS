@@ -18,7 +18,8 @@ import {
   type StkPushRequest,
   type StkQueryResult,
 } from "../src/modules/payments/daraja.js";
-import { authHeader, TEST_TENANT_ID } from "./testAuth.js";
+import * as accountsService from "../src/modules/accounts/service.js";
+import { authHeader, TEST_TENANT_ID, TEST_USER_ID } from "./testAuth.js";
 
 const app = createApp();
 
@@ -204,6 +205,19 @@ describe("POST /api/v1/payments/mpesa/stk-push", () => {
       p.result_desc?.includes("Invalid PhoneNumber"),
     );
     expect(failed?.status).toBe("FAILED");
+  });
+
+  it("receives into the tenant's M-Pesa account when receivedAccountId is omitted", async () => {
+    const fixture = await makeFixture();
+    const { receivedAccountId: _omitted, ...body } = pushBody(fixture);
+
+    const response = await push(body);
+
+    expect(response.status).toBe(202);
+    const mpesa = await accountsService.getOrCreateMpesaAccount(TEST_TENANT_ID, { actorUserId: TEST_USER_ID });
+    expect(response.body.received_account_id).toBe(mpesa.id);
+    expect(mpesa.system_key).toBe("MPESA");
+    expect(mpesa.type).toBe("ASSET");
   });
 
   it("answers 503 PAYMENTS_NOT_CONFIGURED when M-Pesa isn't configured", async () => {

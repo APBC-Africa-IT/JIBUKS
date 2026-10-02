@@ -12,6 +12,8 @@
 import { randomUUID } from "node:crypto";
 import { recordAuditLog, withTenant, readAsTenant, type AuditContext } from "@jibuks/db";
 
+type TenantClient = Parameters<Parameters<typeof withTenant>[1]>[0];
+
 export interface AccountRow {
   readonly id: string;
   readonly tenant_id: string;
@@ -23,8 +25,12 @@ export interface AccountRow {
   readonly is_active: boolean;
   readonly is_postable: boolean;
   readonly tags: string[];
+  /** Set on the account the server relies on for a purpose (e.g. 'MPESA'). */
+  readonly system_key: SystemAccountKey | null;
   readonly created_at: string;
 }
+
+export type SystemAccountKey = "MPESA";
 
 /** An AccountRow plus its computed balance -- what GET /accounts and GET
  * /accounts/{id} return. Net of POSTED journal_lines against the account,
@@ -69,40 +75,84 @@ export interface CreateAccountInput {
   readonly currency?: string;
   readonly tags?: string[];
   readonly isPostable?: boolean;
+  readonly systemKey?: SystemAccountKey;
+}
+
+async function insertAccount(client: TenantClient, input: CreateAccountInput, audit: AuditContext): Promise<AccountRow> {
+  const id = randomUUID();
+  const result = await client.query<AccountRow>(
+    `INSERT INTO accounts (id, tenant_id, parent_account_id, code, name, type, currency, is_postable, tags, system_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     RETURNING *`,
+    [
+      id,
+      input.tenantId,
+      input.parentAccountId ?? null,
+      input.code,
+      input.name,
+      input.type,
+      input.currency ?? null,
+      input.isPostable ?? true,
+      input.tags ?? [],
+      input.systemKey ?? null,
+    ],
+  );
+
+  const account = result.rows[0]!;
+
+  await recordAuditLog(client, {
+    tenantId: input.tenantId,
+    action: "CREATE",
+    entityType: "account",
+    entityId: account.id,
+    afterState: account,
+    context: audit,
+  });
+
+  return account;
 }
 
 export async function createAccount(input: CreateAccountInput, audit: AuditContext): Promise<AccountRow> {
-  return withTenant(input.tenantId, async (client) => {
-    const id = randomUUID();
-    const result = await client.query<AccountRow>(
-      `INSERT INTO accounts (id, tenant_id, parent_account_id, code, name, type, currency, is_postable, tags)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING *`,
-      [
-        id,
-        input.tenantId,
-        input.parentAccountId ?? null,
-        input.code,
-        input.name,
-        input.type,
-        input.currency ?? null,
-        input.isPostable ?? true,
-        input.tags ?? [],
-      ],
-    );
+  return withTenant(input.tenantId, (client) => insertAccount(client, input, audit));
+}
 
-    const account = result.rows[0]!;
+export async function findAccountBySystemKey(tenantId: string, systemKey: SystemAccountKey): Promise<AccountRow | null> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<AccountRow>(`SELECT * FROM accounts WHERE system_key = $1`, [systemKey]);
+    return result.rows[0] ?? null;
+  });
+}
 
-    await recordAuditLog(client, {
-      tenantId: input.tenantId,
-      action: "CREATE",
-      entityType: "account",
-      entityId: account.id,
-      afterState: account,
-      context: audit,
-    });
+/**
+ * Returns the account carrying `systemKey`, creating it if the tenant has
+ * none. The new account takes the first free code among `codes`. A
+ * per-tenant advisory lock stops two concurrent callers creating two.
+ */
+export async function getOrCreateSystemAccount(
+  tenantId: string,
+  systemKey: SystemAccountKey,
+  template: { readonly name: string; readonly type: AccountRow["type"]; readonly codes: readonly string[] },
+  audit: AuditContext,
+): Promise<AccountRow> {
+  return withTenant(tenantId, async (client) => {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('system_account:' || $1))`, [tenantId]);
 
-    return account;
+    const existing = await client.query<AccountRow>(`SELECT * FROM accounts WHERE system_key = $1`, [systemKey]);
+    if (existing.rows[0]) {
+      return existing.rows[0];
+    }
+
+    const taken = await client.query<{ code: string }>(`SELECT code FROM accounts WHERE code = ANY($1)`, [
+      template.codes,
+    ]);
+    const takenCodes = new Set(taken.rows.map((r) => r.code));
+    const code = template.codes.find((c) => !takenCodes.has(c));
+    if (!code) {
+      // Every candidate code taken -- not a state a real chart reaches.
+      throw new Error(`No free code for the ${template.name} account among ${template.codes.join(", ")}`);
+    }
+
+    return insertAccount(client, { tenantId, code, name: template.name, type: template.type, systemKey }, audit);
   });
 }
 

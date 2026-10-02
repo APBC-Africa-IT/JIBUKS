@@ -420,7 +420,8 @@ paths:
       description: >
         Requires `payments:create`. Sends a PIN prompt to the customer's
         phone and returns 202 with a PENDING payment. On confirmed success
-        the server posts Dr `receivedAccountId` / Cr `creditAccountId`
+        the server posts Dr `receivedAccountId` (default: the business's
+        M-Pesa account, created if missing) / Cr `creditAccountId`
         (tagged with `customerId` if given). A repeat with the same
         `clientUuid` never prompts twice: 409 without an Idempotency-Key,
         the original response with one.
@@ -437,7 +438,6 @@ paths:
               phone: "0712345678"
               currency: KES
               amountMinor: 150000
-              receivedAccountId: "1a2b3c4d-5e6f-4a10-9c1a-4a2b4c1a9c1a"
               creditAccountId: "2b3c4d5e-6f70-4a10-9c1a-4a2b4c1a9c1b"
               accountReference: "INV-0042"
       responses:
@@ -2362,7 +2362,7 @@ components:
     # -- Payments --
     CreateStkPushRequest:
       type: object
-      required: [clientUuid, phone, currency, amountMinor, receivedAccountId, creditAccountId]
+      required: [clientUuid, phone, currency, amountMinor, creditAccountId]
       properties:
         clientUuid:
           type: string
@@ -2382,7 +2382,10 @@ components:
         receivedAccountId:
           type: string
           format: uuid
-          description: Debited on success -- normally the M-Pesa account (code 1020).
+          description: >
+            Optional; debited on success. Omit it to use the business's M-Pesa
+            account (system_key MPESA), which the server creates if missing --
+            at code 1020, or the next free code if 1020 is already used.
         creditAccountId:
           type: string
           format: uuid
@@ -2541,6 +2544,11 @@ components:
           type: array
           items:
             type: string
+        system_key:
+          type: string
+          enum: [MPESA]
+          nullable: true
+          description: Marks the account the server uses for a purpose. MPESA = where M-Pesa collections are received. Set by the server only.
         created_at: { type: string, format: date-time }
         balance_minor:
           type: string

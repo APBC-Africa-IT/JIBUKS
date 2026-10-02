@@ -11,7 +11,15 @@ import { DomainError, isCurrencyCode, type AccountType } from "@jibuks/domain";
 import type { AccountSnapshot } from "@jibuks/ledger";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
-import type { AccountRow, AccountWithBalanceRow } from "./repository.js";
+import type { AccountRow, AccountWithBalanceRow, SystemAccountKey } from "./repository.js";
+
+/** The account M-Pesa collections are received into. Starter code 1020;
+ * if a business already uses 1020 for something else, the next free code. */
+const MPESA_ACCOUNT = {
+  name: "M-Pesa",
+  type: "ASSET",
+  codes: Array.from({ length: 80 }, (_, i) => String(1020 + i)),
+} as const;
 
 export interface CreateAccountRequest {
   readonly tenantId: string;
@@ -21,6 +29,8 @@ export interface CreateAccountRequest {
   readonly parentAccountId?: string;
   readonly currency?: string;
   readonly tags?: string[];
+  /** Internal only (onboarding); never taken from a request body. */
+  readonly systemKey?: SystemAccountKey;
 }
 
 export async function createAccount(request: CreateAccountRequest, audit: AuditContext): Promise<AccountRow> {
@@ -46,8 +56,22 @@ export async function createAccount(request: CreateAccountRequest, audit: AuditC
       ...(request.parentAccountId !== undefined ? { parentAccountId: request.parentAccountId } : {}),
       ...(request.currency !== undefined ? { currency: request.currency } : {}),
       ...(request.tags !== undefined ? { tags: request.tags } : {}),
+      ...(request.systemKey !== undefined ? { systemKey: request.systemKey } : {}),
     },
     audit,
+  );
+}
+
+/**
+ * The tenant's M-Pesa account (system_key 'MPESA'), created on first use.
+ * Found by its system key, never by code, so a business that used code
+ * 1020 for something else before it became the M-Pesa starter account
+ * keeps that account untouched.
+ */
+export async function getOrCreateMpesaAccount(tenantId: string, audit: AuditContext): Promise<AccountRow> {
+  return (
+    (await repository.findAccountBySystemKey(tenantId, "MPESA")) ??
+    repository.getOrCreateSystemAccount(tenantId, "MPESA", MPESA_ACCOUNT, audit)
   );
 }
 

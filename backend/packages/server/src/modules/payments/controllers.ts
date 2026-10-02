@@ -26,7 +26,7 @@ export async function stkPush(req: Request, res: Response): Promise<void> {
       phone: body.phone,
       amountMinor: body.amountMinor,
       currency: body.currency,
-      receivedAccountId: body.receivedAccountId,
+      ...(body.receivedAccountId !== undefined ? { receivedAccountId: body.receivedAccountId } : {}),
       creditAccountId: body.creditAccountId,
       ...(body.customerId !== undefined ? { customerId: body.customerId } : {}),
       ...(body.accountReference !== undefined ? { accountReference: body.accountReference } : {}),

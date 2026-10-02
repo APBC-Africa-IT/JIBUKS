@@ -77,7 +77,8 @@ export interface InitiateStkPushRequest {
   readonly phone: string;
   readonly amountMinor: number;
   readonly currency: "KES";
-  readonly receivedAccountId: string;
+  /** Defaults to the tenant's M-Pesa account (created if missing). */
+  readonly receivedAccountId?: string;
   readonly creditAccountId: string;
   readonly customerId?: string;
   readonly accountReference?: string;
@@ -87,9 +88,15 @@ export interface InitiateStkPushRequest {
 export async function initiateStkPush(request: InitiateStkPushRequest, audit: AuditContext): Promise<PaymentView> {
   const daraja = getDarajaClient(); // 503 before anything is recorded
 
+  // Resolved by system key, not code, and created here if missing -- so a
+  // Cashier (no accounts:create) can collect in a business onboarded
+  // before the M-Pesa starter account existed.
+  const receivedAccountId =
+    request.receivedAccountId ?? (await accountsService.getOrCreateMpesaAccount(request.tenantId, audit)).id;
+
   // Validate everything the eventual journal needs NOW, so a customer is
   // never charged for a payment that then can't be posted.
-  await assertPostableAccount(request.tenantId, request.receivedAccountId);
+  await assertPostableAccount(request.tenantId, receivedAccountId);
   await assertPostableAccount(request.tenantId, request.creditAccountId);
   if (request.customerId) {
     await customersService.getCustomer(request.tenantId, request.customerId);
@@ -106,7 +113,7 @@ export async function initiateStkPush(request: InitiateStkPushRequest, audit: Au
       phone: request.phone,
       accountReference,
       ...(request.description !== undefined ? { description: request.description } : {}),
-      receivedAccountId: request.receivedAccountId,
+      receivedAccountId,
       creditAccountId: request.creditAccountId,
       ...(request.customerId !== undefined ? { customerId: request.customerId } : {}),
       callbackTokenHash: hashToken(token),
