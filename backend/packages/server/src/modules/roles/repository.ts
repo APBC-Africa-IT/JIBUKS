@@ -27,6 +27,7 @@ export interface RoleRow {
 
 /** One assignment, joined with its custom role (null for a built-in). */
 export interface AssignmentRow {
+  readonly user_id: string;
   readonly system_role: SystemRoleKey | null;
   readonly role_id: string | null;
   readonly role_name: string | null;
@@ -125,18 +126,27 @@ export async function updateRole(
 
 // Same order as GET /roles: built-ins in catalogue order, then custom roles
 // by name. (Not created_at -- rows assigned in one transaction share it.)
+// $2 = one user's id, or NULL for every user in the tenant.
 const ASSIGNMENTS_SQL = `
-  SELECT ur.system_role, ur.role_id,
+  SELECT ur.user_id, ur.system_role, ur.role_id,
          r.name AS role_name, r.description AS role_description,
          r.permissions AS role_permissions, r.is_active AS role_is_active
     FROM user_roles ur
     LEFT JOIN roles r ON r.id = ur.role_id
-   WHERE ur.user_id = $1
-   ORDER BY array_position($2::text[], ur.system_role) NULLS LAST, lower(r.name), ur.role_id`;
+   WHERE $2::uuid IS NULL OR ur.user_id = $2
+   ORDER BY array_position($1::text[], ur.system_role) NULLS LAST, lower(r.name), ur.role_id`;
 
 export async function listAssignments(tenantId: string, userId: string): Promise<AssignmentRow[]> {
   return readAsTenant(tenantId, async (client) => {
-    const result = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [userId, SYSTEM_ROLE_KEYS]);
+    const result = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [SYSTEM_ROLE_KEYS, userId]);
+    return result.rows;
+  });
+}
+
+/** Every user's assignments in the tenant, in one query (GET /users). */
+export async function listAllAssignments(tenantId: string): Promise<AssignmentRow[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [SYSTEM_ROLE_KEYS, null]);
     return result.rows;
   });
 }
@@ -196,7 +206,7 @@ export async function replaceAssignments(
   return withTenant(tenantId, async (client) => {
     await client.query(`SELECT pg_advisory_xact_lock(hashtext('user_roles:' || $1))`, [tenantId]);
 
-    const before = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [userId, SYSTEM_ROLE_KEYS]);
+    const before = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [SYSTEM_ROLE_KEYS, userId]);
     await client.query(`DELETE FROM user_roles WHERE user_id = $1`, [userId]);
     await insertAssignments(client, tenantId, userId, roleRefs, audit.actorUserId);
 
@@ -210,7 +220,7 @@ export async function replaceAssignments(
       throw new DomainError("LAST_OWNER", "A business must keep at least one active Owner");
     }
 
-    const after = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [userId, SYSTEM_ROLE_KEYS]);
+    const after = await client.query<AssignmentRow>(ASSIGNMENTS_SQL, [SYSTEM_ROLE_KEYS, userId]);
     await recordAuditLog(client, {
       tenantId,
       action: "UPDATE",

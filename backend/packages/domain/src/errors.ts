@@ -45,6 +45,7 @@ export type DomainErrorCode =
   | "PAYMENT_NOT_FOUND"
   | "PAYMENTS_NOT_CONFIGURED"
   | "PAYMENT_PROVIDER_ERROR"
+  | "PAYMENT_NOT_REPOSTABLE"
   // idempotency -- Section 9.1, C-08
   | "IDEMPOTENCY_KEY_INVALID"
   | "IDEMPOTENCY_KEY_REUSED"

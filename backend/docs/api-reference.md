@@ -49,6 +49,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.16 Cash Flow](#716-cash-flow)
 - [7.17 Roles](#717-roles)
 - [7.18 Payments](#718-payments)
+- [7.19 Tenant](#719-tenant)
 
 ---
 
@@ -121,7 +122,7 @@ FR-RBAC-01/02, FR-MIC-08. Each user has one or more **roles**, and each role gra
 | `VIEWER` | Read-only: every `:view` permission, including reports. |
 | `AGENT` | Record cash sales and collect M-Pesa payments; view accounts and customers. (Micro-trader tier.) |
 
-For micro-traders (FR-MIC-08), show only **Owner, Cashier and Agent**. All five exist in every business; which ones the app offers is a presentation choice.
+For micro-traders (FR-MIC-08), show only **Owner, Cashier and Agent**. All five exist in every business; which ones the app offers is a presentation choice. Tell a micro-trader apart by `plan_tier` from [`GET /tenant`](#719-tenant): `STARTER` = micro-trader (Owner, Cashier, Agent; no custom roles), `GROWTH` / `ENTERPRISE` = all roles plus custom-role screens.
 
 A business can also create **custom roles** from the permission catalogue (see [§7.17](#717-roles)). A user with several roles gets the union of their permissions. A deactivated custom role grants nothing.
 
@@ -275,7 +276,7 @@ The new user's `external_idp_subject` is taken directly from the verified token'
 
 - One Auth0 identity maps to exactly **one** tenant, permanently.
 - Both the tenant creation and the user creation are recorded in the audit trail, with the new user recorded as the actor of their own creation.
-- The seeded period only covers `periodStartDate`'s calendar month. Posting to a later month needs a new period first — there is no automatic month-end rollover yet, so plan for a "create next period" step (or prompt) once the seeded period is close to its `end_date`.
+- The seeded period only covers `periodStartDate`'s calendar month. Later months open automatically on the first posting dated in them (see [§7.7](#77-periods)); only backdated months need `POST /periods`.
 
 ---
 
@@ -341,6 +342,11 @@ Needs no permission. Every signed-in user can call it.
 ### `GET /users` / `GET /users/{id}` 
 
 List / fetch users in the caller's tenant. Standard shapes, see `POST /users`'s response for the object shape.
+
+`GET /users` also includes each user's `roles` (same role objects as `GET /users/{id}/roles`; `[]` if none), so a team screen needs one request:
+```json
+{ "data": [ { "id": "6b377361-...", "name": "Jane Wanjiku", "...": "other user fields", "roles": [ { "id": "CASHIER", "name": "Cashier", "system": true, "isActive": true, "permissions": ["..."] } ] } ] }
+```
 
 ---
 
@@ -1407,7 +1413,15 @@ All accounts (and the customer) are validated **before** the customer is prompte
 | `CANCELLED` | The customer dismissed the prompt (`result_code` `"1032"`). |
 | `FAILED` | Anything else: insufficient funds (`"1"`), wrong PIN (`"2001"`), phone unreachable (`"1037"`), or M-Pesa refused the request. See `result_desc`. |
 
-> ⚠️ **`SUCCEEDED` with `journal_id: null`** means the money **did arrive** but couldn't be posted, and `posting_error` says why (e.g. no open period covers the date, or Safaricom reported a different amount). Show it as received but needing attention. Never tell the customer it failed.
+> ⚠️ **`SUCCEEDED` with `journal_id: null`** means the money **did arrive** but couldn't be posted, and `posting_error` says why (e.g. no open period covers the date, or Safaricom reported a different amount). Show it as received but needing attention. Never tell the customer it failed. Once the cause is fixed, post it with [`POST /payments/{id}/repost`](#post-paymentsidrepost).
+
+### `POST /payments/{id}/repost`
+
+`payments:create`. Retries posting a `SUCCEEDED` payment whose `journal_id` is `null`, for example after the period was reopened (or created, for a backdated month) or an inactive account was reactivated. No body.
+
+**Success Response:** `200 OK`, the payment object. Check `journal_id`: set means it posted (`posting_error` is cleared); still `null` means it failed again and `posting_error` says why. A payment where Safaricom reported a different amount than requested never posts this way; an accountant records it with a manual journal.
+
+**Error Response:** `404 PAYMENT_NOT_FOUND`; `422 PAYMENT_NOT_REPOSTABLE` if the payment isn't `SUCCEEDED` or is already posted. Safe to call twice: it never posts the same payment twice.
 
 ### `GET /payments`
 
@@ -1419,3 +1433,33 @@ All accounts (and the customer) are validated **before** the customer is prompte
 - On **staging**, payments use Safaricom's **sandbox**: no real money moves.
 - `amount_minor` is returned as a string, like other money fields.
 - `POST /hooks/stk/...` in the OpenAPI spec is Safaricom's callback, not for apps.
+
+---
+
+## 7.19 Tenant
+
+### `GET /tenant`
+
+The caller's own business. Needs no permission; every signed-in user can call it. Read it on app load alongside `GET /users/me`.
+
+```json
+{
+  "id": "33333333-3333-4333-8333-333333333333",
+  "name": "Mama Njeri Shop",
+  "type": "BUSINESS",
+  "base_currency": "KES",
+  "accounting_framework": "GAAP",
+  "plan_tier": "STARTER",
+  "status": "ACTIVE",
+  "vat_registered": false,
+  "created_at": "2026-09-01T08:00:00.000Z"
+}
+```
+
+| Field | Values |
+|---|---|
+| `type` | `BUSINESS`, `NGO`, `HOUSEHOLD` |
+| `accounting_framework` | `IFRS`, `GAAP`, `IPSAS` |
+| `plan_tier` | `STARTER` (micro-trader; every business starts here), `GROWTH`, `ENTERPRISE`. Use it to choose which roles to offer (see [Roles and permissions](#roles-and-permissions)). There is no endpoint to change it yet. |
+| `status` | `ACTIVE`, `SUSPENDED` |
+| `vat_registered` | Whether to offer VAT on sales, bills and expenses. |

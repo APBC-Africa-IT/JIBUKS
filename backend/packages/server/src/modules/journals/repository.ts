@@ -165,6 +165,13 @@ export async function getJournalWithLines(tenantId: string, journalId: string): 
   });
 }
 
+export async function findJournalByClientUuid(tenantId: string, clientUuid: string): Promise<JournalRow | null> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<JournalRow>(`SELECT * FROM journals WHERE client_uuid = $1`, [clientUuid]);
+    return result.rows[0] ?? null;
+  });
+}
+
 export async function findJournalByReversalTarget(
   tenantId: string,
   originalJournalId: string,

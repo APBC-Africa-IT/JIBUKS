@@ -53,6 +53,7 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   PAYMENT_NOT_FOUND: 404,
   PAYMENTS_NOT_CONFIGURED: 503,
   PAYMENT_PROVIDER_ERROR: 502,
+  PAYMENT_NOT_REPOSTABLE: 422,
   // idempotency -- status codes follow the IETF Idempotency-Key header
   // draft: reuse with a different payload is 422, a concurrent retry of a
   // still-running request is 409.

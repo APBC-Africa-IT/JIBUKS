@@ -169,6 +169,11 @@ export async function createJournal(request: CreateJournalRequest, audit: AuditC
   );
 }
 
+/** The journal a caller already posted under `clientUuid`, if any. */
+export async function findJournalByClientUuid(tenantId: string, clientUuid: string) {
+  return repository.findJournalByClientUuid(tenantId, clientUuid);
+}
+
 export async function listJournals(tenantId: string) {
   return repository.listJournals(tenantId);
 }

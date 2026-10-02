@@ -46,6 +46,16 @@ export async function createUser(request: CreateUserRequest, audit: AuditContext
   );
 }
 
+export interface UserWithRoles extends UserRow {
+  readonly roles: readonly RoleView[];
+}
+
+/** Every user with their roles, so a team screen needs one request. */
+export async function listUsersWithRoles(tenantId: string): Promise<UserWithRoles[]> {
+  const [users, rolesByUser] = await Promise.all([listUsers(tenantId), rolesService.getRolesByUser(tenantId)]);
+  return users.map((user) => ({ ...user, roles: rolesByUser.get(user.id) ?? [] }));
+}
+
 export async function listUsers(tenantId: string): Promise<UserRow[]> {
   return repository.listUsers(tenantId);
 }

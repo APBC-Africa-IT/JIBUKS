@@ -39,6 +39,11 @@ export async function stkPush(req: Request, res: Response): Promise<void> {
   res.status(202).json(payment);
 }
 
+export async function repost(req: Request, res: Response): Promise<void> {
+  const payment = await service.repostPayment(req.tenantId!, req.params["id"]!, auditContextFrom(req));
+  res.json(payment);
+}
+
 export async function list(req: Request, res: Response): Promise<void> {
   const payments = await service.listPayments(req.tenantId!);
   res.json({ data: payments });

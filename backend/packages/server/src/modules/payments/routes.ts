@@ -21,6 +21,7 @@ paymentsRouter.use(requireRealIdentity);
 paymentsRouter.post("/mpesa/stk-push", requirePermission("payments:create"), asyncHandler(controllers.stkPush));
 paymentsRouter.get("/", requirePermission("payments:view"), asyncHandler(controllers.list));
 paymentsRouter.get("/:id", requirePermission("payments:view"), asyncHandler(controllers.getOne));
+paymentsRouter.post("/:id/repost", requirePermission("payments:create"), asyncHandler(controllers.repost));
 
 export const hooksRouter: RouterType = Router();
 

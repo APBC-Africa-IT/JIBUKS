@@ -182,6 +182,18 @@ export async function getUserRoles(tenantId: string, userId: string): Promise<Ro
   return rows.map(assignmentView);
 }
 
+/** Every user's roles in the tenant, keyed by user id. Users with no
+ * assignment are absent from the map. */
+export async function getRolesByUser(tenantId: string): Promise<Map<string, RoleView[]>> {
+  const byUser = new Map<string, RoleView[]>();
+  for (const row of await repository.listAllAssignments(tenantId)) {
+    const roles = byUser.get(row.user_id) ?? [];
+    roles.push(assignmentView(row));
+    byUser.set(row.user_id, roles);
+  }
+  return byUser;
+}
+
 /** Replaces a user's roles. Callers must have confirmed the user exists. */
 export async function setUserRoles(
   tenantId: string,

@@ -1,0 +1,26 @@
+meta {
+  name: Repost Payment
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/payments/{{paymentId}}/repost
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  paymentId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  Requires payments:create. For a SUCCEEDED payment with journal_id null ("Paid - needs attention"),
+  after fixing the cause in posting_error (e.g. create/reopen the period). 200 with the payment:
+  journal_id set if it posted, otherwise posting_error says why. 422 PAYMENT_NOT_REPOSTABLE if
+  it isn't SUCCEEDED or is already posted.
+}
