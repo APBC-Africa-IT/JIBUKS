@@ -31,6 +31,7 @@ export async function stkPush(req: Request, res: Response): Promise<void> {
       ...(body.customerId !== undefined ? { customerId: body.customerId } : {}),
       ...(body.accountReference !== undefined ? { accountReference: body.accountReference } : {}),
       ...(body.description !== undefined ? { description: body.description } : {}),
+      ...(body.taxAmountMinor > 0 ? { taxAccountId: body.taxAccountId!, taxAmountMinor: body.taxAmountMinor } : {}),
     },
     auditContextFrom(req),
   );

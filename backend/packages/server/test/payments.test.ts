@@ -64,6 +64,7 @@ interface Fixture {
   mpesaAccountId: string;
   salesAccountId: string;
   arAccountId: string;
+  vatAccountId: string;
   customerId: string;
 }
 
@@ -90,6 +91,7 @@ async function makeFixture(): Promise<Fixture> {
     mpesaAccountId: await account("M-Pesa Test", "ASSET"),
     salesAccountId: await account("Sales Test", "INCOME"),
     arAccountId: await account("AR Test", "ASSET"),
+    vatAccountId: await account("Output VAT Test", "LIABILITY"),
     customerId: customer.body.id as string,
   };
 }
@@ -180,6 +182,26 @@ describe("POST /api/v1/payments/mpesa/stk-push", () => {
     const usd = await push(pushBody(fixture, { currency: "USD" }));
 
     expect([fractional.status, badPhone.status, usd.status]).toEqual([400, 400, 400]);
+    expect(daraja.pushes).toHaveLength(0);
+  });
+
+  it("rejects VAT without a tax account, or VAT not below the gross amount, with 400", async () => {
+    const fixture = await makeFixture();
+
+    const noAccount = await push(pushBody(fixture, { taxAmountMinor: 20690 }));
+    const tooMuch = await push(pushBody(fixture, { taxAccountId: fixture.vatAccountId, taxAmountMinor: 150000 }));
+
+    expect(noAccount.status).toBe(400);
+    expect(tooMuch.status).toBe(400);
+    expect(daraja.pushes).toHaveLength(0);
+  });
+
+  it("rejects an unknown tax account with 404 before prompting the customer", async () => {
+    const fixture = await makeFixture();
+
+    const response = await push(pushBody(fixture, { taxAccountId: randomUUID(), taxAmountMinor: 20690 }));
+
+    expect(response.status).toBe(404);
     expect(daraja.pushes).toHaveLength(0);
   });
 
@@ -279,6 +301,24 @@ describe("POST /api/v1/hooks/stk/... (Safaricom callback)", () => {
     const credit = lines.find((l) => l.account_id === fixture.arAccountId);
     expect(debit).toMatchObject({ debit_minor: "150000", credit_minor: "0", customer_id: null });
     expect(credit).toMatchObject({ debit_minor: "0", credit_minor: "150000", customer_id: fixture.customerId });
+  });
+
+  it("splits included VAT out to the tax account: Dr M-Pesa gross / Cr sales net / Cr VAT", async () => {
+    const fixture = await makeFixture();
+    // KES 1,500 VAT-inclusive at 16%: VAT 206.90, net 1,293.10.
+    const pushed = await push(pushBody(fixture, { taxAccountId: fixture.vatAccountId, taxAmountMinor: 20690 }));
+    expect(pushed.body).toMatchObject({ amount_minor: "150000", tax_amount_minor: "20690", tax_account_id: fixture.vatAccountId });
+    expect(daraja.pushes.at(-1)!.amountShillings).toBe(1500);
+
+    await request(app).post(lastCallbackPath()).send(successCallback(pushed.body.checkout_request_id, 1500));
+    const payment = await getPayment(pushed.body.id);
+
+    expect(payment.body).toMatchObject({ status: "SUCCEEDED", posting_error: null });
+    const lines = await journalLines(payment.body.journal_id);
+    expect(lines).toHaveLength(3);
+    expect(lines.find((l) => l.account_id === fixture.mpesaAccountId)).toMatchObject({ debit_minor: "150000", credit_minor: "0" });
+    expect(lines.find((l) => l.account_id === fixture.salesAccountId)).toMatchObject({ debit_minor: "0", credit_minor: "129310" });
+    expect(lines.find((l) => l.account_id === fixture.vatAccountId)).toMatchObject({ debit_minor: "0", credit_minor: "20690" });
   });
 
   it("ignores a repeated callback: one journal, no second confirmation", async () => {

@@ -10,7 +10,8 @@
  *      on its own -- Daraja doesn't sign callbacks -- so it is confirmed
  *      with an STK status query first (settle).
  *   3. settle: on confirmed success, mark SUCCEEDED and post
- *      Dr received account / Cr credit account through the journals module.
+ *      Dr received account / Cr credit account (and Cr tax account for any
+ *      VAT included) through the journals module.
  *
  * A payment is never reported as succeeded without Safaricom confirming it
  * (FR-PAY-07). If the confirmation query can't be made right away, the
@@ -81,6 +82,9 @@ export interface InitiateStkPushRequest {
   readonly receivedAccountId?: string;
   readonly creditAccountId: string;
   readonly customerId?: string;
+  /** Output VAT included in amountMinor; both or neither. */
+  readonly taxAccountId?: string;
+  readonly taxAmountMinor?: number;
   readonly accountReference?: string;
   readonly description?: string;
 }
@@ -98,6 +102,9 @@ export async function initiateStkPush(request: InitiateStkPushRequest, audit: Au
   // never charged for a payment that then can't be posted.
   await assertPostableAccount(request.tenantId, receivedAccountId);
   await assertPostableAccount(request.tenantId, request.creditAccountId);
+  if (request.taxAccountId) {
+    await assertPostableAccount(request.tenantId, request.taxAccountId);
+  }
   if (request.customerId) {
     await customersService.getCustomer(request.tenantId, request.customerId);
   }
@@ -116,6 +123,9 @@ export async function initiateStkPush(request: InitiateStkPushRequest, audit: Au
       receivedAccountId,
       creditAccountId: request.creditAccountId,
       ...(request.customerId !== undefined ? { customerId: request.customerId } : {}),
+      ...(request.taxAccountId !== undefined
+        ? { taxAccountId: request.taxAccountId, taxAmountMinor: request.taxAmountMinor ?? 0 }
+        : {}),
       callbackTokenHash: hashToken(token),
     },
     audit,
@@ -285,6 +295,7 @@ async function postToLedger(payment: PaymentRow, paidShillings: number): Promise
   }
 
   const description = payment.description ?? `M-Pesa payment from ${payment.phone}`;
+  const taxAmountMinor = Number(payment.tax_amount_minor);
   try {
     const journal = await journalsService.createJournal(
       {
@@ -302,10 +313,13 @@ async function postToLedger(payment: PaymentRow, paidShillings: number): Promise
           {
             accountId: payment.credit_account_id,
             debitMinor: 0,
-            creditMinor: amountMinor,
+            creditMinor: amountMinor - taxAmountMinor,
             narrative: description,
             ...(payment.customer_id ? { customerId: payment.customer_id } : {}),
           },
+          ...(taxAmountMinor > 0
+            ? [{ accountId: payment.tax_account_id!, debitMinor: 0, creditMinor: taxAmountMinor, narrative: "Sales tax" }]
+            : []),
         ],
       },
       { actorUserId: payment.initiated_by },

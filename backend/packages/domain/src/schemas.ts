@@ -532,28 +532,41 @@ export const kenyanMobileSchema = z
 /**
  * Initiate an M-Pesa STK push (Lipa na M-Pesa Online). On success the
  * money is posted as Dr receivedAccountId (default: the tenant's M-Pesa
- * account, created if missing) /
+ * account, created if missing) for the full amount, Cr taxAccountId for
+ * taxAmountMinor (VAT included in the amount, if any) and the rest to /
  * Cr creditAccountId -- an income account for a cash-style sale, or
  * Accounts Receivable with customerId set when settling what a customer
  * owes.
  */
-export const createStkPushSchema = z.object({
-  /** Also the collection's identity: a retry with the same clientUuid never
-   * triggers a second prompt (FR-PAY-06). */
-  clientUuid: uuidSchema,
-  phone: kenyanMobileSchema,
-  /** KES only; M-Pesa collects whole shillings, so a multiple of 100. */
-  currency: z.literal("KES"),
-  amountMinor: minorUnitsSchema
-    .refine((n) => n >= 100, "The minimum M-Pesa amount is KES 1")
-    .refine((n) => n % 100 === 0, "M-Pesa collects whole shillings only (amountMinor must be a multiple of 100)")
-    .refine((n) => n <= 25_000_000, "M-Pesa's per-transaction limit is KES 250,000"),
-  receivedAccountId: uuidSchema.optional(),
-  creditAccountId: uuidSchema,
-  customerId: uuidSchema.optional(),
-  /** Shown on the customer's phone; M-Pesa truncates it to 12 characters. */
-  accountReference: z.string().trim().min(1).max(12).optional(),
-  description: z.string().max(500).optional(),
-});
+export const createStkPushSchema = z
+  .object({
+    /** Also the collection's identity: a retry with the same clientUuid never
+     * triggers a second prompt (FR-PAY-06). */
+    clientUuid: uuidSchema,
+    phone: kenyanMobileSchema,
+    /** KES only; M-Pesa collects whole shillings, so a multiple of 100. */
+    currency: z.literal("KES"),
+    amountMinor: minorUnitsSchema
+      .refine((n) => n >= 100, "The minimum M-Pesa amount is KES 1")
+      .refine((n) => n % 100 === 0, "M-Pesa collects whole shillings only (amountMinor must be a multiple of 100)")
+      .refine((n) => n <= 25_000_000, "M-Pesa's per-transaction limit is KES 250,000"),
+    receivedAccountId: uuidSchema.optional(),
+    creditAccountId: uuidSchema,
+    customerId: uuidSchema.optional(),
+    /** Shown on the customer's phone; M-Pesa truncates it to 12 characters. */
+    accountReference: z.string().trim().min(1).max(12).optional(),
+    description: z.string().max(500).optional(),
+    /** Output VAT included in amountMinor -- same convention as Cash Sale. */
+    taxAccountId: uuidSchema.optional(),
+    taxAmountMinor: minorUnitsSchema.default(0),
+  })
+  .refine((r) => r.taxAmountMinor === 0 || r.taxAccountId !== undefined, {
+    message: "taxAccountId is required when taxAmountMinor is greater than zero",
+    path: ["taxAccountId"],
+  })
+  .refine((r) => r.taxAmountMinor < r.amountMinor, {
+    message: "taxAmountMinor must be less than amountMinor (amountMinor is the gross amount, VAT included)",
+    path: ["taxAmountMinor"],
+  });
 
 export type CreateStkPushDto = z.infer<typeof createStkPushSchema>;

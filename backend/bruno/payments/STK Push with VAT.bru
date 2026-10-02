@@ -1,0 +1,38 @@
+meta {
+  name: STK Push with VAT
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/payments/mpesa/stk-push
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "phone": "{{mpesaPhone}}",
+    "currency": "KES",
+    "amountMinor": 11600,
+    "creditAccountId": "{{salesAccountId}}",
+    "taxAccountId": "{{vatAccountId}}",
+    "taxAmountMinor": 1600,
+    "accountReference": "TEST-VAT",
+    "description": "Bruno VAT test"
+  }
+}
+
+docs {
+  A VAT-registered sale collected by M-Pesa. amountMinor is the gross amount the customer is
+  prompted for (KES 116); taxAmountMinor (KES 16, 16% VAT) is included in it.
+  On success posts Dr M-Pesa 116 / Cr Sales 100 / Cr VAT Payable 16.
+  Set vatAccountId to the tenant's VAT Payable (Output VAT) account, code 2100.
+}

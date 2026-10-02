@@ -422,7 +422,8 @@ paths:
         phone and returns 202 with a PENDING payment. On confirmed success
         the server posts Dr `receivedAccountId` (default: the business's
         M-Pesa account, created if missing) / Cr `creditAccountId`
-        (tagged with `customerId` if given). A repeat with the same
+        (tagged with `customerId` if given), with any included VAT
+        (`taxAmountMinor`) credited to `taxAccountId` instead. A repeat with the same
         `clientUuid` never prompts twice: 409 without an Idempotency-Key,
         the original response with one.
       parameters:
@@ -2399,6 +2400,18 @@ components:
           maxLength: 12
           description: Shown on the customer's phone. Defaults to "JIBUKS".
         description: { type: string, maxLength: 500 }
+        taxAccountId:
+          type: string
+          format: uuid
+          description: Output VAT account. Required when taxAmountMinor > 0.
+        taxAmountMinor:
+          type: integer
+          minimum: 0
+          default: 0
+          description: >
+            VAT included in amountMinor (which stays the gross amount the
+            customer is prompted for). Credited to taxAccountId; the rest goes
+            to creditAccountId. Must be less than amountMinor.
     Payment:
       type: object
       properties:
@@ -2418,6 +2431,8 @@ components:
         received_account_id: { type: string, format: uuid }
         credit_account_id: { type: string, format: uuid }
         customer_id: { type: string, format: uuid, nullable: true }
+        tax_account_id: { type: string, format: uuid, nullable: true }
+        tax_amount_minor: { type: string, description: "VAT included in amount_minor (bigint as string)" }
         merchant_request_id: { type: string, nullable: true }
         checkout_request_id: { type: string, nullable: true }
         result_code:

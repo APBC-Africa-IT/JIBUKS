@@ -1349,15 +1349,19 @@ Behind the scenes, Safaricom calls the server back. The server doesn't trust tha
 | `customerId` | uuid | No | Tags the credit line to this customer, so it reduces their balance. |
 | `accountReference` | string | No | Up to 12 chars, shown on the customer's phone. Defaults to `JIBUKS`. |
 | `description` | string | No | Used as the journal description. |
+| `taxAccountId` | uuid | If tax | Output VAT account (VAT Payable, `2100` in the starter chart). Required when `taxAmountMinor` > 0. |
+| `taxAmountMinor` | integer | No | VAT **included in** `amountMinor` (default 0). The customer is prompted for `amountMinor`; `taxAmountMinor` goes to `taxAccountId` and the rest to `creditAccountId`. Must be less than `amountMinor`. Same convention as Cash Sale. Use it for sales only; when a customer pays what they owe (Accounts Receivable), the VAT was already posted on the credit sale. |
 
-Both accounts (and the customer) are validated **before** the customer is prompted, so nobody gets charged for a payment that can't be posted.
+**Example, VAT-inclusive sale:** KES 1,500 at 16% → `amountMinor: 150000`, `taxAmountMinor: 20690`. Posts Dr M-Pesa 1,500.00 / Cr Sales 1,293.10 / Cr VAT Payable 206.90. The server doesn't calculate VAT; the app sends the amount.
+
+All accounts (and the customer) are validated **before** the customer is prompted, so nobody gets charged for a payment that can't be posted.
 
 **The M-Pesa account** is the account with `system_key: "MPESA"` in `GET /accounts`. The server finds it by that key, never by its code. New businesses get it at `1020`. A business that has none (onboarded before M-Pesa existed) gets one created on its first collection, at `1020`, or the next free code if the business already uses `1020` for something else; that existing account is never touched. No `accounts:create` permission is needed, so a Cashier's first collection works too. To show the M-Pesa balance, find the account with `system_key: "MPESA"`; it may not exist until the first collection.
 
 **Success Response:** `202 Accepted`, a payment object (see below) with `status: "PENDING"`.
 
 **Error Response:**
-- `400 VALIDATION_ERROR`: bad phone, fractional shillings, non-KES, etc.
+- `400 VALIDATION_ERROR`: bad phone, fractional shillings, non-KES, `taxAmountMinor` without `taxAccountId` or not below `amountMinor`, etc.
 - `404`: unknown account or customer.
 - `409 DUPLICATE_VALUE`: `clientUuid` already used.
 - `422 ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE`.
@@ -1382,6 +1386,8 @@ Both accounts (and the customer) are validated **before** the customer is prompt
   "received_account_id": "...",
   "credit_account_id": "...",
   "customer_id": null,
+  "tax_account_id": null,
+  "tax_amount_minor": "0",
   "checkout_request_id": "ws_CO_300920261045123456",
   "result_code": "0",
   "result_desc": "The service request is processed successfully.",
