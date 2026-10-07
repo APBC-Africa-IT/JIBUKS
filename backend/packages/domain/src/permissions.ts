@@ -54,6 +54,11 @@ export const PERMISSIONS = [
   "invoices:issue",
   "invoices:cancel",
   "invoices:override_credit_limit",
+  "supplier_bills:view",
+  "supplier_bills:create",
+  "supplier_bills:post",
+  "supplier_bills:cancel",
+  "supplier_bills:pay",
   "reports:view",
   "tenant:edit",
 ] as const;

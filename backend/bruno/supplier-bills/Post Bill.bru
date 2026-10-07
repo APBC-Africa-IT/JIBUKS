@@ -1,0 +1,20 @@
+meta {
+  name: Post Bill
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/supplier-bills/{{billId}}/post
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires supplier_bills:post. Numbers it (BILL-000001...) and posts Dr expense / Dr input VAT / Cr AP.
+  Also posts debit notes (applied to their bill).
+}

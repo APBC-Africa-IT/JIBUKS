@@ -96,6 +96,16 @@ tags:
       Read-only report (FR-AR-04): open invoice amounts per customer by
       days past due, with non-invoice balances shown apart, plus a
       per-customer drill-down.
+  - name: Supplier Bills
+    description: >
+      What the business owes suppliers (FR-AP-02): bills and debit notes,
+      the supplier side of Invoices. Posting a bill posts Dr expense / Dr
+      input VAT / Cr Accounts Payable (supplier). The older POST /bills
+      stays but keeps no record.
+  - name: Payables Aging
+    description: >
+      Read-only report (FR-AP-03): open bill amounts per supplier by days
+      past due, plus a per-supplier drill-down.
   - name: Provider Callbacks
     description: >
       Called by payment providers, not by apps. No bearer token -- each
@@ -916,6 +926,247 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/ReceivablesAging'
                   - $ref: '#/components/schemas/CustomerAging'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Supplier bills ────────────────────────────────────────────────
+  /supplier-bills:
+    post:
+      tags: [Supplier Bills]
+      summary: Create a draft bill
+      description: >
+        Requires `supplier_bills:create`. Amounts are computed by the
+        server. The same supplier + supplierReference can't be entered
+        twice (409) unless the earlier bill was cancelled.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSupplierBillRequest' }
+      responses:
+        '201':
+          description: The draft
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierBillDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+    get:
+      tags: [Supplier Bills]
+      summary: List bills and debit notes (cursor-paginated)
+      description: Requires `supplier_bills:view`. Newest first.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/InvoiceStatus' } }
+        - { name: kind, in: query, schema: { type: string, enum: [BILL, DEBIT_NOTE] } }
+        - { name: supplier_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, description: bill_date from (inclusive), schema: { type: string, format: date } }
+        - { name: to, in: query, description: bill_date to (inclusive), schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: A page of bills
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SupplierBill' }
+                  next_cursor: { type: string, nullable: true }
+                  has_more: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /supplier-bills/{id}:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    get:
+      tags: [Supplier Bills]
+      summary: Get a bill with its lines and payments
+      description: Requires `supplier_bills:view`. 404 for an invoice id.
+      responses:
+        '200':
+          description: The bill
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierBillDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Supplier Bills]
+      summary: Edit a draft bill
+      description: Requires `supplier_bills:create`. Drafts only; `lines` replaces every line.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateSupplierBillRequest' }
+      responses:
+        '200':
+          description: The updated draft
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierBillDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+    delete:
+      tags: [Supplier Bills]
+      summary: Delete a draft bill
+      description: Requires `supplier_bills:create`. Drafts only.
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /supplier-bills/{id}/post:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    post:
+      tags: [Supplier Bills]
+      summary: Post a draft bill or debit note
+      description: >
+        Requires `supplier_bills:post`. Assigns the BILL-/DN- number and posts
+        the journal; a debit note is applied to its bill.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The posted document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierBillDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /supplier-bills/{id}/payments:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    post:
+      tags: [Supplier Bills]
+      summary: Record a payment to the supplier
+      description: >
+        Requires `supplier_bills:pay`. Posts Dr Accounts Payable (supplier) /
+        Cr paidFromAccountId. More than the balance due is 422.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordBillPaymentRequest' }
+      responses:
+        '201':
+          description: The bill, with the new payment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierBillDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /supplier-bills/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    post:
+      tags: [Supplier Bills]
+      summary: Cancel a posted bill with nothing paid
+      description: Requires `supplier_bills:cancel`. Reverses the journal; once paid or debited, 422 INVOICE_HAS_PAYMENTS.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200':
+          description: The cancelled bill
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierBillDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /supplier-bills/{id}/debit-notes:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    post:
+      tags: [Supplier Bills]
+      summary: Draft a debit note against a posted bill
+      description: >
+        Requires `supplier_bills:create`. Supplier and payable account come
+        from the bill; can't exceed what's still owed. Post it with
+        POST /supplier-bills/{debitNoteId}/post.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDebitNoteRequest' }
+      responses:
+        '201':
+          description: The draft debit note
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierBillDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /payables-aging:
+    get:
+      tags: [Payables Aging]
+      summary: Supplier aging, or one supplier's open bills
+      description: >
+        Requires `reports:view`. Same as /receivables-aging from the supplier
+        side: rows carry supplier_id, supplier_name, the bucket fields,
+        billed_minor, not_billed_minor and balance_minor. With supplier_id,
+        returns that supplier's open bills instead.
+      parameters:
+        - { name: as_of, in: query, description: Defaults to today (Africa/Nairobi)., schema: { type: string, format: date } }
+        - { name: supplier_id, in: query, description: Drill down to this supplier., schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The summary, or (with supplier_id) the drill-down
+          content:
+            application/json:
+              schema: { type: object }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -2754,6 +3005,11 @@ components:
         - "invoices:issue"
         - "invoices:cancel"
         - "invoices:override_credit_limit"
+        - "supplier_bills:view"
+        - "supplier_bills:create"
+        - "supplier_bills:post"
+        - "supplier_bills:cancel"
+        - "supplier_bills:pay"
         - "reports:view"
         - "tenant:edit"
     RoleRef:
@@ -3176,6 +3432,149 @@ components:
         invoiced_minor: { type: string }
         not_invoiced_minor: { type: string }
         balance_minor: { type: string }
+
+    # -- Supplier bills --
+    BillLineInput:
+      type: object
+      required: [description, quantity, unitPriceMinor, expenseAccountId]
+      properties:
+        description: { type: string, minLength: 1, maxLength: 500 }
+        quantity: { type: number, exclusiveMinimum: 0, description: Up to 3 decimal places. }
+        unitPriceMinor: { type: integer, minimum: 0 }
+        expenseAccountId: { type: string, format: uuid, description: Expense or asset account. }
+        taxRateBps: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+        taxAccountId: { type: string, format: uuid, description: Input VAT (VAT Recoverable); required when taxRateBps > 0. }
+    CreateSupplierBillRequest:
+      type: object
+      required: [clientUuid, supplierId, payableAccountId, billDate, lines]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        branchId: { type: string, format: uuid }
+        supplierId: { type: string, format: uuid }
+        payableAccountId: { type: string, format: uuid }
+        billDate: { type: string, format: date }
+        dueDate: { type: string, format: date, description: "Defaults to billDate + the supplier's paymentTermsDays." }
+        supplierReference: { type: string, maxLength: 100, description: "The supplier's own invoice number; unique per supplier." }
+        currency: { type: string }
+        taxMode: { $ref: '#/components/schemas/TaxMode' }
+        reference: { type: string, maxLength: 100 }
+        notes: { type: string, maxLength: 2000 }
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/BillLineInput' }
+    UpdateSupplierBillRequest:
+      type: object
+      minProperties: 1
+      properties:
+        supplierId: { type: string, format: uuid }
+        payableAccountId: { type: string, format: uuid }
+        billDate: { type: string, format: date }
+        dueDate: { type: string, format: date, nullable: true }
+        supplierReference: { type: string, maxLength: 100, nullable: true }
+        taxMode: { $ref: '#/components/schemas/TaxMode' }
+        reference: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/BillLineInput' }
+    CreateDebitNoteRequest:
+      type: object
+      required: [clientUuid, lines]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        noteDate: { type: string, format: date, description: Defaults to today. }
+        taxMode: { $ref: '#/components/schemas/TaxMode' }
+        reference: { type: string, maxLength: 100 }
+        notes: { type: string, maxLength: 2000 }
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/BillLineInput' }
+    RecordBillPaymentRequest:
+      type: object
+      required: [clientUuid, amountMinor, date, paidFromAccountId]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        amountMinor: { type: integer, minimum: 1 }
+        date: { type: string, format: date }
+        paidFromAccountId: { type: string, format: uuid, description: The cash, bank or M-Pesa account the money left. }
+        method: { type: string, enum: [CASH, BANK, MPESA, OTHER], default: CASH }
+        reference: { type: string, maxLength: 100 }
+    SupplierBill:
+      type: object
+      description: Money fields are 64-bit-safe integer strings.
+      properties:
+        id: { type: string, format: uuid }
+        client_uuid: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid, nullable: true }
+        kind: { type: string, enum: [BILL, DEBIT_NOTE] }
+        status: { $ref: '#/components/schemas/InvoiceStatus' }
+        number: { type: string, nullable: true, example: BILL-000007 }
+        supplier_id: { type: string, format: uuid }
+        supplier_name: { type: string }
+        supplier_reference: { type: string, nullable: true }
+        bill_date: { type: string, format: date }
+        due_date: { type: string, format: date, nullable: true }
+        currency: { type: string }
+        payable_account_id: { type: string, format: uuid, nullable: true }
+        tax_mode: { $ref: '#/components/schemas/TaxMode' }
+        subtotal_minor: { type: string }
+        tax_minor: { type: string }
+        total_minor: { type: string }
+        amount_paid_minor: { type: string, description: Paid plus debited. }
+        balance_due_minor: { type: string }
+        reference: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        journal_id: { type: string, format: uuid, nullable: true }
+        cancel_journal_id: { type: string, format: uuid, nullable: true }
+        debited_bill_id: { type: string, format: uuid, nullable: true, description: On a debit note -- the bill it reduces. }
+        cancel_reason: { type: string, nullable: true }
+        created_by: { type: string, format: uuid }
+        posted_by: { type: string, format: uuid, nullable: true }
+        cancelled_by: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        posted_at: { type: string, format: date-time, nullable: true }
+        cancelled_at: { type: string, format: date-time, nullable: true }
+    SupplierBillDetail:
+      allOf:
+        - $ref: '#/components/schemas/SupplierBill'
+        - type: object
+          properties:
+            lines:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  line_no: { type: integer }
+                  description: { type: string }
+                  quantity: { type: string }
+                  unit_price_minor: { type: string }
+                  expense_account_id: { type: string, format: uuid }
+                  tax_rate_bps: { type: integer }
+                  tax_account_id: { type: string, format: uuid, nullable: true }
+                  net_minor: { type: string }
+                  tax_minor: { type: string }
+                  total_minor: { type: string }
+            allocations:
+              type: array
+              description: Payments and debit notes applied to the bill.
+              items:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  method: { type: string, enum: [CASH, BANK, MPESA, OTHER, DEBIT_NOTE] }
+                  amount_minor: { type: string }
+                  date: { type: string, format: date }
+                  paid_from_account_id: { type: string, format: uuid, nullable: true }
+                  reference: { type: string, nullable: true }
+                  journal_id: { type: string, format: uuid }
+                  debit_note_id: { type: string, format: uuid, nullable: true }
+                  created_at: { type: string, format: date-time }
 
     # -- Invites --
     CreateInviteRequest:

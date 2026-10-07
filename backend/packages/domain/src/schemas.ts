@@ -11,7 +11,7 @@ import { CURRENCIES } from "./currency.js";
 import { ACCOUNT_TYPES } from "./accounts.js";
 import { JOURNAL_SOURCES } from "./journal.js";
 import { PERMISSIONS, SYSTEM_ROLE_KEYS } from "./permissions.js";
-import { INVOICE_KINDS, INVOICE_PAYMENT_METHODS, INVOICE_VIEW_STATUSES, TAX_MODES } from "./invoices.js";
+import { BILL_KINDS, INVOICE_PAYMENT_METHODS, INVOICE_VIEW_STATUSES, SALES_KINDS, TAX_MODES } from "./invoices.js";
 
 export const uuidSchema = z.string().uuid();
 
@@ -734,7 +734,7 @@ export const convertProformaSchema = z.object({
 /** GET /invoices -- filters plus cursor pagination (Section 9.1). */
 export const listInvoicesQuerySchema = paginationSchema.extend({
   status: z.enum(INVOICE_VIEW_STATUSES).optional(),
-  kind: z.enum(INVOICE_KINDS).optional(),
+  kind: z.enum(SALES_KINDS).optional(),
   customer_id: uuidSchema.optional(),
   /** issue_date range, inclusive. */
   from: accountingDateSchema.optional(),
@@ -770,3 +770,134 @@ export const agingQuerySchema = z.object({
 });
 
 export type AgingQueryDto = z.infer<typeof agingQuerySchema>;
+
+// ---------------------------------------------------------------------
+// Supplier bills -- FR-AP-02/03
+// ---------------------------------------------------------------------
+
+const billLineInputSchema = z.object({
+  description: z.string().trim().min(1).max(500),
+  quantity: z
+    .number()
+    .positive()
+    .max(99_999_999_999)
+    .refine((q) => Math.abs(Math.round(q * 1000) - q * 1000) < 1e-6, "Quantity has at most three decimal places"),
+  unitPriceMinor: minorUnitsSchema,
+  /** The expense (or asset) account the purchase is for. */
+  expenseAccountId: uuidSchema,
+  /** Basis points: 1600 = 16% input VAT. */
+  taxRateBps: z.number().int().min(0).max(10000).default(0),
+  /** Input VAT account (VAT Recoverable). */
+  taxAccountId: uuidSchema.optional(),
+});
+
+const billLinesSchema = z.array(billLineInputSchema).min(1, "A bill needs at least one line").max(200);
+
+function checkBillTax(
+  body: { taxMode?: (typeof TAX_MODES)[number] | undefined; lines?: z.infer<typeof billLinesSchema> | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  body.lines?.forEach((line, i) => {
+    if (body.taxMode === "NONE" && line.taxRateBps > 0) {
+      ctx.addIssue({ code: "custom", path: ["lines", i, "taxRateBps"], message: "taxMode NONE allows no tax rate" });
+    }
+    if (line.taxRateBps > 0 && line.taxAccountId === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lines", i, "taxAccountId"],
+        message: "taxAccountId is required when taxRateBps is greater than zero",
+      });
+    }
+  });
+}
+
+/** POST /supplier-bills -- a DRAFT bill. */
+export const createSupplierBillSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    branchId: uuidSchema.optional(),
+    supplierId: uuidSchema,
+    /** Accounts Payable. */
+    payableAccountId: uuidSchema,
+    /** The date on the supplier's invoice. */
+    billDate: accountingDateSchema,
+    /** Omit to use billDate + the supplier's payment terms (0 days if none). */
+    dueDate: accountingDateSchema.optional(),
+    /** The supplier's own invoice number. Unique per supplier. */
+    supplierReference: z.string().trim().min(1).max(100).optional(),
+    currency: currencySchema.optional(),
+    taxMode: z.enum(TAX_MODES).default("NONE"),
+    reference: z.string().max(100).optional(),
+    notes: z.string().max(2000).optional(),
+    lines: billLinesSchema,
+  })
+  .superRefine((body, ctx) => {
+    checkBillTax(body, ctx);
+    if (body.dueDate !== undefined && body.dueDate < body.billDate) {
+      ctx.addIssue({ code: "custom", path: ["dueDate"], message: "dueDate can't be before billDate" });
+    }
+  });
+
+export type CreateSupplierBillDto = z.infer<typeof createSupplierBillSchema>;
+
+/** PATCH /supplier-bills/{id} -- drafts only. `lines` replaces every line. */
+export const updateSupplierBillSchema = z
+  .object({
+    supplierId: uuidSchema.optional(),
+    payableAccountId: uuidSchema.optional(),
+    billDate: accountingDateSchema.optional(),
+    dueDate: accountingDateSchema.nullable().optional(),
+    supplierReference: z.string().trim().min(1).max(100).nullable().optional(),
+    taxMode: z.enum(TAX_MODES).optional(),
+    reference: z.string().max(100).nullable().optional(),
+    notes: z.string().max(2000).nullable().optional(),
+    lines: billLinesSchema.optional(),
+  })
+  .refine(atLeastOneField, "Provide at least one field to update");
+
+export type UpdateSupplierBillDto = z.infer<typeof updateSupplierBillSchema>;
+
+/** POST /supplier-bills/{id}/debit-notes -- a DRAFT debit note against a posted bill. */
+export const createDebitNoteSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    /** Omit for today (Africa/Nairobi). */
+    noteDate: accountingDateSchema.optional(),
+    taxMode: z.enum(TAX_MODES).optional(),
+    reference: z.string().max(100).optional(),
+    notes: z.string().max(2000).optional(),
+    lines: billLinesSchema,
+  })
+  .superRefine(checkBillTax);
+
+export type CreateDebitNoteDto = z.infer<typeof createDebitNoteSchema>;
+
+/** POST /supplier-bills/{id}/payments -- money paid to the supplier. */
+export const recordBillPaymentSchema = z.object({
+  clientUuid: uuidSchema,
+  amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+  date: accountingDateSchema,
+  /** The cash, bank or M-Pesa account the money left. */
+  paidFromAccountId: uuidSchema,
+  method: z.enum(INVOICE_PAYMENT_METHODS).default("CASH"),
+  reference: z.string().max(100).optional(),
+});
+
+export type RecordBillPaymentDto = z.infer<typeof recordBillPaymentSchema>;
+
+/** GET /supplier-bills */
+export const listSupplierBillsQuerySchema = paginationSchema.extend({
+  status: z.enum(INVOICE_VIEW_STATUSES).optional(),
+  kind: z.enum(BILL_KINDS).optional(),
+  supplier_id: uuidSchema.optional(),
+  /** bill_date range, inclusive. */
+  from: accountingDateSchema.optional(),
+  to: accountingDateSchema.optional(),
+});
+
+/** GET /payables-aging */
+export const payablesAgingQuerySchema = z.object({
+  as_of: accountingDateSchema.optional(),
+  /** Drill down: one supplier's open bills. */
+  supplier_id: uuidSchema.optional(),
+});

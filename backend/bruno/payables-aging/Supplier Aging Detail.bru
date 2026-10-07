@@ -1,0 +1,19 @@
+meta {
+  name: Supplier Aging Detail
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/payables-aging?supplier_id={{supplierId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires reports:view. One supplier's open bills, oldest due first.
+}

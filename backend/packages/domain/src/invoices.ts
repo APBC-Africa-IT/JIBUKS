@@ -8,8 +8,12 @@
 
 import { DomainError } from "./errors.js";
 
-export const INVOICE_KINDS = ["INVOICE", "CREDIT_NOTE", "PROFORMA"] as const;
+/** Sales side (AR): INVOICE, CREDIT_NOTE, PROFORMA. Supplier side (AP): BILL, DEBIT_NOTE. */
+export const INVOICE_KINDS = ["INVOICE", "CREDIT_NOTE", "PROFORMA", "BILL", "DEBIT_NOTE"] as const;
 export type InvoiceKind = (typeof INVOICE_KINDS)[number];
+
+export const SALES_KINDS = ["INVOICE", "CREDIT_NOTE", "PROFORMA"] as const;
+export const BILL_KINDS = ["BILL", "DEBIT_NOTE"] as const;
 
 /** What is stored. OVERDUE is derived on read -- see INVOICE_VIEW_STATUSES. */
 export const INVOICE_STATUSES = ["DRAFT", "ISSUED", "PART_PAID", "PAID", "CANCELLED"] as const;
@@ -34,6 +38,8 @@ export const INVOICE_NUMBER_PREFIXES: Readonly<Record<InvoiceKind, string>> = {
   INVOICE: "INV",
   CREDIT_NOTE: "CN",
   PROFORMA: "PF",
+  BILL: "BILL",
+  DEBIT_NOTE: "DN",
 };
 
 /** INV-000042 -- zero-padded to six digits, growing past that if needed. */
@@ -116,14 +122,14 @@ export function computeInvoiceTotals(lines: readonly InvoiceLineAmountsInput[], 
   return { lines: computed, subtotalMinor, taxMinor, totalMinor };
 }
 
-/** The SRS status a client sees: issued or part-paid past its due date is OVERDUE. */
+/** The SRS status a client sees: an invoice or bill issued or part-paid past its due date is OVERDUE. */
 export function invoiceViewStatus(
   kind: InvoiceKind,
   status: InvoiceStatus,
   dueDate: string | null,
   today: string,
 ): InvoiceViewStatus {
-  if (kind === "INVOICE" && (status === "ISSUED" || status === "PART_PAID") && dueDate !== null && dueDate < today) {
+  if ((kind === "INVOICE" || kind === "BILL") && (status === "ISSUED" || status === "PART_PAID") && dueDate !== null && dueDate < today) {
     return "OVERDUE";
   }
   return status;
