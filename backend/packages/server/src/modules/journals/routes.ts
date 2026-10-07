@@ -16,3 +16,5 @@ journalsRouter.post("/", requirePermission("journals:create"), asyncHandler(cont
 journalsRouter.get("/", requirePermission("journals:view"), asyncHandler(controllers.list));
 journalsRouter.get("/:id", requirePermission("journals:view"), asyncHandler(controllers.getOne));
 journalsRouter.post("/:id/reverse", requirePermission("journals:reverse"), asyncHandler(controllers.reverse));
+journalsRouter.post("/:id/approve", requirePermission("journals:approve"), asyncHandler(controllers.approve));
+journalsRouter.post("/:id/reject", requirePermission("journals:approve"), asyncHandler(controllers.reject));

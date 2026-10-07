@@ -3,7 +3,7 @@
  */
 
 import type { Request, Response } from "express";
-import { createJournalRequestSchema } from "@jibuks/domain";
+import { createJournalRequestSchema, listJournalsQuerySchema, rejectJournalSchema } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as service from "./service.js";
 
@@ -19,7 +19,7 @@ function auditContextFrom(req: Request): AuditContext {
 
 export async function create(req: Request, res: Response): Promise<void> {
   const body = createJournalRequestSchema.parse(req.body);
-  const journal = await service.createJournal(
+  const journal = await service.createManualJournal(
     {
       tenantId: req.tenantId!,
       clientUuid: body.clientUuid,
@@ -46,7 +46,8 @@ export async function create(req: Request, res: Response): Promise<void> {
 }
 
 export async function list(req: Request, res: Response): Promise<void> {
-  const journals = await service.listJournals(req.tenantId!);
+  const { status } = listJournalsQuerySchema.parse(req.query);
+  const journals = await service.listJournals(req.tenantId!, status);
   res.json({ data: journals });
 }
 
@@ -59,4 +60,12 @@ export async function reverse(req: Request, res: Response): Promise<void> {
   const reason = typeof req.body?.reason === "string" ? req.body.reason : "No reason provided";
   const journal = await service.reverseJournal(req.tenantId!, req.params["id"]!, reason, auditContextFrom(req));
   res.status(201).json(journal);
+}
+export async function approve(req: Request, res: Response): Promise<void> {
+  res.json(await service.approveJournal(req.tenantId!, req.params["id"]!, auditContextFrom(req)));
+}
+
+export async function reject(req: Request, res: Response): Promise<void> {
+  const { reason } = rejectJournalSchema.parse(req.body);
+  res.json(await service.rejectJournal(req.tenantId!, req.params["id"]!, reason, auditContextFrom(req)));
 }

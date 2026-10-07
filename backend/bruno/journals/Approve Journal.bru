@@ -1,0 +1,21 @@
+meta {
+  name: Approve Journal
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/api/v1/journals/{{journalId}}/approve
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Idempotency-Key: {{$randomUUID}}
+}
+
+docs {
+  Requires journals:approve (Owner, Accountant). Posts a PENDING_APPROVAL journal. You can't approve one you
+  entered (403 SELF_APPROVAL_FORBIDDEN).
+}

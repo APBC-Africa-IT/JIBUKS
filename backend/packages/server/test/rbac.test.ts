@@ -120,6 +120,13 @@ describe("requirePermission enforcement", () => {
     }
   });
 
+  it("lets only OWNER and ACCOUNTANT approve journals", async () => {
+    for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
+      const user = await seedUser([key]);
+      expect((await guarded(user, "journals:approve")).status, key).toBe(key === "OWNER" || key === "ACCOUNTANT" ? 200 : 403);
+    }
+  });
+
   it("lets only OWNER change the business's details", async () => {
     for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
       const user = await seedUser([key]);

@@ -1296,6 +1296,14 @@ paths:
               type: object
               minProperties: 1
               properties:
+                manualJournalApprovalThresholdMinor:
+                  type: integer
+                  minimum: 0
+                  nullable: true
+                  description: >
+                    Manual journal approval (FR-JNL-01): null off, 0 every manual
+                    journal, N = totalling N or more. Turning it on needs two
+                    active users with journals:approve (422 NOT_ENOUGH_APPROVERS).
                 taxIdentifier:
                   type: string
                   nullable: true
@@ -2337,6 +2345,11 @@ paths:
       tags: [Journals]
       summary: List journals
       description: Returns every journal for the caller's tenant, most recent first. Lines are NOT included — fetch a single journal for its lines.
+      parameters:
+        - name: status
+          in: query
+          description: e.g. PENDING_APPROVAL for the approval inbox.
+          schema: { type: string, enum: [PENDING_APPROVAL, POSTED, REJECTED] }
       responses:
         '403':
           $ref: '#/components/responses/Forbidden'
@@ -2423,6 +2436,58 @@ paths:
                 detail: "Journal 18230383-... was already reversed by 80430089-..."
 
   # ── Credit Sales ────────────────────────────────────────────────────
+  /journals/{id}/approve:
+    post:
+      tags: [Journals]
+      summary: Approve a journal awaiting approval (posts it)
+      description: >
+        Requires `journals:approve`. Re-runs every posting check. 403
+        SELF_APPROVAL_FORBIDDEN if you entered it; 422 JOURNAL_NOT_PENDING
+        if it isn't awaiting approval; 422 PERIOD_LOCKED if its period
+        closed meanwhile (it stays pending).
+      parameters:
+        - $ref: '#/components/parameters/JournalIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { description: The posted journal, with lines }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: JOURNAL_NOT_PENDING, PERIOD_LOCKED, ACCOUNT_INACTIVE ...
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  /journals/{id}/reject:
+    post:
+      tags: [Journals]
+      summary: Reject a journal awaiting approval (final)
+      description: Requires `journals:approve`. The person who entered it may reject (withdraw) it.
+      parameters:
+        - $ref: '#/components/parameters/JournalIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { description: The rejected journal, with lines }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: JOURNAL_NOT_PENDING
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
   /credit-sales:
     post:
       parameters:
@@ -3131,6 +3196,7 @@ components:
         - "journals:view"
         - "journals:create"
         - "journals:reverse"
+        - "journals:approve"
         - "credit_sales:create"
         - "cash_sales:create"
         - "bills:create"
@@ -3237,6 +3303,10 @@ components:
           nullable: true
           enum: [GENERAL, SME_TRADING, NGO, CORPORATE, MICRO_TRADER]
           description: The chart-of-accounts template seeded at onboarding; null for older businesses.
+        manual_journal_approval_threshold_minor:
+          type: string
+          nullable: true
+          description: Manual journal approval -- null off, "0" every manual journal, N = totalling N or more.
         created_at: { type: string, format: date-time }
     UserWithAccess:
       allOf:

@@ -2,8 +2,9 @@
  * Journals repository.
  *
  * The ONLY file permitted to write raw SQL against `journals` and
- * `journal_lines` (AD-02). Journals are inserted directly as POSTED --
- * by the time this function is called, @jibuks/ledger's validateForPosting
+ * `journal_lines` (AD-02). Journals are inserted as POSTED -- or, for a
+ * manual journal awaiting approval, PENDING_APPROVAL -- and by the time
+ * that happens @jibuks/ledger's validateForPosting
  * has already confirmed the journal balances and every line is valid. The
  * database's own deferred balance trigger (DR-04) and posted-immutability
  * trigger (FR-ACC-02) remain the second, independent line of defence.
@@ -26,10 +27,14 @@ export interface JournalRow {
   readonly description: string;
   readonly reference: string | null;
   readonly source: string;
-  readonly status: "DRAFT" | "PENDING_APPROVAL" | "POSTED";
+  readonly status: "DRAFT" | "PENDING_APPROVAL" | "POSTED" | "REJECTED";
   readonly reversal_of_journal_id: string | null;
   readonly created_by: string;
   readonly approved_by: string | null;
+  readonly approved_at: string | null;
+  readonly rejected_by: string | null;
+  readonly rejected_at: string | null;
+  readonly rejection_reason: string | null;
   readonly created_at: string;
 }
 
@@ -74,6 +79,8 @@ export interface CreateJournalInput {
   readonly source: string;
   readonly createdBy: string;
   readonly reversalOfJournalId?: string;
+  /** POSTED (default), or PENDING_APPROVAL to hold it for a second person. */
+  readonly status?: "POSTED" | "PENDING_APPROVAL";
   readonly lines: readonly CreateJournalLineInput[];
 }
 
@@ -97,7 +104,7 @@ export async function insertJournal(
     const journalResult = await client.query<JournalRow>(
       `INSERT INTO journals
          (id, tenant_id, branch_id, client_uuid, period_id, date, currency, description, reference, source, status, reversal_of_journal_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'POSTED', $11, $12)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $13, $11, $12)
        RETURNING *`,
       [
         journalId,
@@ -112,6 +119,7 @@ export async function insertJournal(
         input.source,
         input.reversalOfJournalId ?? null,
         input.createdBy,
+        input.status ?? "POSTED",
       ],
     );
     const journal = journalResult.rows[0]!;
@@ -157,10 +165,81 @@ export async function insertJournal(
   }
 }
 
-export async function listJournals(tenantId: string): Promise<JournalRow[]> {
+export async function listJournals(tenantId: string, status?: JournalRow["status"]): Promise<JournalRow[]> {
   return readAsTenant(tenantId, async (client) => {
-    const result = await client.query<JournalRow>(`SELECT * FROM journals ORDER BY date DESC, created_at DESC`);
+    const result = await client.query<JournalRow>(
+      `SELECT * FROM journals ${status ? "WHERE status = $1" : ""} ORDER BY date DESC, created_at DESC`,
+      status ? [status] : [],
+    );
     return result.rows;
+  });
+}
+
+/** PENDING_APPROVAL -> POSTED. Returns null if it was no longer pending. */
+export async function approveJournal(
+  tenantId: string,
+  journalId: string,
+  periodId: string,
+  audit: AuditContext,
+): Promise<JournalRow | null> {
+  return withTenant(tenantId, async (client) => {
+    const before = await client.query<JournalRow>(
+      `SELECT * FROM journals WHERE id = $1 AND status = 'PENDING_APPROVAL' FOR UPDATE`,
+      [journalId],
+    );
+    if (!before.rows[0]) {
+      return null;
+    }
+    const result = await client.query<JournalRow>(
+      `UPDATE journals SET status = 'POSTED', period_id = $2, approved_by = $3, approved_at = now()
+        WHERE id = $1 RETURNING *`,
+      [journalId, periodId, audit.actorUserId],
+    );
+    const journal = result.rows[0]!;
+    await recordAuditLog(client, {
+      tenantId,
+      action: "APPROVE",
+      entityType: "journal",
+      entityId: journalId,
+      beforeState: before.rows[0],
+      afterState: journal,
+      context: audit,
+    });
+    return journal;
+  });
+}
+
+/** PENDING_APPROVAL -> REJECTED (final). Returns null if it was no longer pending. */
+export async function rejectJournal(
+  tenantId: string,
+  journalId: string,
+  reason: string,
+  audit: AuditContext,
+): Promise<JournalRow | null> {
+  return withTenant(tenantId, async (client) => {
+    const before = await client.query<JournalRow>(
+      `SELECT * FROM journals WHERE id = $1 AND status = 'PENDING_APPROVAL' FOR UPDATE`,
+      [journalId],
+    );
+    if (!before.rows[0]) {
+      return null;
+    }
+    const result = await client.query<JournalRow>(
+      `UPDATE journals SET status = 'REJECTED', rejected_by = $2, rejected_at = now(), rejection_reason = $3
+        WHERE id = $1 RETURNING *`,
+      [journalId, audit.actorUserId, reason],
+    );
+    const journal = result.rows[0]!;
+    await recordAuditLog(client, {
+      tenantId,
+      action: "UPDATE",
+      entityType: "journal",
+      entityId: journalId,
+      beforeState: before.rows[0],
+      afterState: journal,
+      context: audit,
+    });
+    return journal;
   });
 }
 

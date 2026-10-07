@@ -42,6 +42,7 @@ export const PERMISSIONS = [
   "journals:view",
   "journals:create",
   "journals:reverse",
+  "journals:approve",
   "credit_sales:create",
   "cash_sales:create",
   "bills:create",

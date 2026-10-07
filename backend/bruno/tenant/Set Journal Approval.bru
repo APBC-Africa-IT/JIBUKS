@@ -1,0 +1,28 @@
+meta {
+  name: Set Journal Approval
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/tenant
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "manualJournalApprovalThresholdMinor": 10000000
+  }
+}
+
+docs {
+  Requires tenant:edit (Owner). Manual journals of KES 100,000 or more wait for approval. 0 = all, null = off.
+  Needs two active Owner/Accountant users, otherwise 422 NOT_ENOUGH_APPROVERS.
+}

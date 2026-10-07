@@ -16,6 +16,7 @@ import * as accountsService from "../accounts/service.js";
 import * as periodsService from "../periods/service.js";
 import * as customersService from "../customers/service.js";
 import * as suppliersService from "../suppliers/service.js";
+import * as tenantsService from "../tenants/service.js";
 
 export interface CreateJournalLineRequest {
   readonly accountId: string;
@@ -203,8 +204,88 @@ export async function findJournalByClientUuid(tenantId: string, clientUuid: stri
   return repository.findJournalByClientUuid(tenantId, clientUuid);
 }
 
-export async function listJournals(tenantId: string) {
-  return repository.listJournals(tenantId);
+export async function listJournals(tenantId: string, status?: "PENDING_APPROVAL" | "POSTED" | "REJECTED") {
+  return repository.listJournals(tenantId, status);
+}
+
+// ---------------------------------------------------------------------
+// Manual journals and approval -- FR-JNL-01, FR-RBAC-03
+// ---------------------------------------------------------------------
+
+/**
+ * A journal entered by hand (POST /journals). If the business requires
+ * approval for manual journals of this size, it is checked exactly like any
+ * other journal but saved as PENDING_APPROVAL instead of posted -- it
+ * counts nowhere until a second person approves it.
+ */
+export async function createManualJournal(request: CreateJournalRequest, audit: AuditContext): Promise<JournalWithLines> {
+  const prepared = await prepareJournal(request, audit);
+  const tenant = await tenantsService.getTenant(request.tenantId);
+  const threshold = tenant.manual_journal_approval_threshold_minor;
+  const total = request.lines.reduce((sum, line) => sum + line.debitMinor, 0);
+  const needsApproval = threshold !== null && total >= Number(threshold);
+  return repository.createJournal(needsApproval ? { ...prepared, status: "PENDING_APPROVAL" } : prepared, audit);
+}
+
+function notPending(journal: { id: string; status: string }): DomainError {
+  return new DomainError(
+    "JOURNAL_NOT_PENDING",
+    `Journal ${journal.id} is ${journal.status.toLowerCase().replace("_", " ")}; only a journal awaiting approval can be approved or rejected`,
+  );
+}
+
+/**
+ * Posts a journal awaiting approval. Whoever entered it can't approve it
+ * (segregation of duties, FR-RBAC-03). Every posting check runs again --
+ * the period may have been closed, or an account deactivated, meanwhile.
+ */
+export async function approveJournal(tenantId: string, journalId: string, audit: AuditContext): Promise<JournalWithLines> {
+  const journal = await getJournal(tenantId, journalId);
+  if (journal.status !== "PENDING_APPROVAL") {
+    throw notPending(journal);
+  }
+  if (journal.created_by === audit.actorUserId) {
+    throw new DomainError("SELF_APPROVAL_FORBIDDEN", "A journal must be approved by someone other than the person who entered it");
+  }
+
+  await periodsService.ensureCurrentPeriodForDate(tenantId, journal.date, audit);
+  const domain = toDomainJournal(journal);
+  const validated = validateForPosting(
+    {
+      clientUuid: domain.clientUuid,
+      tenantId,
+      ...(domain.branchId !== undefined ? { branchId: domain.branchId } : {}),
+      date: domain.date,
+      currency: domain.currency,
+      description: domain.description,
+      ...(domain.reference !== undefined ? { reference: domain.reference } : {}),
+      source: domain.source,
+      lines: domain.lines,
+    },
+    await buildPostingContext(tenantId),
+  );
+
+  if (!(await repository.approveJournal(tenantId, journalId, validated.periodId, audit))) {
+    throw notPending(await getJournal(tenantId, journalId)); // decided meanwhile
+  }
+  return getJournal(tenantId, journalId);
+}
+
+/** Turns down a journal awaiting approval. Final: to try again, enter a new journal. */
+export async function rejectJournal(
+  tenantId: string,
+  journalId: string,
+  reason: string,
+  audit: AuditContext,
+): Promise<JournalWithLines> {
+  const journal = await getJournal(tenantId, journalId);
+  if (journal.status !== "PENDING_APPROVAL") {
+    throw notPending(journal);
+  }
+  if (!(await repository.rejectJournal(tenantId, journalId, reason, audit))) {
+    throw notPending(await getJournal(tenantId, journalId));
+  }
+  return getJournal(tenantId, journalId);
 }
 
 export async function getJournal(tenantId: string, journalId: string): Promise<JournalWithLines> {

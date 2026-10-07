@@ -173,6 +173,7 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `GET /invoices/{id}/pdf` | `invoices:view` |
 | `PATCH /tenant` | `tenant:edit` (Owner only) |
 | `PATCH /accounts/{id}` | `accounts:edit` |
+| `POST /journals/{id}/approve`, `POST /journals/{id}/reject` | `journals:approve` (Owner, Accountant) |
 | `GET /opening-balances` / `PUT /opening-balances` | `journals:view` / `opening_balances:manage` (Owner, Accountant) |
 | `GET /supplier-bills…` | `supplier_bills:view` |
 | `POST /supplier-bills`, `PATCH`/`DELETE /supplier-bills/{id}`, `POST /supplier-bills/{id}/debit-notes` | `supplier_bills:create` |
@@ -883,7 +884,7 @@ Enforces **double-entry bookkeeping**: debits must equal credits, checked both b
 }
 ```
 
-A journal is always created directly with `status: "POSTED"`.
+A journal is created with `status: "POSTED"` — unless the business requires **approval** for manual journals of this size, in which case it comes back `201` with `status: "PENDING_APPROVAL"` and doesn't count anywhere until approved (see [Approval](#journal-approval) below). Everything is still checked at submission: balance, period, accounts.
 
 A line may optionally carry `customerId` **or** `supplierId` (never both) to attribute it to a customer's/supplier's subledger balance — see [7.5 Customers](#75-customers) / [7.6 Suppliers](#76-suppliers). For example, a credit sale debits Accounts Receivable with `customerId` set and credits Sales:
 ```json
@@ -894,7 +895,29 @@ A line may optionally carry `customerId` **or** `supplierId` (never both) to att
 
 ### `GET /journals` / `GET /journals/{id}` 
 
-List (no lines) / get (with lines).
+List (no lines) / get (with lines). `?status=PENDING_APPROVAL` lists what's waiting for approval (also `POSTED`, `REJECTED`).
+
+### Journal approval
+
+FR-JNL-01 with segregation of duties (FR-RBAC-03). **Only manual journals** (`POST /journals`) are ever held; sales, expenses, invoices, bills, payments and opening balances always post straight away.
+
+**Turning it on:** the Owner sets `manualJournalApprovalThresholdMinor` with [`PATCH /tenant`](#patch-tenant): `null` = off (default), `0` = every manual journal, an amount = manual journals whose total is that amount or more. Turning it on needs **at least two active users with `journals:approve`** (Owner, Accountant): otherwise `422 NOT_ENOUGH_APPROVERS`, since nobody may approve their own journal. `GET /tenant` shows the current setting as `manual_journal_approval_threshold_minor` (string, or `null`).
+
+| `status` | Meaning |
+|---|---|
+| `PENDING_APPROVAL` | Waiting. Not in any balance or report. |
+| `POSTED` | Approved and posted; `approved_by` / `approved_at` set (both null for journals that never needed approval). |
+| `REJECTED` | Turned down; `rejected_by`, `rejected_at`, `rejection_reason` set. **Final** — to try again, submit a new journal with a new `clientUuid`. |
+
+#### `POST /journals/{id}/approve`
+
+`journals:approve`. No body. Posts the journal. The posting checks run again, so a journal whose period was closed meanwhile gets `422 PERIOD_LOCKED` and stays pending (reject it, or reopen the period). Errors: `403 SELF_APPROVAL_FORBIDDEN` (you entered it), `422 JOURNAL_NOT_PENDING`.
+
+#### `POST /journals/{id}/reject`
+
+`journals:approve`. `{ "reason": "Wrong bank account" }`. Errors: `400` without a reason, `422 JOURNAL_NOT_PENDING`. The person who entered a journal may reject it themselves (withdrawing it).
+
+**In the app:** show a "Waiting for approval" list from `GET /journals?status=PENDING_APPROVAL` to Owner/Accountant, hiding the Approve button on journals the current user created. A pending or rejected journal can't be reversed.
 
 ### `POST /journals/{id}/reverse` 
 
@@ -1520,6 +1543,7 @@ The caller's own business. Needs no permission; every signed-in user can call it
 
 | Field | Type | Description |
 |---|---|---|
+| `manualJournalApprovalThresholdMinor` | integer \| null | Manual journal approval: `null` off, `0` every manual journal, N = totalling N or more. Needs two approvers to turn on. See [Journal approval](#journal-approval). |
 | `taxIdentifier` | string \| null | The business's KRA PIN. Trimmed and upper-cased (`" p051234567x "` → `"P051234567X"`); letters, digits, spaces, `-` and `/`, up to 50. Same rules as a customer's `taxIdentifier`. |
 
 **Success Response:** `200 OK`, the tenant. **Error Response:** `400` (empty body or bad PIN), `403` for anyone but the Owner.
