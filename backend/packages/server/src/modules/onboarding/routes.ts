@@ -15,3 +15,5 @@ export const onboardingRouter: RouterType = Router();
 onboardingRouter.use(requireAuth0Token);
 
 onboardingRouter.post("/", asyncHandler(controllers.create));
+// Before sign-up there is no tenant user, so a genuine token is all it takes.
+onboardingRouter.get("/chart-templates", controllers.chartTemplates);

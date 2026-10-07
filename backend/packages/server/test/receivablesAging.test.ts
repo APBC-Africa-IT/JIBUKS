@@ -99,8 +99,7 @@ async function seedCustomer() {
   return { f, a, b };
 }
 
-// Each test seeds a customer through about fifteen API calls.
-describe("GET /api/v1/receivables-aging", { timeout: 20_000 }, () => {
+describe("GET /api/v1/receivables-aging", () => {
   it("buckets each open invoice by days past due, and keeps non-invoice balances apart", async () => {
     const { f } = await seedCustomer();
 

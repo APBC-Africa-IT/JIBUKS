@@ -1,0 +1,28 @@
+meta {
+  name: Update Account
+  type: http
+  seq: 10
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/accounts/{{accountId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "name": "Rent and Utilities",
+    "tags": ["shop"]
+  }
+}
+
+docs {
+  Requires accounts:edit. Any of name, code, tags, parentAccountId (null = top level). Type and currency can't change.
+}

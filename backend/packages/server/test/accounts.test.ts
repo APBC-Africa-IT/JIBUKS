@@ -389,3 +389,62 @@ describe("POST /api/v1/accounts/:id/reactivate", () => {
     expect(auditRows[2]!.after_state.is_active).toBe(true);
   });
 });
+describe("PATCH /api/v1/accounts/{id}", () => {
+  async function create(type: string, extra: Record<string, unknown> = {}) {
+    const response = await request(app)
+      .post("/api/v1/accounts")
+      .set("Authorization", await authHeader())
+      .send({ code: uniqueCode(), name: `Patch ${type}`, type, ...extra });
+    expect(response.status).toBe(201);
+    return response.body as { id: string; code: string };
+  }
+
+  async function patch(id: string, body: object) {
+    return request(app).patch(`/api/v1/accounts/${id}`).set("Authorization", await authHeader()).send(body);
+  }
+
+  it("renames, recodes and retags an account", async () => {
+    const account = await create("EXPENSE");
+    const code = uniqueCode();
+
+    const response = await patch(account.id, { name: "Rent and Utilities", code, tags: ["shop"] });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ id: account.id, name: "Rent and Utilities", code, tags: ["shop"], type: "EXPENSE" });
+  });
+
+  it("moves an account under a parent of the same type, and back to the top level", async () => {
+    const parent = await create("EXPENSE");
+    const child = await create("EXPENSE");
+
+    const moved = await patch(child.id, { parentAccountId: parent.id });
+    const top = await patch(child.id, { parentAccountId: null });
+
+    expect(moved.body.parent_account_id).toBe(parent.id);
+    expect(top.body.parent_account_id).toBeNull();
+  });
+
+  it("refuses a parent of another type, a loop, a taken code and an empty body", async () => {
+    const parent = await create("EXPENSE");
+    const child = await create("EXPENSE", { parentAccountId: parent.id });
+    const income = await create("INCOME");
+
+    const wrongType = await patch(child.id, { parentAccountId: income.id });
+    const loop = await patch(parent.id, { parentAccountId: child.id });
+    const self = await patch(parent.id, { parentAccountId: parent.id });
+    const takenCode = await patch(child.id, { code: income.code });
+    const empty = await patch(child.id, {});
+    const typeChange = await patch(child.id, { type: "INCOME" });
+
+    expect([wrongType.status, loop.status, self.status]).toEqual([422, 422, 422]);
+    expect(takenCode.status).toBe(409);
+    expect(empty.status).toBe(400);
+    // `type` isn't a field PATCH accepts; with it dropped there's nothing to update.
+    expect(typeChange.status).toBe(400);
+  });
+
+  it("answers 404 for an unknown account", async () => {
+    const response = await patch(randomUUID(), { name: "x" });
+    expect(response.status).toBe(404);
+  });
+});

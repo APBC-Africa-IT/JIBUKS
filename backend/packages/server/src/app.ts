@@ -35,6 +35,7 @@ import { hooksRouter, paymentsRouter } from "./modules/payments/routes.js";
 import { tenantRouter } from "./modules/tenants/routes.js";
 import { invoicesRouter } from "./modules/invoices/routes.js";
 import { supplierBillsRouter } from "./modules/supplierBills/routes.js";
+import { openingBalancesRouter } from "./modules/openingBalances/routes.js";
 import { requireAuth0Token } from "./middleware/auth0.js";
 
 export function createApp(): Express {
@@ -73,6 +74,7 @@ export function createApp(): Express {
   app.use("/api/v1/suppliers", suppliersRouter);
   app.use("/api/v1/periods", periodsRouter);
   app.use("/api/v1/journals", journalsRouter);
+  app.use("/api/v1/opening-balances", openingBalancesRouter);
   app.use("/api/v1/credit-sales", creditSalesRouter);
   app.use("/api/v1/cash-sales", cashSalesRouter);
   app.use("/api/v1/bills", billsRouter);

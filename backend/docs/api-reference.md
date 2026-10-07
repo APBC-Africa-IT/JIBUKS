@@ -54,6 +54,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.21 Receivables Aging](#721-receivables-aging)
 - [7.22 Supplier Bills](#722-supplier-bills)
 - [7.23 Payables Aging](#723-payables-aging)
+- [7.24 Opening Balances](#724-opening-balances)
 
 ---
 
@@ -171,6 +172,8 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /invoices/{id}/payments` | `payments:create` |
 | `GET /invoices/{id}/pdf` | `invoices:view` |
 | `PATCH /tenant` | `tenant:edit` (Owner only) |
+| `PATCH /accounts/{id}` | `accounts:edit` |
+| `GET /opening-balances` / `PUT /opening-balances` | `journals:view` / `opening_balances:manage` (Owner, Accountant) |
 | `GET /supplier-bills…` | `supplier_bills:view` |
 | `POST /supplier-bills`, `PATCH`/`DELETE /supplier-bills/{id}`, `POST /supplier-bills/{id}/debit-notes` | `supplier_bills:create` |
 | `POST /supplier-bills/{id}/post` / `cancel` / `payments` | `supplier_bills:post` / `supplier_bills:cancel` / `supplier_bills:pay` |
@@ -216,6 +219,7 @@ Self-service sign-up: creates a **brand-new tenant and its first user, together,
 | `phone` | string | No | Contact phone. |
 | `vatRegistered` | boolean | ✅ Yes | Whether this business charges VAT. Kenya's VAT registration threshold is currently an annual turnover of KES 5,000,000. Ask the equivalent of QuickBooks' "Do you charge sales tax?" step. Determines whether VAT accounts are seeded (below) and whether your UI should show tax fields on the Credit Sale/Cash Sale/Write Bill screens at all. |
 | `periodStartDate` | string (date) | ✅ Yes | The date this tenant's books begin — the equivalent of QuickBooks' "books start date" step. Onboarding seeds one OPEN period from this date through the end of that calendar month. |
+| `chartTemplate` | string | No | Which chart of accounts to seed (FR-COA-02): `GENERAL` (default — the original starter set below), `SME_TRADING`, `NGO`, `CORPORATE` or `MICRO_TRADER` (SRS Appendix A). Show the choices from [`GET /onboarding/chart-templates`](#get-onboardingchart-templates). **Send it from the new sign-up screen**; it will become required later. |
 
 The new user's `external_idp_subject` is taken directly from the verified token's `sub` claim — not from anything in the request body, and not something the client can override.
 
@@ -231,6 +235,7 @@ The new user's `external_idp_subject` is taken directly from the verified token'
     "plan_tier": "STARTER",
     "status": "ACTIVE",
     "vat_registered": false,
+    "chart_template": "GENERAL",
     "created_at": "2026-08-03T00:55:32.051Z"
   },
   "user": {
@@ -259,6 +264,7 @@ The new user's `external_idp_subject` is taken directly from the verified token'
     { "id": "...", "code": "1100", "name": "Accounts Receivable", "type": "ASSET", "is_active": true, "is_postable": true },
     { "id": "...", "code": "2000", "name": "Accounts Payable", "type": "LIABILITY", "is_active": true, "is_postable": true },
     { "id": "...", "code": "3000", "name": "Owner's Equity", "type": "EQUITY", "is_active": true, "is_postable": true },
+    { "id": "...", "code": "3900", "name": "Opening Balance Equity", "type": "EQUITY", "system_key": "OPENING_BALANCE", "is_active": true, "is_postable": true },
     { "id": "...", "code": "4000", "name": "Sales Revenue", "type": "INCOME", "is_active": true, "is_postable": true },
     { "id": "...", "code": "5000", "name": "Purchases", "type": "EXPENSE", "is_active": true, "is_postable": true },
     { "id": "...", "code": "5100", "name": "General Expenses", "type": "EXPENSE", "is_active": true, "is_postable": true }
@@ -266,7 +272,9 @@ The new user's `external_idp_subject` is taken directly from the verified token'
 }
 ```
 
-**The starter chart of accounts** always includes Cash, Bank, M-Pesa (`1020`, `system_key: "MPESA"`, where M-Pesa collections land — see [7.18 Payments](#718-payments)), Accounts Receivable, Accounts Payable, Owner's Equity, Sales Revenue, Purchases, and General Expenses (codes `1000`–`5100` above). If `vatRegistered: true`, two more accounts are added: `1200` VAT Recoverable (Input VAT, an ASSET — used as `taxAccountId` on `POST /bills`) and `2100` VAT Payable (Output VAT, a LIABILITY — used as `taxAccountId` on `POST /credit-sales`/`POST /cash-sales`).
+**Templates.** Every template (including `GENERAL`) has `3900 Opening Balance Equity` (`system_key: "OPENING_BALANCE"`, used by [opening balances](#724-opening-balances)). VAT accounts are added only when `vatRegistered: true`. `SME_TRADING` and `MICRO_TRADER` have an M-Pesa account at `1020` (`system_key: "MPESA"`); `NGO` and `CORPORATE` get one created on their first M-Pesa collection. Codes differ between templates (e.g. receivables are `1100` in `GENERAL`/`CORPORATE` but `1030` in `SME_TRADING`/`MICRO_TRADER`) — **use the returned account ids or `system_key`, never hard-coded codes.** Micro-trader accounts have plain-language names ("Money I Owe", "My Money in the Business"); show names, not codes.
+
+**The `GENERAL` starter chart of accounts** always includes Cash, Bank, M-Pesa (`1020`, `system_key: "MPESA"`, where M-Pesa collections land — see [7.18 Payments](#718-payments)), Accounts Receivable, Accounts Payable, Owner's Equity, Sales Revenue, Purchases, and General Expenses (codes `1000`–`5100` above). If `vatRegistered: true`, two more accounts are added: `1200` VAT Recoverable (Input VAT, an ASSET — used as `taxAccountId` on `POST /bills`) and `2100` VAT Payable (Output VAT, a LIABILITY — used as `taxAccountId` on `POST /credit-sales`/`POST /cash-sales`).
 
 **Use these account ids directly** with `POST /credit-sales`, `POST /cash-sales`, `POST /bills`, and `POST /cheques` — no extra `GET /accounts` round trip is needed right after sign-up. A user can still rename, deactivate, or add more accounts later via the `/accounts` endpoints; nothing about this starter set is special or protected.
 
@@ -285,6 +293,10 @@ The new user's `external_idp_subject` is taken directly from the verified token'
 ```
 
 **A client should treat `409` from this endpoint as expected, normal behavior for a returning user** — not an error state to show — and route them straight into the app instead of an onboarding failure screen.
+
+### `GET /onboarding/chart-templates`
+
+Genuine Auth0 token only (works before sign-up). `{ "data": [ { "key", "name", "description", "accounts": [ { "code", "name", "type", "systemKey"?, "vatOnly"? } ] } ] }` for the five templates, in display order. `vatOnly` accounts are seeded only for a VAT-registered business. The same data is exported from `@jibuks/domain` as `CHART_TEMPLATES`.
 
 ### Notes for consuming clients (Onboarding)
 
@@ -605,6 +617,16 @@ List / fetch accounts for the caller's tenant, enforced at the database level. E
 **Error Response:** `400 VALIDATION_ERROR` (malformed `as_of`), `404 ACCOUNT_NOT_FOUND` — doesn't exist, or belongs to a different tenant (indistinguishable by design).
 
 ---
+
+### `PATCH /accounts/{id}`
+
+`accounts:edit`. Rename, recode, retag or move an account (FR-COA-03/04). Accepts `Idempotency-Key`.
+
+```json
+{ "name": "Rent and Utilities", "code": "5210", "tags": ["shop"], "parentAccountId": null }
+```
+
+Any of `name`, `code`, `tags` (replaces the list), `parentAccountId` (`null` = top level). The parent must be the same type and can't be the account itself or one of its sub-accounts (`422`). A code already in use is `409`. **Type and currency can't be changed.** Renaming a system account (M-Pesa, Opening Balance Equity) is fine — the server finds them by `system_key`.
 
 ### `POST /accounts/{id}/deactivate` / `POST /accounts/{id}/reactivate` 
 
@@ -1898,3 +1920,51 @@ Same as [`GET /receivables-aging`](#721-receivables-aging), from the supplier si
 Rows have `supplier_id`, `supplier_name`, the five bucket fields, `billed_minor`, `not_billed_minor` and `balance_minor`. `not_billed_minor` is supplier balance with no bill record behind it — mostly the older `POST /bills` and `POST /cheques`, plus manual journals. `balance_minor` equals the supplier's balance on `GET /suppliers?as_of=`.
 
 The drill-down returns `supplier_id`, `supplier_name`, `bills` (each with `id`, `number`, `bill_date`, `due_date`, `days_past_due`, `bucket`, `total_minor`, `open_minor`), `billed_minor`, `not_billed_minor` and `balance_minor`.
+
+---
+
+## 7.24 Opening Balances
+
+FR-ACC-04. What the business had and owed on the day its books in JiBUks begin, as **one** opening journal (`source: "OPENING"`).
+
+### `PUT /opening-balances`
+
+`opening_balances:manage` (Owner, Accountant). Accepts `Idempotency-Key`.
+
+```json
+{
+  "date": "2026-09-01",
+  "lines": [
+    { "accountId": "<Cash 1000>", "debitMinor": 5000000 },
+    { "accountId": "<Bank 1010>", "debitMinor": 10000000 },
+    { "accountId": "<Inventory 1200>", "debitMinor": 2500000 },
+    { "accountId": "<Accounts Receivable>", "debitMinor": 2000000, "customerId": "<Wanjiku>" },
+    { "accountId": "<Accounts Payable 2000>", "creditMinor": 3000000, "supplierId": "<Unga Ltd>" }
+  ]
+}
+```
+
+- `date`: the opening date — usually the books-start date from onboarding. Its period must be open.
+- `lines`: one per account with a balance — a **debit** for what the business has (cash, stock, money owed to it), a **credit** for what it owes (loans, money owed to suppliers). Same line shape as [`POST /journals`](#post-journals). Tag a receivable line with `customerId` (or a payable line with `supplierId`) to give that customer or supplier their opening balance; it appears in their balance and in aging under "not on an invoice/bill".
+- **You don't have to make it balance.** The server adds one line to Opening Balance Equity (`system_key: "OPENING_BALANCE"`, `3900`) for the difference. Don't send a line for that account yourself (`422 JOURNAL_LINE_AMBIGUOUS`). A business onboarded before templates existed gets the account created on first use.
+- **Sending it again replaces the opening balances**: the previous opening journal is reversed on its own date and the new one posted, together.
+- Once the opening journal's period is **closed**, it's locked: `422 OPENING_BALANCES_LOCKED` (reopen the period to change it).
+
+**Success:** `200`, the same shape as `GET` below.
+
+**For micro-traders:** turn "How much cash and M-Pesa do you have today? Does anyone owe you? Do you owe anyone?" into this call.
+
+### `GET /opening-balances`
+
+`journals:view`.
+
+```json
+{
+  "date": "2026-09-01",
+  "locked": false,
+  "opening_balance_account_id": "...",
+  "journal": { "id": "...", "source": "OPENING", "date": "2026-09-01", "lines": [ ... ] }
+}
+```
+
+Before any have been entered: `{ "date": null, "locked": false, "opening_balance_account_id": null, "journal": null }`.

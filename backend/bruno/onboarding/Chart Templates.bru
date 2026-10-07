@@ -1,0 +1,20 @@
+meta {
+  name: Chart Templates
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/onboarding/chart-templates
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{onboardingAuthToken}}
+}
+
+docs {
+  Token only (before sign-up). The five chart-of-accounts templates to offer; send the chosen key as
+  chartTemplate on POST /onboarding.
+}

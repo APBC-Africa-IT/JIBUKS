@@ -200,3 +200,36 @@ export async function findJournalByReversalTarget(
     return result.rows[0] ?? null;
   });
 }
+/** The newest journal of `source` that hasn't been reversed and isn't itself a reversal. */
+export async function findActiveJournalBySource(tenantId: string, source: string): Promise<JournalRow | null> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<JournalRow>(
+      `SELECT j.* FROM journals j
+        WHERE j.source = $1
+          AND j.reversal_of_journal_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM journals r WHERE r.reversal_of_journal_id = j.id)
+        ORDER BY j.created_at DESC
+        LIMIT 1`,
+      [source],
+    );
+    return result.rows[0] ?? null;
+  });
+}
+
+/**
+ * Inside the caller's transaction: serialises writers of `source` for this
+ * tenant (advisory lock, held to commit), then returns its active journal.
+ */
+export async function lockActiveJournalBySource(client: TxClient, tenantId: string, source: string): Promise<JournalRow | null> {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext('journal_source:' || $1 || ':' || $2))`, [tenantId, source]);
+  const result = await client.query<JournalRow>(
+    `SELECT j.* FROM journals j
+      WHERE j.source = $1
+        AND j.reversal_of_journal_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM journals r WHERE r.reversal_of_journal_id = j.id)
+      ORDER BY j.created_at DESC
+      LIMIT 1`,
+    [source],
+  );
+  return result.rows[0] ?? null;
+}

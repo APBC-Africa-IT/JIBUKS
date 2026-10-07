@@ -188,6 +188,16 @@ export async function postPreparedJournal(
   return repository.insertJournal(client, prepared, audit);
 }
 
+/** The newest unreversed journal of `source` (e.g. the current OPENING journal), if any. */
+export async function findActiveJournalBySource(tenantId: string, source: JournalSource) {
+  return repository.findActiveJournalBySource(tenantId, source);
+}
+
+/** In the caller's transaction: locks writers of `source` and returns its active journal. */
+export async function lockActiveJournalBySource(client: TxClient, tenantId: string, source: JournalSource) {
+  return repository.lockActiveJournalBySource(client, tenantId, source);
+}
+
 /** The journal a caller already posted under `clientUuid`, if any. */
 export async function findJournalByClientUuid(tenantId: string, clientUuid: string) {
   return repository.findJournalByClientUuid(tenantId, clientUuid);
@@ -221,12 +231,17 @@ export async function reverseJournal(
   return repository.createJournal(await prepareReversal(tenantId, journalId, reason, audit), audit);
 }
 
-/** reverseJournal's checks without the write -- see prepareJournal. */
+/**
+ * reverseJournal's checks without the write -- see prepareJournal. The
+ * reversal is dated today unless `date` is given (opening balances reverse
+ * on the original's own date, so reports for any date stay right).
+ */
 export async function prepareReversal(
   tenantId: string,
   journalId: string,
   reason: string,
   audit: AuditContext,
+  date?: string,
 ): Promise<PreparedJournal> {
   const originalRow = await repository.getJournalWithLines(tenantId, journalId);
   if (!originalRow) {
@@ -240,7 +255,7 @@ export async function prepareReversal(
 
   const original = toDomainJournal(originalRow);
   const reversalInput = domainBuildReversal(original, {
-    date: new Date().toISOString().slice(0, 10),
+    date: date ?? new Date().toISOString().slice(0, 10),
     reason,
     by: audit.actorUserId,
     clientUuid: randomUUID(),

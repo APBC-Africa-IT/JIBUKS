@@ -149,10 +149,12 @@ describe("onboarding service (direct)", () => {
     });
 
     const codes = result.accounts.map((a) => a.code).sort();
-    expect(codes).toEqual(["1000", "1010", "1020", "1100", "2000", "3000", "4000", "5000", "5100"]);
+    expect(codes).toEqual(["1000", "1010", "1020", "1100", "2000", "3000", "3900", "4000", "5000", "5100"]);
     expect(result.accounts.every((a) => a.is_active)).toBe(true);
     // The M-Pesa account is found by system key, not by its code.
     expect(result.accounts.filter((a) => a.system_key === "MPESA").map((a) => a.code)).toEqual(["1020"]);
+    expect(result.accounts.filter((a) => a.system_key === "OPENING_BALANCE").map((a) => a.code)).toEqual(["3900"]);
+    expect(result.tenant.chart_template).toBe("GENERAL");
   });
 
   it("seeds a VAT-registered tenant with VAT Payable and VAT Recoverable accounts too", async () => {
@@ -167,7 +169,51 @@ describe("onboarding service (direct)", () => {
     });
 
     const codes = result.accounts.map((a) => a.code).sort();
-    expect(codes).toEqual(["1000", "1010", "1020", "1100", "1200", "2000", "2100", "3000", "4000", "5000", "5100"]);
+    expect(codes).toEqual(["1000", "1010", "1020", "1100", "1200", "2000", "2100", "3000", "3900", "4000", "5000", "5100"]);
+  });
+
+  it.each([
+    { template: "SME_TRADING", vat: false, count: 26, mpesa: "1020" },
+    { template: "SME_TRADING", vat: true, count: 27, mpesa: "1020" },
+    { template: "NGO", vat: false, count: 17, mpesa: null },
+    { template: "NGO", vat: true, count: 19, mpesa: null },
+    { template: "CORPORATE", vat: true, count: 22, mpesa: null },
+    { template: "MICRO_TRADER", vat: false, count: 12, mpesa: "1020" },
+  ] as const)("seeds the $template template (VAT $vat)", async ({ template, vat, count, mpesa }) => {
+    const result = await onboard({
+      tenantName: `${template} Co`,
+      tenantType: template === "NGO" ? "NGO" : "BUSINESS",
+      baseCurrency: "KES",
+      externalIdpSubject: `auth0|${randomUUID()}`,
+      userName: "Owner",
+      vatRegistered: vat,
+      periodStartDate: "2026-09-01",
+      chartTemplate: template,
+    });
+
+    expect(result.tenant.chart_template).toBe(template);
+    expect(result.accounts).toHaveLength(count);
+    const byKey = (key: string) => result.accounts.filter((a) => a.system_key === key).map((a) => a.code);
+    expect(byKey("OPENING_BALANCE")).toEqual(["3900"]);
+    expect(byKey("MPESA")).toEqual(mpesa ? [mpesa] : []);
+    // Every template's codes are unique and its types are valid (the database would refuse otherwise).
+    expect(new Set(result.accounts.map((a) => a.code)).size).toBe(count);
+  });
+
+  it("gives micro-traders plain-language names and an account for money owed to them", async () => {
+    const result = await onboard({
+      tenantName: "Mama Njeri Kiosk",
+      tenantType: "BUSINESS",
+      baseCurrency: "KES",
+      externalIdpSubject: `auth0|${randomUUID()}`,
+      userName: "Njeri",
+      vatRegistered: false,
+      periodStartDate: "2026-09-01",
+      chartTemplate: "MICRO_TRADER",
+    });
+
+    const names = Object.fromEntries(result.accounts.map((a) => [a.code, a.name]));
+    expect(names).toMatchObject({ "1030": "Money Owed to Me", "2000": "Money I Owe", "3000": "My Money in the Business" });
   });
 
   it("can immediately record a credit sale using the seeded period and accounts, end to end", async () => {
@@ -251,5 +297,26 @@ describe("POST /api/v1/onboarding (HTTP)", () => {
 
     expect(response.status).toBe(400);
     expect(response.body.title).toBe("VALIDATION_ERROR");
+  });
+});
+
+describe("GET /api/v1/onboarding/chart-templates", () => {
+  it("lists the five templates with their accounts, before sign-up", async () => {
+    const response = await request(app).get("/api/v1/onboarding/chart-templates").set("Authorization", await authHeader());
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.map((t: { key: string }) => t.key)).toEqual([
+      "GENERAL",
+      "SME_TRADING",
+      "NGO",
+      "CORPORATE",
+      "MICRO_TRADER",
+    ]);
+    expect(response.body.data[4].accounts).toContainEqual({ code: "1020", name: "M-Pesa / Airtel", type: "ASSET", systemKey: "MPESA" });
+  });
+
+  it("requires a token", async () => {
+    const response = await request(app).get("/api/v1/onboarding/chart-templates");
+    expect(response.status).toBe(401);
   });
 });

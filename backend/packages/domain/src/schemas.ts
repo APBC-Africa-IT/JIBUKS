@@ -11,6 +11,7 @@ import { CURRENCIES } from "./currency.js";
 import { ACCOUNT_TYPES } from "./accounts.js";
 import { JOURNAL_SOURCES } from "./journal.js";
 import { PERMISSIONS, SYSTEM_ROLE_KEYS } from "./permissions.js";
+import { CHART_TEMPLATE_KEYS } from "./chartTemplates.js";
 import { BILL_KINDS, INVOICE_PAYMENT_METHODS, INVOICE_VIEW_STATUSES, SALES_KINDS, TAX_MODES } from "./invoices.js";
 
 export const uuidSchema = z.string().uuid();
@@ -106,6 +107,19 @@ export const createAccountSchema = z.object({
   currency: currencySchema.optional(),
   tags: z.array(z.string().max(50)).max(20).default([]),
 });
+
+/** PATCH /accounts/{id} (FR-COA-03/04): rename, recode, retag or re-parent.
+ * Type and currency are fixed once an account exists. null parent = top level. */
+export const updateAccountSchema = z
+  .object({
+    code: z.string().trim().min(1).max(20).optional(),
+    name: z.string().trim().min(1).max(200).optional(),
+    tags: z.array(z.string().max(50)).max(20).optional(),
+    parentAccountId: uuidSchema.nullable().optional(),
+  })
+  .refine((body) => Object.keys(body).length > 0, "Provide at least one field to update");
+
+export type UpdateAccountDto = z.infer<typeof updateAccountSchema>;
 
 /**
  * Tax identifier (FR-AP-01), e.g. a Kenyan KRA PIN such as "P051234567X".
@@ -460,6 +474,9 @@ export const onboardingRequestSchema = z.object({
    * guided Credit Sale/Cash Sale/Write Bill/Write Cheque endpoints work
    * immediately after sign-up. */
   periodStartDate: accountingDateSchema,
+  /** Which chart of accounts to seed (FR-COA-02). Omit for GENERAL, the
+   * original starter set; see CHART_TEMPLATES for what each one contains. */
+  chartTemplate: z.enum(CHART_TEMPLATE_KEYS).default("GENERAL"),
 });
 
 export type OnboardingRequestDto = z.infer<typeof onboardingRequestSchema>;
@@ -901,3 +918,21 @@ export const payablesAgingQuerySchema = z.object({
   /** Drill down: one supplier's open bills. */
   supplier_id: uuidSchema.optional(),
 });
+
+// ---------------------------------------------------------------------
+// Opening balances -- FR-ACC-04
+// ---------------------------------------------------------------------
+
+/**
+ * PUT /opening-balances. Each line is one account's balance on `date`: a
+ * debit for an asset or expense, a credit for a liability, equity or income.
+ * Tag a receivable line with customerId (or a payable line with supplierId)
+ * to give that customer or supplier their opening balance. The server
+ * balances the journal against Opening Balance Equity.
+ */
+export const openingBalancesSchema = z.object({
+  date: accountingDateSchema,
+  lines: z.array(journalLineSchema).min(1, "Give at least one opening balance").max(500),
+});
+
+export type OpeningBalancesDto = z.infer<typeof openingBalancesSchema>;
