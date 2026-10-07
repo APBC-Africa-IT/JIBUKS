@@ -1,0 +1,20 @@
+meta {
+  name: Payables Aging
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/payables-aging
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires reports:view. What is owed to each supplier by days past due, plus not_billed_minor for balances
+  without a bill record (older POST /bills, cheques, journals). Add ?as_of=YYYY-MM-DD for another date.
+}

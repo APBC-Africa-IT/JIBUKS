@@ -1,0 +1,27 @@
+meta {
+  name: Cancel Bill
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/v1/supplier-bills/{{billId}}/cancel
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "reason": "Entered twice"
+  }
+}
+
+docs {
+  Requires supplier_bills:cancel. Only with nothing paid or debited; reverses the journal.
+}

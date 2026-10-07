@@ -108,6 +108,18 @@ describe("requirePermission enforcement", () => {
     expect(await status("invoices:cancel")).toBe(403);
   });
 
+  it("keeps supplier bills to OWNER and ACCOUNTANT, with VIEWER read-only", async () => {
+    const actions = ["supplier_bills:create", "supplier_bills:post", "supplier_bills:pay", "supplier_bills:cancel"] as const;
+    for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
+      const user = await seedUser([key]);
+      const full = key === "OWNER" || key === "ACCOUNTANT";
+      expect((await guarded(user, "supplier_bills:view")).status, key).toBe(full || key === "VIEWER" ? 200 : 403);
+      for (const action of actions) {
+        expect((await guarded(user, action)).status, `${key} ${action}`).toBe(full ? 200 : 403);
+      }
+    }
+  });
+
   it("lets only OWNER change the business's details", async () => {
     for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
       const user = await seedUser([key]);

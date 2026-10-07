@@ -1,0 +1,31 @@
+meta {
+  name: Create Debit Note
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/v1/supplier-bills/{{billId}}/debit-notes
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "notes": "1 bag returned",
+    "lines": [
+      { "description": "Maize 90kg bag returned", "quantity": 1, "unitPriceMinor": 300000, "expenseAccountId": "{{expenseAccountId}}", "taxRateBps": 1600, "taxAccountId": "{{inputVatAccountId}}" }
+    ]
+  }
+}
+
+docs {
+  Requires supplier_bills:create. A DRAFT debit note against billId. Post it with "Post Bill" using its id.
+}

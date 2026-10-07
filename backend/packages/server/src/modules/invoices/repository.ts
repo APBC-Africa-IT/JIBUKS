@@ -1,5 +1,6 @@
 /**
- * Invoices repository.
+ * Invoices repository -- sales documents (direction AR) and supplier bills
+ * (direction AP) share these tables.
  *
  * The ONLY file permitted to write raw SQL against `invoices`,
  * `invoice_lines`, `invoice_allocations` and `invoice_number_sequences`
@@ -23,14 +24,20 @@ export interface InvoiceRow {
   readonly tenant_id: string;
   readonly client_uuid: string;
   readonly branch_id: string | null;
-  readonly direction: "AR";
+  readonly direction: "AR" | "AP";
   readonly kind: InvoiceKind;
   readonly status: InvoiceStatus;
   readonly number: string | null;
-  readonly customer_id: string;
+  /** Set on AR rows. */
+  readonly customer_id: string | null;
+  /** Set on AP rows. */
+  readonly supplier_id: string | null;
+  /** AP: the supplier's own invoice number. */
+  readonly supplier_reference: string | null;
   readonly issue_date: string;
   readonly due_date: string | null;
   readonly currency: string;
+  /** The control account: Accounts Receivable on AR rows, Accounts Payable on AP rows. */
   readonly receivable_account_id: string | null;
   readonly tax_mode: TaxMode;
   readonly subtotal_minor: string; // bigint
@@ -54,9 +61,9 @@ export interface InvoiceRow {
   readonly cancelled_at: string | null;
 }
 
-/** An InvoiceRow plus its customer's name -- what lists and details show. */
+/** An InvoiceRow plus its customer's or supplier's name -- what lists and details show. */
 export interface InvoiceListRow extends InvoiceRow {
-  readonly customer_name: string;
+  readonly party_name: string;
 }
 
 export interface InvoiceLineRow {
@@ -67,6 +74,7 @@ export interface InvoiceLineRow {
   readonly description: string;
   readonly quantity: string; // numeric
   readonly unit_price_minor: string;
+  /** Income account on AR lines, expense/asset account on AP lines. */
   readonly income_account_id: string;
   readonly tax_rate_bps: number;
   readonly tax_account_id: string | null;
@@ -80,10 +88,11 @@ export interface AllocationRow {
   readonly tenant_id: string;
   readonly client_uuid: string;
   readonly invoice_id: string;
-  readonly method: InvoicePaymentMethod | "CREDIT_NOTE";
+  readonly method: InvoicePaymentMethod | "CREDIT_NOTE" | "DEBIT_NOTE";
   readonly amount_minor: string;
   readonly unapplied_minor: string;
   readonly date: string;
+  /** Where the money went (AR) or came from (AP). */
   readonly received_account_id: string | null;
   readonly reference: string | null;
   readonly journal_id: string;
@@ -102,7 +111,8 @@ export interface LineInput {
   readonly description: string;
   readonly quantity: number;
   readonly unitPriceMinor: number;
-  readonly incomeAccountId: string;
+  /** Income (AR) or expense/asset (AP) account. */
+  readonly accountId: string;
   readonly taxRateBps: number;
   readonly taxAccountId?: string;
   readonly netMinor: number;
@@ -114,12 +124,16 @@ export interface InsertInvoiceInput {
   readonly tenantId: string;
   readonly clientUuid: string;
   readonly branchId?: string;
+  readonly direction: "AR" | "AP";
   readonly kind: InvoiceKind;
-  readonly customerId: string;
+  readonly customerId?: string;
+  readonly supplierId?: string;
+  readonly supplierReference?: string;
   readonly issueDate: string;
   readonly dueDate: string | null;
   readonly currency: string;
-  readonly receivableAccountId?: string;
+  /** Receivable (AR) or payable (AP) account. */
+  readonly controlAccountId?: string;
   readonly taxMode: TaxMode;
   readonly subtotalMinor: number;
   readonly taxMinor: number;
@@ -131,10 +145,11 @@ export interface InsertInvoiceInput {
   readonly lines: readonly LineInput[];
 }
 
-const SELECT_WITH_CUSTOMER = `
-  SELECT i.*, c.name AS customer_name
+const SELECT_WITH_PARTY = `
+  SELECT i.*, COALESCE(c.name, s.name) AS party_name
     FROM invoices i
-    JOIN customers c ON c.id = i.customer_id`;
+    LEFT JOIN customers c ON c.id = i.customer_id
+    LEFT JOIN suppliers s ON s.id = i.supplier_id`;
 
 async function insertLines(client: TxClient, tenantId: string, invoiceId: string, lines: readonly LineInput[]) {
   const rows: InvoiceLineRow[] = [];
@@ -153,7 +168,7 @@ async function insertLines(client: TxClient, tenantId: string, invoiceId: string
         line.description,
         line.quantity,
         line.unitPriceMinor,
-        line.incomeAccountId,
+        line.accountId,
         line.taxRateBps,
         line.taxAccountId ?? null,
         line.netMinor,
@@ -172,8 +187,8 @@ export async function insertInvoice(input: InsertInvoiceInput, audit: AuditConte
       `INSERT INTO invoices
          (id, tenant_id, client_uuid, branch_id, kind, customer_id, issue_date, due_date, currency,
           receivable_account_id, tax_mode, subtotal_minor, tax_minor, total_minor, reference, notes,
-          credited_invoice_id, proforma_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+          credited_invoice_id, proforma_id, created_by, direction, supplier_id, supplier_reference)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
        RETURNING *`,
       [
         randomUUID(),
@@ -181,11 +196,11 @@ export async function insertInvoice(input: InsertInvoiceInput, audit: AuditConte
         input.clientUuid,
         input.branchId ?? null,
         input.kind,
-        input.customerId,
+        input.customerId ?? null,
         input.issueDate,
         input.dueDate,
         input.currency,
-        input.receivableAccountId ?? null,
+        input.controlAccountId ?? null,
         input.taxMode,
         input.subtotalMinor,
         input.taxMinor,
@@ -195,6 +210,9 @@ export async function insertInvoice(input: InsertInvoiceInput, audit: AuditConte
         input.creditedInvoiceId ?? null,
         input.proformaId ?? null,
         audit.actorUserId,
+        input.direction,
+        input.supplierId ?? null,
+        input.supplierReference ?? null,
       ],
     );
     const invoice = result.rows[0]!;
@@ -212,8 +230,10 @@ export async function insertInvoice(input: InsertInvoiceInput, audit: AuditConte
 }
 
 export interface UpdateDraftInput {
-  readonly customerId: string;
-  readonly receivableAccountId: string | null;
+  readonly customerId: string | null;
+  readonly supplierId: string | null;
+  readonly supplierReference: string | null;
+  readonly controlAccountId: string | null;
   readonly issueDate: string;
   readonly dueDate: string | null;
   readonly taxMode: TaxMode;
@@ -246,13 +266,13 @@ export async function updateDraft(
       `UPDATE invoices
           SET customer_id = $2, receivable_account_id = $3, issue_date = $4, due_date = $5, tax_mode = $6,
               subtotal_minor = $7, tax_minor = $8, total_minor = $9, reference = $10, notes = $11,
-              updated_at = now()
+              supplier_id = $12, supplier_reference = $13, updated_at = now()
         WHERE id = $1
        RETURNING *`,
       [
         invoiceId,
         input.customerId,
-        input.receivableAccountId,
+        input.controlAccountId,
         input.issueDate,
         input.dueDate,
         input.taxMode,
@@ -261,6 +281,8 @@ export async function updateDraft(
         input.totalMinor,
         input.reference,
         input.notes,
+        input.supplierId,
+        input.supplierReference,
       ],
     );
     await client.query(`DELETE FROM invoice_lines WHERE invoice_id = $1`, [invoiceId]);
@@ -309,7 +331,7 @@ export async function getInvoice(tenantId: string, invoiceId: string): Promise<I
 
 export async function getInvoiceDetail(tenantId: string, invoiceId: string): Promise<InvoiceDetail | null> {
   return readAsTenant(tenantId, async (client) => {
-    const invoice = await client.query<InvoiceListRow>(`${SELECT_WITH_CUSTOMER} WHERE i.id = $1`, [invoiceId]);
+    const invoice = await client.query<InvoiceListRow>(`${SELECT_WITH_PARTY} WHERE i.id = $1`, [invoiceId]);
     if (!invoice.rows[0]) {
       return null;
     }
@@ -357,10 +379,12 @@ export async function sumDraftCreditNotes(tenantId: string, invoiceId: string): 
 }
 
 export interface ListFilters {
+  readonly direction: "AR" | "AP";
   /** A stored status, or OVERDUE (derived). */
   readonly status?: InvoiceStatus | "OVERDUE";
   readonly kind?: InvoiceKind;
-  readonly customerId?: string;
+  /** The customer (AR) or supplier (AP). */
+  readonly partyId?: string;
   readonly from?: string;
   readonly to?: string;
   /** Today in Africa/Nairobi -- the cutoff for OVERDUE. */
@@ -371,7 +395,7 @@ export interface ListFilters {
 }
 
 const OVERDUE_SQL = (todayParam: string) =>
-  `(i.kind = 'INVOICE' AND i.status IN ('ISSUED', 'PART_PAID') AND i.due_date < ${todayParam})`;
+  `(i.kind IN ('INVOICE', 'BILL') AND i.status IN ('ISSUED', 'PART_PAID') AND i.due_date < ${todayParam})`;
 
 /** A list row plus its exact (microsecond) created_at, for building the next cursor. */
 export interface InvoicePageRow extends InvoiceListRow {
@@ -388,6 +412,7 @@ export async function listInvoices(tenantId: string, filters: ListFilters): Prom
       return `$${params.length}`;
     };
 
+    where.push(`i.direction = ${add(filters.direction)}`);
     if (filters.status === "OVERDUE") {
       where.push(OVERDUE_SQL(`${add(filters.today)}::date`));
     } else if (filters.status !== undefined) {
@@ -399,8 +424,8 @@ export async function listInvoices(tenantId: string, filters: ListFilters): Prom
     if (filters.kind !== undefined) {
       where.push(`i.kind = ${add(filters.kind)}`);
     }
-    if (filters.customerId !== undefined) {
-      where.push(`i.customer_id = ${add(filters.customerId)}`);
+    if (filters.partyId !== undefined) {
+      where.push(`${filters.direction === "AR" ? "i.customer_id" : "i.supplier_id"} = ${add(filters.partyId)}`);
     }
     if (filters.from !== undefined) {
       where.push(`i.issue_date >= ${add(filters.from)}`);
@@ -413,9 +438,10 @@ export async function listInvoices(tenantId: string, filters: ListFilters): Prom
     }
 
     const result = await client.query<InvoicePageRow>(
-      `SELECT i.*, c.name AS customer_name, i.created_at::text AS sort_key
+      `SELECT i.*, COALESCE(c.name, s.name) AS party_name, i.created_at::text AS sort_key
          FROM invoices i
-         JOIN customers c ON c.id = i.customer_id
+         LEFT JOIN customers c ON c.id = i.customer_id
+         LEFT JOIN suppliers s ON s.id = i.supplier_id
         ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
         ORDER BY i.created_at DESC, i.id DESC
         LIMIT ${add(filters.limit + 1)}`,
@@ -510,7 +536,7 @@ export async function markCancelled(
 
 export interface InsertAllocationInput {
   readonly clientUuid: string;
-  readonly method: InvoicePaymentMethod | "CREDIT_NOTE";
+  readonly method: InvoicePaymentMethod | "CREDIT_NOTE" | "DEBIT_NOTE";
   readonly amountMinor: number;
   readonly unappliedMinor: number;
   readonly date: string;
@@ -593,8 +619,9 @@ export async function applyAllocation(
 export interface OpenInvoiceRow {
   readonly id: string;
   readonly number: string;
-  readonly customer_id: string;
-  readonly customer_name: string;
+  /** The customer (AR) or supplier (AP). */
+  readonly party_id: string;
+  readonly party_name: string;
   readonly issue_date: string;
   readonly due_date: string | null;
   readonly total_minor: string;
@@ -603,34 +630,38 @@ export interface OpenInvoiceRow {
 }
 
 /**
- * Invoices that had something left to pay at the end of `asOf`: issued on
+ * Invoices (AR) or bills (AP) that had something left to pay at the end of `asOf`: issued on
  * or before it, not yet cancelled then, and not covered by payments and
  * credit notes dated on or before it. Reconstructed from allocation dates,
  * so a past as-of date gives the past picture.
  */
 export async function listOpenInvoicesAsOf(
   tenantId: string,
+  direction: "AR" | "AP",
   asOf: string,
-  customerId?: string,
+  partyId?: string,
 ): Promise<OpenInvoiceRow[]> {
+  const party = direction === "AR" ? "customer_id" : "supplier_id";
   return readAsTenant(tenantId, async (client) => {
     const params: unknown[] = [asOf];
-    if (customerId !== undefined) {
-      params.push(customerId);
+    if (partyId !== undefined) {
+      params.push(partyId);
     }
     const result = await client.query<OpenInvoiceRow>(
       `SELECT * FROM (
-         SELECT i.id, i.number, i.customer_id, c.name AS customer_name, i.issue_date, i.due_date, i.total_minor,
+         SELECT i.id, i.number, i.${party} AS party_id, COALESCE(c.name, s.name) AS party_name,
+                i.issue_date, i.due_date, i.total_minor,
                 (i.total_minor - COALESCE(
                    (SELECT SUM(a.amount_minor) FROM invoice_allocations a WHERE a.invoice_id = i.id AND a.date <= $1::date),
                    0))::text AS open_minor
            FROM invoices i
-           JOIN customers c ON c.id = i.customer_id
-          WHERE i.kind = 'INVOICE'
+           LEFT JOIN customers c ON c.id = i.customer_id
+           LEFT JOIN suppliers s ON s.id = i.supplier_id
+          WHERE i.kind = '${direction === "AR" ? "INVOICE" : "BILL"}'
             AND i.status <> 'DRAFT'
             AND i.issue_date <= $1::date
             AND (i.status <> 'CANCELLED' OR (i.cancelled_at AT TIME ZONE 'Africa/Nairobi')::date > $1::date)
-            ${customerId !== undefined ? "AND i.customer_id = $2" : ""}
+            ${partyId !== undefined ? `AND i.${party} = $2` : ""}
        ) open
        WHERE open.open_minor::bigint > 0
        ORDER BY open.due_date NULLS FIRST, open.issue_date, open.number`,

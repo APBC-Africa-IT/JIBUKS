@@ -1,0 +1,32 @@
+meta {
+  name: Pay Bill
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/supplier-bills/{{billId}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "amountMinor": 500000,
+    "date": "2026-10-07",
+    "paidFromAccountId": "{{bankAccountId}}",
+    "method": "BANK",
+    "reference": "TRF-2231"
+  }
+}
+
+docs {
+  Requires supplier_bills:pay. Posts Dr AP (supplier) / Cr paidFromAccountId. More than balance_due_minor is 422.
+}

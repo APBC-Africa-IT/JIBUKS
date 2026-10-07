@@ -1,0 +1,28 @@
+meta {
+  name: Update Draft Bill
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/supplier-bills/{{billId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "notes": "Delivered 6 Oct",
+    "dueDate": null
+  }
+}
+
+docs {
+  Requires supplier_bills:create. Drafts only. dueDate null recomputes it from the supplier's terms.
+}

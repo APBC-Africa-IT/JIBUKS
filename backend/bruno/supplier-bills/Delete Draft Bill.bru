@@ -1,0 +1,19 @@
+meta {
+  name: Delete Draft Bill
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/supplier-bills/{{billId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires supplier_bills:create. Drafts only; 204.
+}

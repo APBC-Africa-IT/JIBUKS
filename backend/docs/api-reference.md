@@ -52,6 +52,8 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.19 Tenant](#719-tenant)
 - [7.20 Invoices](#720-invoices)
 - [7.21 Receivables Aging](#721-receivables-aging)
+- [7.22 Supplier Bills](#722-supplier-bills)
+- [7.23 Payables Aging](#723-payables-aging)
 
 ---
 
@@ -119,7 +121,7 @@ FR-RBAC-01/02, FR-MIC-08. Each user has one or more **roles**, and each role gra
 | Role | Can do |
 |---|---|
 | `OWNER` | Everything, including managing users, roles and invites, and the business's own details (`PATCH /tenant`). |
-| `ACCOUNTANT` | All bookkeeping, period close/reopen, journal reversal, invoices (including credit-limit override), reports. Can view users/roles but not change them. |
+| `ACCOUNTANT` | All bookkeeping, period close/reopen, journal reversal, invoices (including credit-limit override), supplier bills, reports. Can view users/roles but not change them. |
 | `CASHIER` | Record cash sales and cash expenses, collect M-Pesa payments, take payments against invoices; view accounts, customers, suppliers and invoices. Can't raise, issue or cancel invoices. |
 | `VIEWER` | Read-only: every `:view` permission, including reports. |
 | `AGENT` | Record cash sales and collect M-Pesa payments; view accounts and customers. (Micro-trader tier.) |
@@ -169,7 +171,10 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /invoices/{id}/payments` | `payments:create` |
 | `GET /invoices/{id}/pdf` | `invoices:view` |
 | `PATCH /tenant` | `tenant:edit` (Owner only) |
-| `GET /trial-balance`, `GET /profit-and-loss`, `GET /cash-flow`, `GET /receivables-aging` | `reports:view` |
+| `GET /supplier-bills…` | `supplier_bills:view` |
+| `POST /supplier-bills`, `PATCH`/`DELETE /supplier-bills/{id}`, `POST /supplier-bills/{id}/debit-notes` | `supplier_bills:create` |
+| `POST /supplier-bills/{id}/post` / `cancel` / `payments` | `supplier_bills:post` / `supplier_bills:cancel` / `supplier_bills:pay` |
+| `GET /trial-balance`, `GET /profit-and-loss`, `GET /cash-flow`, `GET /receivables-aging`, `GET /payables-aging` | `reports:view` |
 
 ---
 
@@ -972,6 +977,8 @@ Dr Cash/Bank             (gross = net + tax)
 ---
 
 ## 7.11 Bills
+
+> **Prefer [Supplier Bills](#722-supplier-bills) for new screens.** `POST /bills` posts the same journal but keeps no bill record: no number, no due date, no payments history, and it won't appear in payables aging (it shows there as "not on a bill"). It stays for existing app versions and will be retired later.
 
 Base path: `/api/v1/bills` 
 
@@ -1788,5 +1795,106 @@ Oldest due first. `open_minor` is what was still owed on that invoice at `as_of`
 ### Notes for consuming clients (Receivables Aging)
 
 - Amounts are strings in minor units, like everywhere else; the currency is the base currency.
-- Supplier (payables) aging comes next, once supplier bills are stored as records.
+- Supplier aging: [§7.23](#723-payables-aging).
 - Export to PDF/Excel/CSV (FR-RPT-04) isn't built yet.
+
+---
+
+## 7.22 Supplier Bills
+
+Base path: `/api/v1/supplier-bills`. What the business owes its suppliers (FR-AP-02): the supplier side of [Invoices](#720-invoices), with the same lifecycle, numbering, VAT maths and paging. Two kinds:
+
+| `kind` | What it is | Ledger when posted |
+|---|---|---|
+| `BILL` (`BILL-000001`) | A supplier's invoice to you. Keeps **their** invoice number in `supplier_reference`. | Dr expense/asset per line (net) / Dr input VAT / Cr Accounts Payable (gross, tagged to the supplier) |
+| `DEBIT_NOTE` (`DN-000001`) | Reduces a bill: returned goods, an overcharge, or a credit note the supplier sent you. | The mirror, applied to the bill like a payment |
+
+Statuses are the same as invoices: `DRAFT` → `ISSUED` (shown in the app as "Posted") → `PART_PAID` → `PAID`, `OVERDUE` (derived), `CANCELLED`. Error codes are shared with invoices (`INVOICE_OVERPAYMENT`, `INVOICE_HAS_PAYMENTS`, …).
+
+**Field names differ from invoices:** `supplier_id`, `supplier_name`, `supplier_reference`, `payable_account_id`, `bill_date`, `posted_by` / `posted_at`, `debited_bill_id` (on a debit note); lines have `expense_account_id`; payments have `paid_from_account_id` and `debit_note_id`.
+
+### `POST /supplier-bills`
+
+`supplier_bills:create`. A **draft** bill. Accepts `Idempotency-Key`.
+
+```json
+{
+  "clientUuid": "9a8b...",
+  "supplierId": "<supplier>",
+  "payableAccountId": "<Accounts Payable, 2000>",
+  "billDate": "2026-10-07",
+  "supplierReference": "INV-7788",
+  "taxMode": "EXCLUSIVE",
+  "lines": [
+    { "description": "Maize 90kg bags", "quantity": 4, "unitPriceMinor": 300000, "expenseAccountId": "<Purchases, 5000>", "taxRateBps": 1600, "taxAccountId": "<VAT Recoverable, 1200>" }
+  ]
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `clientUuid` | ✅ | |
+| `supplierId` | ✅ | |
+| `payableAccountId` | ✅ | Accounts Payable. |
+| `billDate` | ✅ | The date on the supplier's invoice; the journal posts on it. |
+| `dueDate` | No | Defaults to `billDate` + the supplier's `paymentTermsDays`. |
+| `supplierReference` | No | The supplier's own invoice number. **The same supplier + reference can't be entered twice** (`409 DUPLICATE_VALUE`) unless the earlier bill was cancelled. |
+| `taxMode`, `reference`, `notes`, `currency` | No | As for invoices. VAT here is **input** VAT (`taxAccountId` = VAT Recoverable); a business that isn't VAT-registered gets `422 TAX_NOT_REGISTERED` and should enter the gross amount with `taxMode: "NONE"`. |
+| `lines[]` | ✅ | `description`, `quantity` (up to 3 decimals), `unitPriceMinor`, `expenseAccountId` (expense or asset account), `taxRateBps`, `taxAccountId`. |
+
+**Success:** `201`, the bill with `lines` and `allocations`.
+
+### `GET /supplier-bills` / `GET /supplier-bills/{id}`
+
+`supplier_bills:view`. Same paging and filters as `GET /invoices`, with `supplier_id` instead of `customer_id` and `kind` = `BILL` / `DEBIT_NOTE`. `from`/`to` filter on `bill_date`.
+
+### `PATCH /supplier-bills/{id}` / `DELETE /supplier-bills/{id}`
+
+`supplier_bills:create`. Drafts only. `PATCH` takes `supplierId`, `payableAccountId`, `billDate`, `dueDate`, `supplierReference`, `taxMode`, `reference`, `notes`, `lines` (replaces all).
+
+### `POST /supplier-bills/{id}/post`
+
+`supplier_bills:post`. No body. Numbers and posts the bill (or debit note — which is then applied to its bill). Errors as for issuing an invoice; there's no credit limit on bills.
+
+### `POST /supplier-bills/{id}/payments`
+
+`supplier_bills:pay`. Money paid to the supplier. Accepts `Idempotency-Key`.
+
+```json
+{ "clientUuid": "...", "amountMinor": 500000, "date": "2026-10-20", "paidFromAccountId": "<Bank 1010>", "method": "BANK", "reference": "TRF-2231" }
+```
+
+Posts Dr Accounts Payable (supplier) / Cr `paidFromAccountId`, moves the bill to `PART_PAID` / `PAID`, returns the bill (`201`). More than `balance_due_minor` → `422 INVOICE_OVERPAYMENT`, nothing posted.
+
+### `POST /supplier-bills/{id}/cancel`
+
+`supplier_bills:cancel`. `{ "reason": "..." }`. Only with nothing paid or debited: reverses the journal. Otherwise `422 INVOICE_HAS_PAYMENTS` — raise a debit note instead.
+
+### `POST /supplier-bills/{id}/debit-notes`
+
+`supplier_bills:create`. A **draft** debit note against a posted, unpaid or part-paid bill: `{ "clientUuid", "noteDate"?, "taxMode"?, "reference"?, "notes"?, "lines": [...] }`. Post it with `POST /supplier-bills/{debitNoteId}/post`. Can't exceed what's still owed (`422 CREDIT_NOTE_EXCEEDS_BALANCE`).
+
+### Notes for consuming clients (Supplier Bills)
+
+- Cashiers can't see or pay bills; Owner and Accountant can do everything, Viewer can view.
+- Bills never appear under `/invoices` and invoices never under `/supplier-bills` — each answers `404` for the other's ids.
+- Not built yet: payment approval with thresholds (FR-AP-04, Phase 2), paying suppliers by M-Pesa from the app, supplier refunds, bill attachments (a photo of the supplier's invoice).
+
+---
+
+## 7.23 Payables Aging
+
+FR-AP-03. What the business owes each supplier, by days past due. `reports:view`.
+
+### `GET /payables-aging`
+
+Same as [`GET /receivables-aging`](#721-receivables-aging), from the supplier side:
+
+| Query | Description |
+|---|---|
+| `as_of` | Date to age at (default today). |
+| `supplier_id` | Drill down to one supplier's open bills. |
+
+Rows have `supplier_id`, `supplier_name`, the five bucket fields, `billed_minor`, `not_billed_minor` and `balance_minor`. `not_billed_minor` is supplier balance with no bill record behind it — mostly the older `POST /bills` and `POST /cheques`, plus manual journals. `balance_minor` equals the supplier's balance on `GET /suppliers?as_of=`.
+
+The drill-down returns `supplier_id`, `supplier_name`, `bills` (each with `id`, `number`, `bill_date`, `due_date`, `days_past_due`, `bucket`, `total_minor`, `open_minor`), `billed_minor`, `not_billed_minor` and `balance_minor`.

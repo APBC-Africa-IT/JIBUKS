@@ -1,0 +1,19 @@
+meta {
+  name: List Bills
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/supplier-bills?limit=20
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires supplier_bills:view. Filters: status (incl. OVERDUE), kind (BILL, DEBIT_NOTE), supplier_id, from, to.
+}
