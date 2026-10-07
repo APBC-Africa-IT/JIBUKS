@@ -59,14 +59,14 @@ async function makeFixture(customer: Record<string, unknown> = {}): Promise<Fixt
       .post("/api/v1/accounts")
       .set(await auth())
       .send({ code: randomUUID().slice(0, 8), name, type });
-    expect(response.status).toBe(201);
+    expect(response.status, JSON.stringify(response.body)).toBe(201);
     return response.body.id as string;
   };
   const created = await request(app)
     .post("/api/v1/customers")
     .set(await auth())
     .send({ name: `Invoice Customer ${randomUUID().slice(0, 8)}`, ...customer });
-  expect(created.status).toBe(201);
+  expect(created.status, JSON.stringify(created.body)).toBe(201);
   return {
     arAccountId: await account("AR Test", "ASSET"),
     salesAccountId: await account("Sales Test", "INCOME"),
@@ -512,6 +512,44 @@ describe("pro-formas", () => {
     expect(converted.body).toMatchObject({ kind: "INVOICE", status: "DRAFT", proforma_id: draft.body.id, total_minor: "50000" });
     expect(twice.status).toBe(409);
     expect(payment.status).toBe(422);
+  });
+});
+
+describe("GET /api/v1/invoices/{id}/pdf", () => {
+  async function getPdf(id: string) {
+    return request(app)
+      .get(`/api/v1/invoices/${id}/pdf`)
+      .set(await auth())
+      .buffer(true)
+      .parse((res, done) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => done(null, Buffer.concat(chunks)));
+      });
+  }
+
+  it("returns the issued invoice as a PDF named after its number", async () => {
+    const f = await makeFixture();
+    const invoice = await issuedInvoice(f);
+
+    const response = await getPdf(invoice.id);
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toBe("application/pdf");
+    expect(response.headers["content-disposition"]).toBe(`inline; filename="${invoice.number}.pdf"`);
+    expect((response.body as Buffer).subarray(0, 5).toString()).toBe("%PDF-");
+  });
+
+  it("also renders drafts, and answers 404 for an unknown invoice", async () => {
+    const f = await makeFixture();
+    const draft = await createDraft(draftBody(f));
+
+    const response = await getPdf(draft.body.id);
+    const missing = await request(app).get(`/api/v1/invoices/${randomUUID()}/pdf`).set(await auth());
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-disposition"]).toBe(`inline; filename="DRAFT-${draft.body.id.slice(0, 8)}.pdf"`);
+    expect(missing.status).toBe(404);
   });
 });
 

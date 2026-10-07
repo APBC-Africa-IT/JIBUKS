@@ -17,6 +17,7 @@ invoicesRouter.use(requireRealIdentity);
 invoicesRouter.post("/", requirePermission("invoices:create"), asyncHandler(controllers.create));
 invoicesRouter.get("/", requirePermission("invoices:view"), asyncHandler(controllers.list));
 invoicesRouter.get("/:id", requirePermission("invoices:view"), asyncHandler(controllers.getOne));
+invoicesRouter.get("/:id/pdf", requirePermission("invoices:view"), asyncHandler(controllers.pdf));
 invoicesRouter.patch("/:id", requirePermission("invoices:create"), asyncHandler(controllers.update));
 invoicesRouter.delete("/:id", requirePermission("invoices:create"), asyncHandler(controllers.remove));
 invoicesRouter.post("/:id/issue", requirePermission("invoices:issue"), asyncHandler(controllers.issue));

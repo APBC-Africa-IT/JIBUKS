@@ -55,6 +55,7 @@ export const PERMISSIONS = [
   "invoices:cancel",
   "invoices:override_credit_limit",
   "reports:view",
+  "tenant:edit",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -86,6 +87,7 @@ const ADMIN_ONLY: ReadonlySet<Permission> = new Set([
   "roles:create",
   "roles:edit",
   "invites:create",
+  "tenant:edit",
 ]);
 
 export const SYSTEM_ROLES: Readonly<Record<SystemRoleKey, SystemRole>> = {

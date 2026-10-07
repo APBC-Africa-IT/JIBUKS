@@ -694,6 +694,28 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
 
+  /invoices/{id}/pdf:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    get:
+      tags: [Invoices]
+      summary: Download the invoice, credit note or pro-forma as a PDF
+      description: >
+        Requires `invoices:view`. Built on request, never stored. Shows the
+        business and customer (with their tax PINs), lines, VAT, totals,
+        payments and balance due; drafts, paid and cancelled documents are
+        stamped. Content-Disposition is inline with filename
+        `<number>.pdf` (`DRAFT-<id prefix>.pdf` for drafts).
+      responses:
+        '200':
+          description: The PDF
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /invoices/{id}/issue:
     parameters:
       - $ref: '#/components/parameters/InvoiceIdPath'
@@ -878,6 +900,39 @@ paths:
                 $ref: '#/components/schemas/Tenant'
         '401':
           $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [Tenant]
+      summary: Update the caller's business
+      description: >
+        Requires `tenant:edit` (Owner only). Omitted fields are unchanged;
+        null clears. taxIdentifier is trimmed and upper-cased.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                taxIdentifier:
+                  type: string
+                  nullable: true
+                  maxLength: 50
+                  description: "The business's KRA PIN (or other tax PIN). Letters, digits, spaces, '-' and '/'."
+            example:
+              taxIdentifier: P051234567X
+      responses:
+        '200':
+          description: The updated tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /hooks/stk/{tenantId}/{paymentId}/{token}:
     post:
@@ -2662,6 +2717,7 @@ components:
         - "invoices:cancel"
         - "invoices:override_credit_limit"
         - "reports:view"
+        - "tenant:edit"
     RoleRef:
       type: string
       description: >
@@ -2739,6 +2795,10 @@ components:
           description: STARTER = micro-trader (every business starts here).
         status: { type: string, enum: [ACTIVE, SUSPENDED] }
         vat_registered: { type: boolean }
+        tax_identifier:
+          type: string
+          nullable: true
+          description: The business's own tax PIN (e.g. KRA PIN), printed on its invoices. Set with PATCH /tenant.
         created_at: { type: string, format: date-time }
     UserWithAccess:
       allOf:
