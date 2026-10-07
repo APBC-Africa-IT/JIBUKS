@@ -60,8 +60,8 @@ describe.each([
 
     expect(tenant.vat_registered).toBe(vatRegistered);
     expect(user.tenant_id).toBe(tenant.id);
-    // Starter chart of accounts, +2 VAT accounts (1200, 2100) only when VAT-registered.
-    expect(accounts).toHaveLength(vatRegistered ? 11 : 9);
+    // Starter chart of accounts (incl. 3900 Opening Balance Equity), +2 VAT accounts (1200, 2100) only when VAT-registered.
+    expect(accounts).toHaveLength(vatRegistered ? 12 : 10);
 
     const audit: AuditContext = { actorUserId: user.id };
     const cash = accountId(accounts, "1000");

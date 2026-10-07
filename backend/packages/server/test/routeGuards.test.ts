@@ -21,6 +21,7 @@ interface Layer {
 /** Routes with no signed-in tenant user, so no role can apply. */
 const UNGUARDED: ReadonlyArray<{ router: Router; method: string; path: string }> = [
   { router: onboardingRouter, method: "post", path: "/" },
+  { router: onboardingRouter, method: "get", path: "/chart-templates" },
   { router: invitesRouter, method: "get", path: "/:token" },
   { router: invitesRouter, method: "post", path: "/:token/accept" },
   // Safaricom's STK callback: authenticated by the secret in its URL.

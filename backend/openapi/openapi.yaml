@@ -106,6 +106,10 @@ tags:
     description: >
       Read-only report (FR-AP-03): open bill amounts per supplier by days
       past due, plus a per-supplier drill-down.
+  - name: Opening Balances
+    description: >
+      FR-ACC-04: one replaceable opening journal (source OPENING), balanced
+      automatically against Opening Balance Equity.
   - name: Provider Callbacks
     description: >
       Called by payment providers, not by apps. No bearer token -- each
@@ -1172,6 +1176,93 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /opening-balances:
+    get:
+      tags: [Opening Balances]
+      summary: The current opening balances
+      description: Requires `journals:view`. All fields null/false before any have been entered.
+      responses:
+        '200':
+          description: The opening balances
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpeningBalances' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [Opening Balances]
+      summary: Set (or replace) the opening balances
+      description: >
+        Requires `opening_balances:manage`. Posts one OPENING journal dated
+        `date`, adding a line to Opening Balance Equity for the difference.
+        Replaces any previous opening journal (reversed on its own date).
+        422 OPENING_BALANCES_LOCKED once its period is closed; 422
+        JOURNAL_LINE_AMBIGUOUS for a line on Opening Balance Equity itself.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, lines]
+              properties:
+                date: { type: string, format: date }
+                lines:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { $ref: '#/components/schemas/CreateJournalLine' }
+      responses:
+        '200':
+          description: The new opening balances
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpeningBalances' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: OPENING_BALANCES_LOCKED, JOURNAL_LINE_AMBIGUOUS, PERIOD_LOCKED, ACCOUNT_INACTIVE ...
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+
+  /onboarding/chart-templates:
+    get:
+      tags: [Onboarding]
+      summary: The chart-of-accounts templates to choose from at sign-up
+      description: Genuine Auth0 token only -- works before sign-up.
+      responses:
+        '200':
+          description: The five templates, in display order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string, enum: [GENERAL, SME_TRADING, NGO, CORPORATE, MICRO_TRADER] }
+                        name: { type: string }
+                        description: { type: string }
+                        accounts:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              code: { type: string }
+                              name: { type: string }
+                              type: { type: string, enum: [ASSET, LIABILITY, EQUITY, INCOME, EXPENSE] }
+                              systemKey: { type: string, enum: [MPESA, OPENING_BALANCE] }
+                              vatOnly: { type: boolean, description: Seeded only for a VAT-registered business. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /tenant:
     get:
       tags: [Tenant]
@@ -1635,6 +1726,45 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Accounts]
+      summary: Rename, recode, retag or move an account
+      description: >
+        Requires `accounts:edit` (FR-COA-03/04). Type and currency can't be
+        changed. The parent must be the same type and not the account or one
+        of its sub-accounts (422); a code in use is 409.
+      parameters:
+        - $ref: '#/components/parameters/AccountIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                code: { type: string, maxLength: 20 }
+                name: { type: string, maxLength: 200 }
+                tags: { type: array, items: { type: string, maxLength: 50 }, maxItems: 20 }
+                parentAccountId: { type: string, format: uuid, nullable: true, description: null = top level. }
+      responses:
+        '200':
+          description: The updated account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422':
+          description: Parent of another type, or a loop
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
 
   /accounts/{id}/deactivate:
     post:
@@ -2866,6 +2996,14 @@ components:
             The date this tenant's books begin. Onboarding seeds one OPEN
             accounting period running from this date through the end of
             that calendar month.
+        chartTemplate:
+          type: string
+          enum: [GENERAL, SME_TRADING, NGO, CORPORATE, MICRO_TRADER]
+          default: GENERAL
+          description: >
+            Which chart of accounts to seed (FR-COA-02). GENERAL is the
+            original starter set; the others are SRS Appendix A. See
+            GET /onboarding/chart-templates. Will become required.
     OnboardingResult:
       type: object
       properties:
@@ -3010,6 +3148,7 @@ components:
         - "supplier_bills:post"
         - "supplier_bills:cancel"
         - "supplier_bills:pay"
+        - "opening_balances:manage"
         - "reports:view"
         - "tenant:edit"
     RoleRef:
@@ -3093,6 +3232,11 @@ components:
           type: string
           nullable: true
           description: The business's own tax PIN (e.g. KRA PIN), printed on its invoices. Set with PATCH /tenant.
+        chart_template:
+          type: string
+          nullable: true
+          enum: [GENERAL, SME_TRADING, NGO, CORPORATE, MICRO_TRADER]
+          description: The chart-of-accounts template seeded at onboarding; null for older businesses.
         created_at: { type: string, format: date-time }
     UserWithAccess:
       allOf:
@@ -3575,6 +3719,18 @@ components:
                   journal_id: { type: string, format: uuid }
                   debit_note_id: { type: string, format: uuid, nullable: true }
                   created_at: { type: string, format: date-time }
+
+    # -- Opening balances --
+    OpeningBalances:
+      type: object
+      properties:
+        date: { type: string, format: date, nullable: true }
+        locked: { type: boolean, description: True once the opening journal's period is closed. }
+        opening_balance_account_id: { type: string, format: uuid, nullable: true }
+        journal:
+          type: object
+          nullable: true
+          description: The opening journal with its lines (as GET /journals/{id}).
 
     # -- Invites --
     CreateInviteRequest:

@@ -59,6 +59,7 @@ export const PERMISSIONS = [
   "supplier_bills:post",
   "supplier_bills:cancel",
   "supplier_bills:pay",
+  "opening_balances:manage",
   "reports:view",
   "tenant:edit",
 ] as const;

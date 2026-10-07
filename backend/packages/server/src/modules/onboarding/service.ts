@@ -2,10 +2,10 @@
  * Onboarding service -- the public interface of this module.
  *
  * Beyond creating the tenant and its first user, onboarding also seeds
- * everything a brand-new tenant needs to use the guided Credit Sale/Cash
- * Sale/Write Bill/Write Cheque endpoints immediately: one OPEN accounting
- * period, and a starter chart of accounts (mirroring QuickBooks-style
- * setup, which asks for VAT registration and a books-start date up front).
+ * everything a brand-new tenant needs to start recording immediately: one
+ * OPEN accounting period, and the chart of accounts from the template it
+ * chose (FR-COA-02, SRS Appendix A -- see @jibuks/domain chartTemplates),
+ * with VAT accounts only for a VAT-registered business.
  *
  * This seeding is deliberately NOT part of the same database transaction
  * as tenant+user creation -- each module owns its own table exclusively
@@ -17,14 +17,13 @@
  * tenant or user.
  */
 
-import type { AccountType } from "@jibuks/domain";
-import { DomainError } from "@jibuks/domain";
+import { DomainError, templateAccounts, type ChartTemplateKey } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as usersService from "../users/service.js";
 import * as periodsService from "../periods/service.js";
 import type { PeriodRow } from "../periods/repository.js";
 import * as accountsService from "../accounts/service.js";
-import type { AccountRow, SystemAccountKey } from "../accounts/repository.js";
+import type { AccountRow } from "../accounts/repository.js";
 import * as repository from "./repository.js";
 import type { OnboardResult } from "./repository.js";
 
@@ -38,6 +37,8 @@ export interface OnboardRequest {
   readonly phone?: string;
   readonly vatRegistered: boolean;
   readonly periodStartDate: string;
+  /** Which chart of accounts to seed (FR-COA-02); GENERAL if omitted. */
+  readonly chartTemplate?: ChartTemplateKey;
 }
 
 export interface OnboardServiceResult extends OnboardResult {
@@ -57,35 +58,6 @@ function endOfMonth(dateStr: string): string {
   return last.toISOString().slice(0, 10);
 }
 
-interface StarterAccount {
-  readonly code: string;
-  readonly name: string;
-  readonly type: AccountType;
-  /** Only seeded when the tenant is VAT-registered. */
-  readonly vatOnly?: boolean;
-  readonly systemKey?: SystemAccountKey;
-}
-
-/** A minimal starter chart of accounts -- exactly what the four guided
- * endpoints (Credit Sale, Cash Sale, Write Bill, Write Cheque) need to
- * work immediately: Cash/Bank/M-Pesa, AR, AP, Sales, Purchases, Owner's Equity,
- * and VAT Payable/Recoverable for a VAT-registered tenant. */
-const STARTER_ACCOUNTS: readonly StarterAccount[] = [
-  { code: "1000", name: "Cash", type: "ASSET" },
-  { code: "1010", name: "Bank", type: "ASSET" },
-  // Kept apart from Cash and Bank so it can be reconciled against the
-  // M-Pesa statement (FR-PAY-05).
-  { code: "1020", name: "M-Pesa", type: "ASSET", systemKey: "MPESA" },
-  { code: "1100", name: "Accounts Receivable", type: "ASSET" },
-  { code: "1200", name: "VAT Recoverable (Input VAT)", type: "ASSET", vatOnly: true },
-  { code: "2000", name: "Accounts Payable", type: "LIABILITY" },
-  { code: "2100", name: "VAT Payable (Output VAT)", type: "LIABILITY", vatOnly: true },
-  { code: "3000", name: "Owner's Equity", type: "EQUITY" },
-  { code: "4000", name: "Sales Revenue", type: "INCOME" },
-  { code: "5000", name: "Purchases", type: "EXPENSE" },
-  { code: "5100", name: "General Expenses", type: "EXPENSE" },
-];
-
 export async function onboard(request: OnboardRequest): Promise<OnboardServiceResult> {
   const existing = await usersService.findByExternalIdpSubject(request.externalIdpSubject);
   if (existing) {
@@ -95,7 +67,8 @@ export async function onboard(request: OnboardRequest): Promise<OnboardServiceRe
     );
   }
 
-  const { tenant, user } = await repository.onboardTenant(request);
+  const chartTemplate = request.chartTemplate ?? "GENERAL";
+  const { tenant, user } = await repository.onboardTenant({ ...request, chartTemplate });
   const audit: AuditContext = { actorUserId: user.id };
 
   const period = await periodsService.createPeriod(
@@ -104,10 +77,7 @@ export async function onboard(request: OnboardRequest): Promise<OnboardServiceRe
   );
 
   const accounts: AccountRow[] = [];
-  for (const starter of STARTER_ACCOUNTS) {
-    if (starter.vatOnly && !request.vatRegistered) {
-      continue;
-    }
+  for (const starter of templateAccounts(chartTemplate, request.vatRegistered)) {
     accounts.push(
       await accountsService.createAccount(
         {

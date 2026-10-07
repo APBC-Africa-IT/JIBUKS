@@ -16,11 +16,13 @@ export interface TenantRow {
   readonly vat_registered: boolean;
   /** The business's own tax PIN (e.g. KRA PIN); null if not set. */
   readonly tax_identifier: string | null;
+  /** The chart-of-accounts template seeded at onboarding; null for older businesses. */
+  readonly chart_template: string | null;
   readonly created_at: string;
 }
 
 const COLUMNS =
-  "id, name, type, base_currency, accounting_framework, plan_tier, status, vat_registered, tax_identifier, created_at";
+  "id, name, type, base_currency, accounting_framework, plan_tier, status, vat_registered, tax_identifier, chart_template, created_at";
 
 export async function getTenant(tenantId: string): Promise<TenantRow | null> {
   return readAsTenant(tenantId, async (client) => {

@@ -62,6 +62,8 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   CREDIT_NOTE_EXCEEDS_BALANCE: 422,
   CREDIT_LIMIT_EXCEEDED: 422,
   TAX_NOT_REGISTERED: 422,
+  // opening balances
+  OPENING_BALANCES_LOCKED: 422,
   // idempotency -- status codes follow the IETF Idempotency-Key header
   // draft: reuse with a different payload is 422, a concurrent retry of a
   // still-running request is 409.

@@ -97,8 +97,7 @@ async function journalLines(journalId: string) {
   });
 }
 
-// Each test seeds accounts and a supplier through ten-plus API calls.
-describe("supplier bills", { timeout: 20_000 }, () => {
+describe("supplier bills", () => {
   it("drafts with input VAT and a due date from the supplier's terms, in bill field names", async () => {
     const f = await makeFixture();
 
@@ -301,7 +300,7 @@ describe("supplier bills", { timeout: 20_000 }, () => {
   });
 });
 
-describe("GET /api/v1/payables-aging", { timeout: 20_000 }, () => {
+describe("GET /api/v1/payables-aging", () => {
   it("ages open bills per supplier, keeps guided bills apart, and drills down", async () => {
     const f = await makeFixture(); // terms 14 days
     const a = await postedBill(f); // 500.00 due today + 14

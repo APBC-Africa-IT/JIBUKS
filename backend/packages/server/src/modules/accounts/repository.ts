@@ -30,7 +30,8 @@ export interface AccountRow {
   readonly created_at: string;
 }
 
-export type SystemAccountKey = "MPESA";
+export type { SystemAccountKey } from "@jibuks/domain";
+import type { SystemAccountKey } from "@jibuks/domain";
 
 /** An AccountRow plus its computed balance -- what GET /accounts and GET
  * /accounts/{id} return. Net of POSTED journal_lines against the account,
@@ -199,6 +200,57 @@ export async function getAccountById(
       params,
     );
     return result.rows[0] ?? null;
+  });
+}
+
+export interface UpdateAccountInput {
+  readonly code?: string;
+  readonly name?: string;
+  readonly tags?: string[];
+  /** null = top level. */
+  readonly parentAccountId?: string | null;
+}
+
+/** FR-COA-03/04: rename, recode, retag or re-parent. Returns null if not found. */
+export async function updateAccount(
+  tenantId: string,
+  accountId: string,
+  input: UpdateAccountInput,
+  audit: AuditContext,
+): Promise<AccountRow | null> {
+  return withTenant(tenantId, async (client) => {
+    const before = await client.query<AccountRow>(`SELECT * FROM accounts WHERE id = $1 FOR UPDATE`, [accountId]);
+    if (before.rows.length === 0) {
+      return null;
+    }
+    const result = await client.query<AccountRow>(
+      `UPDATE accounts
+          SET code = COALESCE($2, code),
+              name = COALESCE($3, name),
+              tags = COALESCE($4, tags),
+              parent_account_id = CASE WHEN $5 THEN $6::uuid ELSE parent_account_id END
+        WHERE id = $1
+       RETURNING *`,
+      [
+        accountId,
+        input.code ?? null,
+        input.name ?? null,
+        input.tags ?? null,
+        input.parentAccountId !== undefined,
+        input.parentAccountId ?? null,
+      ],
+    );
+    const account = result.rows[0]!;
+    await recordAuditLog(client, {
+      tenantId,
+      action: "UPDATE",
+      entityType: "account",
+      entityId: account.id,
+      beforeState: before.rows[0],
+      afterState: account,
+      context: audit,
+    });
+    return account;
   });
 }
 

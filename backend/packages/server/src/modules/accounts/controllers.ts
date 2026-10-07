@@ -5,7 +5,7 @@
  */
 
 import type { Request, Response } from "express";
-import { createAccountSchema, partyBalanceQuerySchema } from "@jibuks/domain";
+import { createAccountSchema, partyBalanceQuerySchema, updateAccountSchema } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as service from "./service.js";
 
@@ -58,5 +58,20 @@ export async function deactivate(req: Request, res: Response): Promise<void> {
 
 export async function reactivate(req: Request, res: Response): Promise<void> {
   const account = await service.reactivateAccount(req.tenantId!, req.params["id"]!, auditContextFrom(req));
+  res.json(account);
+}
+export async function update(req: Request, res: Response): Promise<void> {
+  const body = updateAccountSchema.parse(req.body);
+  const account = await service.updateAccount(
+    req.tenantId!,
+    req.params["id"]!,
+    {
+      ...(body.code !== undefined ? { code: body.code } : {}),
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.tags !== undefined ? { tags: body.tags } : {}),
+      ...(body.parentAccountId !== undefined ? { parentAccountId: body.parentAccountId } : {}),
+    },
+    auditContextFrom(req),
+  );
   res.json(account);
 }

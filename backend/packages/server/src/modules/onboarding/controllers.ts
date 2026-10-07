@@ -3,7 +3,7 @@
  */
 
 import type { Request, Response } from "express";
-import { onboardingRequestSchema } from "@jibuks/domain";
+import { CHART_TEMPLATES, CHART_TEMPLATE_KEYS, onboardingRequestSchema } from "@jibuks/domain";
 import * as service from "./service.js";
 
 export async function create(req: Request, res: Response): Promise<void> {
@@ -23,7 +23,12 @@ export async function create(req: Request, res: Response): Promise<void> {
     ...(body.phone !== undefined ? { phone: body.phone } : {}),
     vatRegistered: body.vatRegistered,
     periodStartDate: body.periodStartDate,
+    chartTemplate: body.chartTemplate,
   });
 
   res.status(201).json(result);
+}
+/** The chart-of-accounts templates to choose from at sign-up (FR-COA-02). */
+export function chartTemplates(_req: Request, res: Response): void {
+  res.json({ data: CHART_TEMPLATE_KEYS.map((key) => CHART_TEMPLATES[key]) });
 }

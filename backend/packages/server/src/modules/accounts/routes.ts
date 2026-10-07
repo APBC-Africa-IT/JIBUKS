@@ -18,5 +18,6 @@ accountsRouter.use(requireRealIdentity);
 accountsRouter.post("/", requirePermission("accounts:create"), asyncHandler(controllers.create));
 accountsRouter.get("/", requirePermission("accounts:view"), asyncHandler(controllers.list));
 accountsRouter.get("/:id", requirePermission("accounts:view"), asyncHandler(controllers.getOne));
+accountsRouter.patch("/:id", requirePermission("accounts:edit"), asyncHandler(controllers.update));
 accountsRouter.post("/:id/deactivate", requirePermission("accounts:edit"), asyncHandler(controllers.deactivate));
 accountsRouter.post("/:id/reactivate", requirePermission("accounts:edit"), asyncHandler(controllers.reactivate));

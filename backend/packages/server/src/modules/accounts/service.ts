@@ -21,6 +21,13 @@ const MPESA_ACCOUNT = {
   codes: Array.from({ length: 80 }, (_, i) => String(1020 + i)),
 } as const;
 
+/** Absorbs the difference in the opening journal (FR-ACC-04). Starter code 3900. */
+const OPENING_BALANCE_ACCOUNT = {
+  name: "Opening Balance Equity",
+  type: "EQUITY",
+  codes: Array.from({ length: 100 }, (_, i) => String(3900 + i)),
+} as const;
+
 export interface CreateAccountRequest {
   readonly tenantId: string;
   readonly code: string;
@@ -73,6 +80,63 @@ export async function getOrCreateMpesaAccount(tenantId: string, audit: AuditCont
     (await repository.findAccountBySystemKey(tenantId, "MPESA")) ??
     repository.getOrCreateSystemAccount(tenantId, "MPESA", MPESA_ACCOUNT, audit)
   );
+}
+
+/** The account carrying `systemKey`, if the tenant has one yet. */
+export async function findSystemAccount(tenantId: string, systemKey: SystemAccountKey): Promise<AccountRow | null> {
+  return repository.findAccountBySystemKey(tenantId, systemKey);
+}
+
+/** The tenant's Opening Balance Equity account (system_key 'OPENING_BALANCE'), created on first use. */
+export async function getOrCreateOpeningBalanceAccount(tenantId: string, audit: AuditContext): Promise<AccountRow> {
+  return (
+    (await repository.findAccountBySystemKey(tenantId, "OPENING_BALANCE")) ??
+    repository.getOrCreateSystemAccount(tenantId, "OPENING_BALANCE", OPENING_BALANCE_ACCOUNT, audit)
+  );
+}
+
+export interface UpdateAccountRequest {
+  readonly code?: string;
+  readonly name?: string;
+  readonly tags?: string[];
+  readonly parentAccountId?: string | null;
+}
+
+/**
+ * FR-COA-03/04. A parent must exist, have the same type, and not be the
+ * account itself or one of its descendants. Type and currency never change.
+ */
+export async function updateAccount(
+  tenantId: string,
+  accountId: string,
+  request: UpdateAccountRequest,
+  audit: AuditContext,
+): Promise<AccountRow> {
+  const account = await getAccount(tenantId, accountId);
+  if (request.parentAccountId) {
+    const accounts = await repository.listAccounts(tenantId);
+    const byId = new Map(accounts.map((a) => [a.id, a]));
+    const parent = byId.get(request.parentAccountId);
+    if (!parent) {
+      throw new DomainError("ACCOUNT_NOT_FOUND", `Parent account ${request.parentAccountId} not found`);
+    }
+    if (parent.type !== account.type) {
+      throw new DomainError(
+        "ACCOUNT_NOT_POSTABLE",
+        `Parent account ${parent.code} is type ${parent.type}, cannot have a ${account.type} child`,
+      );
+    }
+    for (let at: AccountRow | undefined = parent; at; at = at.parent_account_id ? byId.get(at.parent_account_id) : undefined) {
+      if (at.id === accountId) {
+        throw new DomainError("ACCOUNT_NOT_POSTABLE", "An account can't be placed under itself or one of its own sub-accounts");
+      }
+    }
+  }
+  const updated = await repository.updateAccount(tenantId, accountId, request, audit);
+  if (!updated) {
+    throw new DomainError("ACCOUNT_NOT_FOUND", `Account ${accountId} not found`);
+  }
+  return updated;
 }
 
 export async function listAccounts(tenantId: string, asOf?: string): Promise<AccountWithBalanceRow[]> {
