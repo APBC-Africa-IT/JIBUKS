@@ -1,0 +1,20 @@
+meta {
+  name: Customer Aging Detail
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/receivables-aging?customer_id={{customerId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires reports:view. Drill-down: one customer's open invoices, oldest due first, with days_past_due,
+  bucket and open_minor (still owed). Combine with &as_of=YYYY-MM-DD.
+}

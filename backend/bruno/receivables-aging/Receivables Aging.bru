@@ -1,0 +1,20 @@
+meta {
+  name: Receivables Aging
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/receivables-aging
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires reports:view. What each customer owes by days past due (current, 1-30, 31-60, 61-90, 90+),
+  plus not_invoiced_minor for balances not on an invoice. Add ?as_of=YYYY-MM-DD to age at another date.
+}

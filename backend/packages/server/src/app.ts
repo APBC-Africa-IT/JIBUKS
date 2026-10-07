@@ -29,6 +29,7 @@ import { cashExpensesRouter } from "./modules/cashExpenses/routes.js";
 import { trialBalanceRouter } from "./modules/trialBalance/routes.js";
 import { profitAndLossRouter } from "./modules/profitAndLoss/routes.js";
 import { cashFlowRouter } from "./modules/cashFlow/routes.js";
+import { receivablesAgingRouter } from "./modules/receivablesAging/routes.js";
 import { rolesRouter } from "./modules/roles/routes.js";
 import { hooksRouter, paymentsRouter } from "./modules/payments/routes.js";
 import { tenantRouter } from "./modules/tenants/routes.js";
@@ -79,6 +80,7 @@ export function createApp(): Express {
   app.use("/api/v1/trial-balance", trialBalanceRouter);
   app.use("/api/v1/profit-and-loss", profitAndLossRouter);
   app.use("/api/v1/cash-flow", cashFlowRouter);
+  app.use("/api/v1/receivables-aging", receivablesAgingRouter);
   app.use("/api/v1/invoices", invoicesRouter);
   app.use("/api/v1/payments", paymentsRouter);
   // Provider callbacks (no bearer token) -- see payments/routes.ts.

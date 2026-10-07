@@ -91,6 +91,11 @@ tags:
       nothing; issuing numbers and posts them; payments and credit notes are
       applied as allocations and move the status (FR-PAY-04). OVERDUE is
       derived when read.
+  - name: Receivables Aging
+    description: >
+      Read-only report (FR-AR-04): open invoice amounts per customer by
+      days past due, with non-invoice balances shown apart, plus a
+      per-customer drill-down.
   - name: Provider Callbacks
     description: >
       Called by payment providers, not by apps. No bearer token -- each
@@ -882,6 +887,39 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/DuplicateValue' }
         '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /receivables-aging:
+    get:
+      tags: [Receivables Aging]
+      summary: Customer aging, or one customer's open invoices
+      description: >
+        Requires `reports:view`. Buckets each issued invoice's unpaid part
+        at as_of by days past due_date. not_invoiced_minor is the rest of
+        the customer's ledger balance (credit sales, customer credit,
+        manual journals), so buckets + not_invoiced_minor = balance_minor.
+        With customer_id, returns that customer's open invoices instead.
+      parameters:
+        - name: as_of
+          in: query
+          description: Defaults to today (Africa/Nairobi).
+          schema: { type: string, format: date }
+        - name: customer_id
+          in: query
+          description: Drill down to this customer.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The summary, or (with customer_id) the drill-down
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ReceivablesAging'
+                  - $ref: '#/components/schemas/CustomerAging'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /tenant:
     get:
@@ -3083,6 +3121,61 @@ components:
             allocations:
               type: array
               items: { $ref: '#/components/schemas/InvoiceAllocation' }
+
+    # -- Receivables aging --
+    AgingAmounts:
+      type: object
+      description: Minor-unit strings.
+      properties:
+        current_minor: { type: string, description: Not yet due (or due today). }
+        days_1_30_minor: { type: string }
+        days_31_60_minor: { type: string }
+        days_61_90_minor: { type: string }
+        days_over_90_minor: { type: string }
+        invoiced_minor: { type: string, description: Sum of the buckets. }
+        not_invoiced_minor: { type: string, description: "Balance not on an invoice (credit sales, customer credit, journals)." }
+        balance_minor: { type: string, description: The customer's ledger balance at as_of. }
+    ReceivablesAging:
+      type: object
+      properties:
+        as_of: { type: string, format: date }
+        currency: { type: string }
+        buckets:
+          type: array
+          items: { type: string, enum: [CURRENT, DAYS_1_30, DAYS_31_60, DAYS_61_90, DAYS_OVER_90] }
+        rows:
+          type: array
+          items:
+            allOf:
+              - type: object
+                properties:
+                  customer_id: { type: string, format: uuid }
+                  customer_name: { type: string }
+              - $ref: '#/components/schemas/AgingAmounts'
+        totals: { $ref: '#/components/schemas/AgingAmounts' }
+    CustomerAging:
+      type: object
+      properties:
+        as_of: { type: string, format: date }
+        currency: { type: string }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        invoices:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              number: { type: string }
+              issue_date: { type: string, format: date }
+              due_date: { type: string, format: date, nullable: true }
+              days_past_due: { type: integer, minimum: 0 }
+              bucket: { type: string, enum: [CURRENT, DAYS_1_30, DAYS_31_60, DAYS_61_90, DAYS_OVER_90] }
+              total_minor: { type: string }
+              open_minor: { type: string, description: Still owed at as_of. }
+        invoiced_minor: { type: string }
+        not_invoiced_minor: { type: string }
+        balance_minor: { type: string }
 
     # -- Invites --
     CreateInviteRequest:

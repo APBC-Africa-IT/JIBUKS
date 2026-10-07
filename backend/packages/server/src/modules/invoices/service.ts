@@ -881,3 +881,12 @@ export async function getInvoicePdf(tenantId: string, invoiceId: string): Promis
   });
   return { filename: model.filename, pdf: await renderInvoicePdf(model) };
 }
+
+// ---------------------------------------------------------------------
+// Aging support
+// ---------------------------------------------------------------------
+
+/** Invoices with something still owed at the end of `asOf` (receivables aging). */
+export async function listOpenInvoicesAsOf(tenantId: string, asOf: string, customerId?: string) {
+  return repository.listOpenInvoicesAsOf(tenantId, asOf, customerId);
+}
