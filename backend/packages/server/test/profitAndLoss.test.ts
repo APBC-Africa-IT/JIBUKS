@@ -10,9 +10,10 @@ import request from "supertest";
 import { afterAll, describe, expect, it } from "vitest";
 import { closePool, withTenant } from "@jibuks/db";
 import { createApp } from "../src/app.js";
+import { listen } from "./testServer.js";
 import { authHeader, TEST_TENANT_ID } from "./testAuth.js";
 
-const app = createApp();
+const app = await listen(createApp());
 
 afterAll(async () => {
   await closePool();

@@ -12,6 +12,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { DomainError } from "@jibuks/domain";
 import { closePool, withTenant } from "@jibuks/db";
 import { createApp } from "../src/app.js";
+import { listen } from "./testServer.js";
 import {
   setDarajaClientForTesting,
   StkPushOutcomeUnknownError,
@@ -22,7 +23,7 @@ import {
 import * as accountsService from "../src/modules/accounts/service.js";
 import { authHeader, TEST_TENANT_ID, TEST_USER_ID } from "./testAuth.js";
 
-const app = createApp();
+const app = await listen(createApp());
 
 afterAll(async () => {
   setDarajaClientForTesting(null);
