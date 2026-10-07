@@ -1,0 +1,33 @@
+meta {
+  name: Create Pro-forma
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/invoices
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "kind": "PROFORMA",
+    "customerId": "{{customerId}}",
+    "issueDate": "2026-10-07",
+    "lines": [
+      { "description": "Quote: 20 bags cement", "quantity": 20, "unitPriceMinor": 75000, "incomeAccountId": "{{salesAccountId}}" }
+    ]
+  }
+}
+
+docs {
+  Requires invoices:create. A quote: issuing gives it a PF- number but never posts. Convert it with "Convert Pro-forma".
+}

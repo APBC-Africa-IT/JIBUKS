@@ -11,7 +11,7 @@ import { DomainError, type CurrencyCode, type JournalSource, type Journal as Dom
 import { validateForPosting, buildReversal as domainBuildReversal, type PostingContext, type PeriodSnapshot } from "@jibuks/ledger";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
-import type { JournalWithLines, CreateJournalLineInput } from "./repository.js";
+import type { JournalWithLines, CreateJournalInput, CreateJournalLineInput, TxClient } from "./repository.js";
 import * as accountsService from "../accounts/service.js";
 import * as periodsService from "../periods/service.js";
 import * as customersService from "../customers/service.js";
@@ -132,6 +132,19 @@ function serializeLinesForRepository(
 }
 
 export async function createJournal(request: CreateJournalRequest, audit: AuditContext): Promise<JournalWithLines> {
+  return repository.createJournal(await prepareJournal(request, audit), audit);
+}
+
+/** A journal that has passed every posting check, ready to insert. */
+export type PreparedJournal = CreateJournalInput;
+
+/**
+ * Runs every check createJournal runs -- party attribution, period, the
+ * ledger's validateForPosting -- without writing the journal. The caller
+ * then inserts it with postPreparedJournal inside its own transaction, so
+ * its rows and the journal commit or roll back together.
+ */
+export async function prepareJournal(request: CreateJournalRequest, audit: AuditContext): Promise<PreparedJournal> {
   await validatePartyAttribution(request.tenantId, request.lines);
   await periodsService.ensureCurrentPeriodForDate(request.tenantId, request.date, audit);
   const context = await buildPostingContext(request.tenantId);
@@ -151,22 +164,28 @@ export async function createJournal(request: CreateJournalRequest, audit: AuditC
     context,
   );
 
-  return repository.createJournal(
-    {
-      tenantId: request.tenantId,
-      clientUuid: request.clientUuid,
-      ...(request.branchId !== undefined ? { branchId: request.branchId } : {}),
-      periodId: validated.periodId,
-      date: request.date,
-      currency: request.currency,
-      description: request.description,
-      ...(request.reference !== undefined ? { reference: request.reference } : {}),
-      source: request.source,
-      createdBy: audit.actorUserId,
-      lines: serializeLinesForRepository(request.lines),
-    },
-    audit,
-  );
+  return {
+    tenantId: request.tenantId,
+    clientUuid: request.clientUuid,
+    ...(request.branchId !== undefined ? { branchId: request.branchId } : {}),
+    periodId: validated.periodId,
+    date: request.date,
+    currency: request.currency,
+    description: request.description,
+    ...(request.reference !== undefined ? { reference: request.reference } : {}),
+    source: request.source,
+    createdBy: audit.actorUserId,
+    lines: serializeLinesForRepository(request.lines),
+  };
+}
+
+/** Inserts a prepared journal inside the caller's withTenant transaction. */
+export async function postPreparedJournal(
+  client: TxClient,
+  prepared: PreparedJournal,
+  audit: AuditContext,
+): Promise<JournalWithLines> {
+  return repository.insertJournal(client, prepared, audit);
 }
 
 /** The journal a caller already posted under `clientUuid`, if any. */
@@ -199,6 +218,16 @@ export async function reverseJournal(
   reason: string,
   audit: AuditContext,
 ): Promise<JournalWithLines> {
+  return repository.createJournal(await prepareReversal(tenantId, journalId, reason, audit), audit);
+}
+
+/** reverseJournal's checks without the write -- see prepareJournal. */
+export async function prepareReversal(
+  tenantId: string,
+  journalId: string,
+  reason: string,
+  audit: AuditContext,
+): Promise<PreparedJournal> {
   const originalRow = await repository.getJournalWithLines(tenantId, journalId);
   if (!originalRow) {
     throw new DomainError("ACCOUNT_NOT_FOUND", `Journal ${journalId} not found`);
@@ -221,32 +250,29 @@ export async function reverseJournal(
   const context = await buildPostingContext(tenantId);
   const validated = validateForPosting(reversalInput, context);
 
-  return repository.createJournal(
-    {
-      tenantId,
-      clientUuid: reversalInput.clientUuid,
-      ...(reversalInput.branchId !== undefined ? { branchId: reversalInput.branchId } : {}),
-      periodId: validated.periodId,
-      date: reversalInput.date,
-      currency: reversalInput.currency,
-      description: reversalInput.description,
-      ...(reversalInput.reference !== undefined ? { reference: reversalInput.reference } : {}),
-      source: reversalInput.source,
-      createdBy: audit.actorUserId,
-      reversalOfJournalId: journalId,
-      lines: serializeLinesForRepository(
-        reversalInput.lines.map((l: (typeof reversalInput.lines)[number]) => ({
-          accountId: l.accountId,
-          debitMinor: l.debitMinor,
-          creditMinor: l.creditMinor,
-          ...(l.narrative !== undefined ? { narrative: l.narrative } : {}),
-          ...(l.projectId !== undefined ? { projectId: l.projectId } : {}),
-          ...(l.department !== undefined ? { department: l.department } : {}),
-          ...(l.customerId !== undefined ? { customerId: l.customerId } : {}),
-          ...(l.supplierId !== undefined ? { supplierId: l.supplierId } : {}),
-        })),
-      ),
-    },
-    audit,
-  );
+  return {
+    tenantId,
+    clientUuid: reversalInput.clientUuid,
+    ...(reversalInput.branchId !== undefined ? { branchId: reversalInput.branchId } : {}),
+    periodId: validated.periodId,
+    date: reversalInput.date,
+    currency: reversalInput.currency,
+    description: reversalInput.description,
+    ...(reversalInput.reference !== undefined ? { reference: reversalInput.reference } : {}),
+    source: reversalInput.source,
+    createdBy: audit.actorUserId,
+    reversalOfJournalId: journalId,
+    lines: serializeLinesForRepository(
+      reversalInput.lines.map((l: (typeof reversalInput.lines)[number]) => ({
+        accountId: l.accountId,
+        debitMinor: l.debitMinor,
+        creditMinor: l.creditMinor,
+        ...(l.narrative !== undefined ? { narrative: l.narrative } : {}),
+        ...(l.projectId !== undefined ? { projectId: l.projectId } : {}),
+        ...(l.department !== undefined ? { department: l.department } : {}),
+        ...(l.customerId !== undefined ? { customerId: l.customerId } : {}),
+        ...(l.supplierId !== undefined ? { supplierId: l.supplierId } : {}),
+      })),
+    ),
+  };
 }

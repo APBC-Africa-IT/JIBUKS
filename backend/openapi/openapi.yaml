@@ -85,6 +85,12 @@ tags:
       phone; the outcome arrives asynchronously from Safaricom, is
       confirmed with Daraja, then posted to the ledger. Poll
       GET /payments/{id} for the result.
+  - name: Invoices
+    description: >
+      Sales invoices, credit notes and pro-formas (FR-AR-02/05). Drafts post
+      nothing; issuing numbers and posts them; payments and credit notes are
+      applied as allocations and move the status (FR-PAY-04). OVERDUE is
+      derived when read.
   - name: Provider Callbacks
     description: >
       Called by payment providers, not by apps. No bearer token -- each
@@ -559,6 +565,301 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+
+  # ── Invoices ──────────────────────────────────────────────────────
+  /invoices:
+    post:
+      tags: [Invoices]
+      summary: Create a draft invoice or pro-forma
+      description: >
+        Requires `invoices:create`. The server computes every amount from
+        the lines and taxMode (half-up per line). Nothing is posted until
+        the invoice is issued.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInvoiceRequest'
+            example:
+              clientUuid: "0b7c2f4e-1a3d-4c5e-8f9a-1b2c3d4e5f60"
+              customerId: "6f1e2d3c-4b5a-4968-8778-695a4b3c2d1e"
+              receivableAccountId: "2b3c4d5e-6f70-4a10-9c1a-4a2b4c1a9c1b"
+              issueDate: "2026-10-07"
+              taxMode: EXCLUSIVE
+              lines:
+                - description: Maize flour 2kg
+                  quantity: 10
+                  unitPriceMinor: 25000
+                  incomeAccountId: "3c4d5e6f-7081-4b21-8d2b-5b3c5d2b0d2c"
+                  taxRateBps: 1600
+                  taxAccountId: "4d5e6f70-8192-4c32-9e3c-6c4d6e3c1e3d"
+      responses:
+        '201':
+          description: The draft
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+    get:
+      tags: [Invoices]
+      summary: List invoices (cursor-paginated)
+      description: >
+        Requires `invoices:view`. Newest first. Rows are headers plus
+        customer_name; GET /invoices/{id} for lines and allocations.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, description: next_cursor from the previous page, schema: { type: string } }
+        - name: status
+          in: query
+          description: OVERDUE = issued or part-paid and past due; ISSUED/PART_PAID then exclude overdue ones.
+          schema: { $ref: '#/components/schemas/InvoiceStatus' }
+        - { name: kind, in: query, schema: { type: string, enum: [INVOICE, CREDIT_NOTE, PROFORMA] } }
+        - { name: customer_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, description: issue_date from (inclusive), schema: { type: string, format: date } }
+        - { name: to, in: query, description: issue_date to (inclusive), schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: A page of invoices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Invoice' }
+                  next_cursor: { type: string, nullable: true }
+                  has_more: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /invoices/{id}:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    get:
+      tags: [Invoices]
+      summary: Get an invoice with its lines and allocations
+      description: Requires `invoices:view`.
+      responses:
+        '200':
+          description: The invoice
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Invoices]
+      summary: Edit a draft
+      description: >
+        Requires `invoices:create`. Drafts only. `lines` replaces every
+        line; amounts are recomputed. dueDate null recomputes it from the
+        customer's payment terms.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateInvoiceRequest' }
+      responses:
+        '200':
+          description: The updated draft
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+    delete:
+      tags: [Invoices]
+      summary: Delete a draft
+      description: Requires `invoices:create`. Drafts only; anything else is 422 INVOICE_INVALID_STATE.
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /invoices/{id}/issue:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    post:
+      tags: [Invoices]
+      summary: Issue a draft (number it and post it)
+      description: >
+        Requires `invoices:issue`. Assigns the next INV-/CN-/PF- number.
+        An invoice posts Dr receivable (customer) / Cr income / Cr VAT; a
+        credit note posts the mirror and is applied to its invoice; a
+        pro-forma posts nothing. An invoice taking the customer past their
+        credit limit is 422 CREDIT_LIMIT_EXCEEDED unless
+        overrideCreditLimit is true, which needs
+        `invoices:override_credit_limit` (403 otherwise).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overrideCreditLimit: { type: boolean, default: false }
+      responses:
+        '200':
+          description: The issued document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /invoices/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    post:
+      tags: [Invoices]
+      summary: Cancel an issued invoice with nothing paid
+      description: >
+        Requires `invoices:cancel`. Reverses the issue journal. Once
+        anything is paid or credited: 422 INVOICE_HAS_PAYMENTS (raise a
+        credit note instead). Drafts are deleted, not cancelled; credit
+        notes can't be cancelled.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200':
+          description: The cancelled invoice
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /invoices/{id}/payments:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    post:
+      tags: [Invoices]
+      summary: Record a payment received outside STK push
+      description: >
+        Requires `payments:create`. Posts Dr receivedAccountId / Cr the
+        invoice's receivable account (customer-tagged) and applies it.
+        More than the balance due is 422 INVOICE_OVERPAYMENT and posts
+        nothing. For M-Pesa STK push, use POST /payments/mpesa/stk-push
+        with invoiceId instead.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordInvoicePaymentRequest' }
+      responses:
+        '201':
+          description: The invoice, with the new allocation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /invoices/{id}/credit-notes:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    post:
+      tags: [Invoices]
+      summary: Draft a credit note against an issued invoice
+      description: >
+        Requires `invoices:create`. Customer, currency and receivable
+        account come from the invoice. Can't exceed what's still owed
+        (422 CREDIT_NOTE_EXCEEDS_BALANCE). Issue it with
+        POST /invoices/{creditNoteId}/issue.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCreditNoteRequest' }
+      responses:
+        '201':
+          description: The draft credit note
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /invoices/{id}/convert:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    post:
+      tags: [Invoices]
+      summary: Convert a pro-forma into a draft invoice
+      description: >
+        Requires `invoices:create`. Copies customer, lines and tax mode.
+        Once per pro-forma (a second convert is 409).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientUuid]
+              properties:
+                clientUuid: { type: string, format: uuid }
+                issueDate: { type: string, format: date, description: Defaults to today (Africa/Nairobi). }
+                receivableAccountId: { type: string, format: uuid, description: Required if the pro-forma has none. }
+      responses:
+        '201':
+          description: The new draft invoice
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
 
   /tenant:
     get:
@@ -2166,6 +2467,13 @@ components:
       schema:
         type: string
         format: uuid
+    InvoiceIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     InviteTokenPath:
       name: token
       in: path
@@ -2348,6 +2656,11 @@ components:
         - "cash_expenses:create"
         - "payments:view"
         - "payments:create"
+        - "invoices:view"
+        - "invoices:create"
+        - "invoices:issue"
+        - "invoices:cancel"
+        - "invoices:override_credit_limit"
         - "reports:view"
     RoleRef:
       type: string
@@ -2445,7 +2758,7 @@ components:
     # -- Payments --
     CreateStkPushRequest:
       type: object
-      required: [clientUuid, phone, currency, amountMinor, creditAccountId]
+      required: [clientUuid, phone, currency, amountMinor]
       properties:
         clientUuid:
           type: string
@@ -2472,15 +2785,25 @@ components:
         creditAccountId:
           type: string
           format: uuid
-          description: Credited on success -- an income account, or Accounts Receivable with customerId.
+          description: >
+            Credited on success -- an income account, or Accounts Receivable
+            with customerId. Required unless invoiceId is given.
         customerId:
           type: string
           format: uuid
           description: Tags the credit line to this customer's subledger.
+        invoiceId:
+          type: string
+          format: uuid
+          description: >
+            Collect against this issued invoice. Its receivable account and
+            customer are used, so omit creditAccountId, customerId and tax.
+            amountMinor may not exceed its balance due (422
+            INVOICE_OVERPAYMENT). On success the payment is applied to it.
         accountReference:
           type: string
           maxLength: 12
-          description: Shown on the customer's phone. Defaults to "JIBUKS".
+          description: Shown on the customer's phone. Defaults to the invoice number with invoiceId, else "JIBUKS".
         description: { type: string, maxLength: 500 }
         taxAccountId:
           type: string
@@ -2513,6 +2836,7 @@ components:
         received_account_id: { type: string, format: uuid }
         credit_account_id: { type: string, format: uuid }
         customer_id: { type: string, format: uuid, nullable: true }
+        invoice_id: { type: string, format: uuid, nullable: true, description: The invoice this collection pays. }
         tax_account_id: { type: string, format: uuid, nullable: true }
         tax_amount_minor: { type: string, description: "VAT included in amount_minor (bigint as string)" }
         merchant_request_id: { type: string, nullable: true }
@@ -2536,6 +2860,169 @@ components:
         initiated_by: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time, nullable: true }
+
+    # -- Invoices --
+    InvoiceStatus:
+      type: string
+      description: >
+        DRAFT, ISSUED, PART_PAID, PAID, CANCELLED, plus OVERDUE -- an ISSUED
+        or PART_PAID invoice past its due_date, derived when read.
+      enum: [DRAFT, ISSUED, PART_PAID, PAID, OVERDUE, CANCELLED]
+    TaxMode:
+      type: string
+      description: >
+        EXCLUSIVE -- unit prices before VAT, VAT added; INCLUSIVE -- unit
+        prices include VAT, VAT extracted; NONE -- no VAT on any line.
+      enum: [EXCLUSIVE, INCLUSIVE, NONE]
+    InvoiceLineInput:
+      type: object
+      required: [description, quantity, unitPriceMinor, incomeAccountId]
+      properties:
+        description: { type: string, minLength: 1, maxLength: 500 }
+        quantity: { type: number, exclusiveMinimum: 0, description: Up to 3 decimal places. }
+        unitPriceMinor: { type: integer, minimum: 0, description: "Per unit; before VAT (EXCLUSIVE) or including it (INCLUSIVE)." }
+        incomeAccountId: { type: string, format: uuid }
+        taxRateBps: { type: integer, minimum: 0, maximum: 10000, default: 0, description: "Basis points: 1600 = 16%." }
+        taxAccountId: { type: string, format: uuid, description: Output VAT account; required when taxRateBps > 0. }
+    CreateInvoiceRequest:
+      type: object
+      required: [clientUuid, customerId, issueDate, lines]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        kind: { type: string, enum: [INVOICE, PROFORMA], default: INVOICE }
+        branchId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        receivableAccountId: { type: string, format: uuid, description: Required for an INVOICE. }
+        issueDate: { type: string, format: date }
+        dueDate: { type: string, format: date, description: "Defaults to issueDate + the customer's paymentTermsDays." }
+        currency: { type: string, description: Must be the base currency (the default). }
+        taxMode: { $ref: '#/components/schemas/TaxMode' }
+        reference: { type: string, maxLength: 100 }
+        notes: { type: string, maxLength: 2000 }
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/InvoiceLineInput' }
+    UpdateInvoiceRequest:
+      type: object
+      minProperties: 1
+      properties:
+        customerId: { type: string, format: uuid }
+        receivableAccountId: { type: string, format: uuid }
+        issueDate: { type: string, format: date }
+        dueDate: { type: string, format: date, nullable: true, description: null recomputes it from payment terms. }
+        taxMode: { $ref: '#/components/schemas/TaxMode' }
+        reference: { type: string, maxLength: 100, nullable: true }
+        notes: { type: string, maxLength: 2000, nullable: true }
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 200
+          description: Replaces every line.
+          items: { $ref: '#/components/schemas/InvoiceLineInput' }
+    CreateCreditNoteRequest:
+      type: object
+      required: [clientUuid, lines]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        issueDate: { type: string, format: date, description: Defaults to today (Africa/Nairobi). }
+        taxMode: { $ref: '#/components/schemas/TaxMode' }
+        reference: { type: string, maxLength: 100 }
+        notes: { type: string, maxLength: 2000, description: Why the customer is credited. }
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/InvoiceLineInput' }
+    RecordInvoicePaymentRequest:
+      type: object
+      required: [clientUuid, amountMinor, date, receivedAccountId]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        amountMinor: { type: integer, minimum: 1 }
+        date: { type: string, format: date }
+        receivedAccountId: { type: string, format: uuid, description: The cash, bank or M-Pesa account the money went into. }
+        method: { type: string, enum: [CASH, BANK, MPESA, OTHER], default: CASH }
+        reference: { type: string, maxLength: 100 }
+    Invoice:
+      type: object
+      description: Money fields are 64-bit-safe integer strings.
+      properties:
+        id: { type: string, format: uuid }
+        client_uuid: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid, nullable: true }
+        direction: { type: string, enum: [AR] }
+        kind: { type: string, enum: [INVOICE, CREDIT_NOTE, PROFORMA] }
+        status: { $ref: '#/components/schemas/InvoiceStatus' }
+        number: { type: string, nullable: true, example: INV-000012, description: Null while a draft. }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        issue_date: { type: string, format: date }
+        due_date: { type: string, format: date, nullable: true }
+        currency: { type: string }
+        receivable_account_id: { type: string, format: uuid, nullable: true }
+        tax_mode: { $ref: '#/components/schemas/TaxMode' }
+        subtotal_minor: { type: string }
+        tax_minor: { type: string }
+        total_minor: { type: string }
+        amount_paid_minor: { type: string, description: Paid plus credited. }
+        balance_due_minor: { type: string, description: "Still owed; \"0\" for drafts, cancelled, credit notes and pro-formas." }
+        reference: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        journal_id: { type: string, format: uuid, nullable: true }
+        cancel_journal_id: { type: string, format: uuid, nullable: true }
+        credited_invoice_id: { type: string, format: uuid, nullable: true, description: On a credit note -- the invoice it credits. }
+        proforma_id: { type: string, format: uuid, nullable: true, description: On a converted invoice -- its pro-forma. }
+        credit_limit_overridden: { type: boolean }
+        cancel_reason: { type: string, nullable: true }
+        created_by: { type: string, format: uuid }
+        issued_by: { type: string, format: uuid, nullable: true }
+        cancelled_by: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        issued_at: { type: string, format: date-time, nullable: true }
+        cancelled_at: { type: string, format: date-time, nullable: true }
+    InvoiceLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        line_no: { type: integer }
+        description: { type: string }
+        quantity: { type: string, example: "1.500" }
+        unit_price_minor: { type: string }
+        income_account_id: { type: string, format: uuid }
+        tax_rate_bps: { type: integer }
+        tax_account_id: { type: string, format: uuid, nullable: true }
+        net_minor: { type: string }
+        tax_minor: { type: string }
+        total_minor: { type: string }
+    InvoiceAllocation:
+      type: object
+      description: An amount applied to the invoice -- a payment or a credit note.
+      properties:
+        id: { type: string, format: uuid }
+        method: { type: string, enum: [CASH, BANK, MPESA, OTHER, CREDIT_NOTE] }
+        amount_minor: { type: string, description: Applied to the invoice. }
+        unapplied_minor: { type: string, description: Received beyond the balance (M-Pesa only); left as customer credit. }
+        date: { type: string, format: date }
+        received_account_id: { type: string, format: uuid, nullable: true }
+        reference: { type: string, nullable: true }
+        journal_id: { type: string, format: uuid }
+        payment_id: { type: string, format: uuid, nullable: true }
+        credit_note_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+    InvoiceDetail:
+      allOf:
+        - $ref: '#/components/schemas/Invoice'
+        - type: object
+          properties:
+            lines:
+              type: array
+              items: { $ref: '#/components/schemas/InvoiceLine' }
+            allocations:
+              type: array
+              items: { $ref: '#/components/schemas/InvoiceAllocation' }
 
     # -- Invites --
     CreateInviteRequest:
@@ -3404,6 +3891,17 @@ components:
 
   # ── Reusable responses ────────────────────────────────────────────
   responses:
+    InvoiceRuleViolation:
+      description: >
+        422 -- INVOICE_INVALID_STATE (wrong status for this action),
+        INVOICE_HAS_PAYMENTS, INVOICE_OVERPAYMENT,
+        CREDIT_NOTE_EXCEEDS_BALANCE, CREDIT_LIMIT_EXCEEDED,
+        TAX_NOT_REGISTERED, PERIOD_LOCKED, ACCOUNT_INACTIVE,
+        ACCOUNT_NOT_POSTABLE or JOURNAL_LINE_EMPTY (zero total).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
     Unauthorized:
       description: Missing, malformed, expired, or otherwise invalid bearer token
       content:

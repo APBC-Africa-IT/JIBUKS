@@ -50,6 +50,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.17 Roles](#717-roles)
 - [7.18 Payments](#718-payments)
 - [7.19 Tenant](#719-tenant)
+- [7.20 Invoices](#720-invoices)
 
 ---
 
@@ -117,8 +118,8 @@ FR-RBAC-01/02, FR-MIC-08. Each user has one or more **roles**, and each role gra
 | Role | Can do |
 |---|---|
 | `OWNER` | Everything, including managing users, roles and invites. |
-| `ACCOUNTANT` | All bookkeeping, period close/reopen, journal reversal, reports. Can view users/roles but not change them. |
-| `CASHIER` | Record cash sales and cash expenses, collect M-Pesa payments; view accounts, customers, suppliers. |
+| `ACCOUNTANT` | All bookkeeping, period close/reopen, journal reversal, invoices (including credit-limit override), reports. Can view users/roles but not change them. |
+| `CASHIER` | Record cash sales and cash expenses, collect M-Pesa payments, take payments against invoices; view accounts, customers, suppliers and invoices. Can't raise, issue or cancel invoices. |
 | `VIEWER` | Read-only: every `:view` permission, including reports. |
 | `AGENT` | Record cash sales and collect M-Pesa payments; view accounts and customers. (Micro-trader tier.) |
 
@@ -160,6 +161,11 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /cash-expenses` | `cash_expenses:create` |
 | `POST /payments/mpesa/stk-push` | `payments:create` |
 | `GET /payments`, `GET /payments/{id}` | `payments:view` |
+| `GET /invoices`, `GET /invoices/{id}` | `invoices:view` |
+| `POST /invoices`, `PATCH`/`DELETE /invoices/{id}`, `POST /invoices/{id}/credit-notes`, `POST /invoices/{id}/convert` | `invoices:create` |
+| `POST /invoices/{id}/issue` | `invoices:issue` (+ `invoices:override_credit_limit` to pass `overrideCreditLimit: true`) |
+| `POST /invoices/{id}/cancel` | `invoices:cancel` |
+| `POST /invoices/{id}/payments` | `payments:create` |
 | `GET /trial-balance`, `GET /profit-and-loss`, `GET /cash-flow` | `reports:view` |
 
 ---
@@ -875,6 +881,8 @@ Creates a **new** journal with every line's debit/credit swapped, dated today, r
 
 ## 7.9 Credit Sales
 
+> **Prefer [Invoices](#720-invoices) for new screens.** A credit sale posts the same journal but creates no invoice record, so it has no number, no status, no payments history and won't appear in the aging report. This endpoint stays for existing app versions and will be retired later.
+
 Base path: `/api/v1/credit-sales` 
 
 Guided endpoint for the most common transaction of all: selling on credit. Instead of hand-building a balanced journal, send the invoice shape and the server composes it — standard double-entry for a sales invoice:
@@ -1351,9 +1359,10 @@ Behind the scenes, Safaricom calls the server back. The server doesn't trust tha
 | `currency` | string | ✅ Yes | Must be `"KES"`. |
 | `amountMinor` | integer | ✅ Yes | **Whole shillings only**: a multiple of 100 (`150000` = KES 1,500). KES 1 to KES 250,000. |
 | `receivedAccountId` | uuid | No | Debited when the money arrives. **Leave it out**: the server uses the business's M-Pesa account, creating it if it doesn't have one (see below). Only send it to receive into a different account. |
-| `creditAccountId` | uuid | ✅ Yes | Credited when the money arrives: **Sales Revenue** for a straightforward sale, or **Accounts Receivable** (with `customerId`) when a customer is paying what they owe. |
+| `creditAccountId` | uuid | Unless `invoiceId` | Credited when the money arrives: **Sales Revenue** for a straightforward sale, or **Accounts Receivable** (with `customerId`) when a customer is paying what they owe. |
 | `customerId` | uuid | No | Tags the credit line to this customer, so it reduces their balance. |
-| `accountReference` | string | No | Up to 12 chars, shown on the customer's phone. Defaults to `JIBUKS`. |
+| `invoiceId` | uuid | No | **Collect against an issued invoice.** The invoice's receivable account and customer are used, so leave out `creditAccountId`, `customerId` and tax (`400` otherwise). `amountMinor` can't exceed the invoice's `balance_due_minor` (`422 INVOICE_OVERPAYMENT`). When the payment succeeds it is applied to the invoice automatically, moving it to `PART_PAID` or `PAID`. See [§7.20](#720-invoices). |
+| `accountReference` | string | No | Up to 12 chars, shown on the customer's phone. Defaults to the invoice number with `invoiceId`, else `JIBUKS`. |
 | `description` | string | No | Used as the journal description. |
 | `taxAccountId` | uuid | If tax | Output VAT account (VAT Payable, `2100` in the starter chart). Required when `taxAmountMinor` > 0. |
 | `taxAmountMinor` | integer | No | VAT **included in** `amountMinor` (default 0). The customer is prompted for `amountMinor`; `taxAmountMinor` goes to `taxAccountId` and the rest to `creditAccountId`. Must be less than `amountMinor`. Same convention as Cash Sale. Use it for sales only; when a customer pays what they owe (Accounts Receivable), the VAT was already posted on the credit sale. |
@@ -1431,6 +1440,7 @@ If M-Pesa doesn't answer in time (about 20 s), the response is still `202 PENDIN
 
 ### Notes for consuming clients (Payments)
 
+- To collect an invoice, pass `invoiceId` instead of `creditAccountId`; the payment carries `invoice_id`. If the invoice was meanwhile paid another way, the M-Pesa money still posts in full: the extra shows as `unapplied_minor` on the invoice's allocation and stays as credit on the customer's balance.
 - Only M-Pesa STK push for now. Paybill/Till payments that customers start from their own phone (C2B) come with reconciliation.
 - On **staging**, payments use Safaricom's **sandbox**: no real money moves.
 - `amount_minor` is returned as a string, like other money fields.
@@ -1465,3 +1475,214 @@ The caller's own business. Needs no permission; every signed-in user can call it
 | `plan_tier` | `STARTER` (micro-trader; every business starts here), `GROWTH`, `ENTERPRISE`. Use it to choose which roles to offer (see [Roles and permissions](#roles-and-permissions)). There is no endpoint to change it yet. |
 | `status` | `ACTIVE`, `SUSPENDED` |
 | `vat_registered` | Whether to offer VAT on sales, bills and expenses. |
+
+---
+
+## 7.20 Invoices
+
+Base path: `/api/v1/invoices`. Sales invoices, credit notes and pro-formas (FR-AR-02/05, FR-PAY-04, FR-TAX-01). One resource with a `kind`:
+
+| `kind` | What it is | Ledger |
+|---|---|---|
+| `INVOICE` | A sales invoice the customer owes. | Issuing posts Dr Accounts Receivable (gross, tagged to the customer) / Cr income per line (net) / Cr VAT per tax account. |
+| `CREDIT_NOTE` | Reduces an issued invoice (returns, discounts, mistakes). Raised with `POST /invoices/{id}/credit-notes`. | Issuing posts the mirror journal and applies it to the invoice like a payment. |
+| `PROFORMA` | A quote. | **Never** posts. Can be converted once into a draft invoice. |
+
+**Lifecycle.** `status` is one of the SRS's six:
+
+| `status` | Meaning |
+|---|---|
+| `DRAFT` | Editable (`PATCH`) and deletable (`DELETE`). No number, nothing posted. |
+| `ISSUED` | Numbered and posted. Read-only from here on. |
+| `PART_PAID` | Some has been paid or credited; `balance_due_minor` shows the rest. |
+| `PAID` | Nothing left owing (paid and/or credited in full). |
+| `OVERDUE` | An `ISSUED` or `PART_PAID` invoice whose `due_date` is before today (Nairobi time). **Worked out when read**, never stored, so it's always current. Paying it moves it to `PART_PAID`/`PAID` as usual. |
+| `CANCELLED` | Cancelled before any payment; its journal was reversed. |
+
+**Numbers** (`INV-000001`, `CN-000001`, `PF-000001`) are given **when issued**, per business, with no gaps. Drafts show `number: null`; an invoice drafted offline gets its number when the server issues it.
+
+**Money fields** (`subtotal_minor`, `tax_minor`, `total_minor`, `amount_paid_minor`, `balance_due_minor`, line amounts) are returned as **strings**, like all money fields. `quantity` is a string with three decimals (`"1.500"`).
+
+**Currency:** invoices are in the business's base currency only (multi-currency is Phase 2). A customer set up with a different currency gets `400 CURRENCY_MISMATCH`.
+
+### `POST /invoices`
+
+`invoices:create`. Creates a **draft** invoice or pro-forma. Accepts `Idempotency-Key`.
+
+```json
+{
+  "clientUuid": "0b7c2f4e-1a3d-4c5e-8f9a-1b2c3d4e5f60",
+  "customerId": "<customer>",
+  "receivableAccountId": "<Accounts Receivable, 1100 in the starter chart>",
+  "issueDate": "2026-10-07",
+  "taxMode": "EXCLUSIVE",
+  "reference": "PO-778",
+  "notes": "Thank you for your business",
+  "lines": [
+    {
+      "description": "Maize flour 2kg",
+      "quantity": 10,
+      "unitPriceMinor": 25000,
+      "incomeAccountId": "<Sales Revenue, 4000>",
+      "taxRateBps": 1600,
+      "taxAccountId": "<VAT Payable, 2100>"
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `clientUuid` | uuid | ✅ Yes | The invoice's identity (DR-05). |
+| `kind` | string | No | `INVOICE` (default) or `PROFORMA`. |
+| `customerId` | uuid | ✅ Yes | |
+| `receivableAccountId` | uuid | For `INVOICE` | Accounts Receivable. Optional on a pro-forma until it's converted. |
+| `issueDate` | date | ✅ Yes | The invoice date, and the date its journal posts on. Its period must be open when you issue (the current month opens automatically). |
+| `dueDate` | date | No | Defaults to `issueDate` + the customer's `paymentTermsDays` (0 = due on issue). Pro-formas have none unless given. |
+| `currency` | string | No | Defaults to the base currency; anything else is `400`. |
+| `taxMode` | string | No | `EXCLUSIVE` (prices before VAT; VAT added on top), `INCLUSIVE` (prices include VAT; VAT extracted), `NONE` (default; no VAT on any line). |
+| `reference`, `notes` | string | No | Printed on the invoice. |
+| `lines[].description` | string | ✅ Yes | |
+| `lines[].quantity` | number | ✅ Yes | > 0, up to 3 decimal places (`2.5`). |
+| `lines[].unitPriceMinor` | integer | ✅ Yes | Per unit, before VAT under `EXCLUSIVE`, including VAT under `INCLUSIVE`. |
+| `lines[].incomeAccountId` | uuid | ✅ Yes | Usually Sales Revenue. |
+| `lines[].taxRateBps` | integer | No | Basis points: `1600` = 16%. `0` (default) = zero-rated or exempt. Must be `0` under `NONE`. |
+| `lines[].taxAccountId` | uuid | If rate > 0 | Output VAT account. |
+
+**The server calculates the amounts** and stores them; the app doesn't send totals. Per line: amount = quantity × unit price, rounded half up to the cent; then VAT = amount × rate (`EXCLUSIVE`) or amount × rate / (1 + rate) (`INCLUSIVE`), rounded half up. Totals are the sums of the rounded lines. `@jibuks/domain` exports `computeInvoiceTotals`, the same code, to preview totals in the app before saving.
+
+**Success Response:** `201 Created`, the invoice with `lines` and `allocations` (see [`GET /invoices/{id}`](#get-invoicesid)).
+
+**Error Response:** `400` validation (tax rate without `taxAccountId`, rate under `NONE`, `dueDate` before `issueDate`, no `receivableAccountId` on an invoice, more than 3 decimals); `404` unknown customer or account; `409 DUPLICATE_VALUE` (`clientUuid` used); `422 ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE`; `422 JOURNAL_LINE_EMPTY` (total is zero); `422 TAX_NOT_REGISTERED` (VAT on a business that isn't VAT-registered — check `vat_registered` on [`GET /tenant`](#719-tenant)).
+
+### `GET /invoices`
+
+`invoices:view`. Newest first, **cursor-paginated** (Section 9.1). This is the first paged list; other lists will follow the same shape.
+
+| Query | Description |
+|---|---|
+| `limit` | 1–200, default 50. |
+| `cursor` | `next_cursor` from the previous page. |
+| `status` | Any of the six statuses. `OVERDUE` matches past-due unpaid invoices; `ISSUED` / `PART_PAID` then exclude overdue ones. |
+| `kind` | `INVOICE`, `CREDIT_NOTE`, `PROFORMA`. |
+| `customer_id` | One customer's documents. |
+| `from`, `to` | `issue_date` range, inclusive. |
+
+```json
+{
+  "data": [ { "id": "...", "kind": "INVOICE", "number": "INV-000012", "status": "PART_PAID", "customer_name": "Wanjiku Stores", "total_minor": "290000", "balance_due_minor": "90000", "...": "..." } ],
+  "next_cursor": "eyJ0IjoiMjAyNi0xMC0wNyAxMDoxNTozMC4xMjM0NTYrMDAiLCJpIjoiLi4uIn0",
+  "has_more": true
+}
+```
+
+List rows are the invoice header plus `customer_name`; fetch one invoice for its `lines` and `allocations`. Treat the cursor as opaque.
+
+### `GET /invoices/{id}`
+
+`invoices:view`.
+
+```json
+{
+  "id": "4f1e...",
+  "client_uuid": "0b7c2f4e-...",
+  "kind": "INVOICE",
+  "status": "PART_PAID",
+  "number": "INV-000012",
+  "customer_id": "...",
+  "customer_name": "Wanjiku Stores",
+  "issue_date": "2026-10-07",
+  "due_date": "2026-11-06",
+  "currency": "KES",
+  "receivable_account_id": "...",
+  "tax_mode": "EXCLUSIVE",
+  "subtotal_minor": "250000",
+  "tax_minor": "40000",
+  "total_minor": "290000",
+  "amount_paid_minor": "200000",
+  "balance_due_minor": "90000",
+  "reference": "PO-778",
+  "notes": "Thank you for your business",
+  "journal_id": "...",
+  "cancel_journal_id": null,
+  "credited_invoice_id": null,
+  "proforma_id": null,
+  "credit_limit_overridden": false,
+  "issued_at": "2026-10-07T07:12:40.000Z",
+  "lines": [
+    { "line_no": 1, "description": "Maize flour 2kg", "quantity": "10.000", "unit_price_minor": "25000", "income_account_id": "...", "tax_rate_bps": 1600, "tax_account_id": "...", "net_minor": "250000", "tax_minor": "40000", "total_minor": "290000" }
+  ],
+  "allocations": [
+    { "method": "MPESA", "amount_minor": "200000", "unapplied_minor": "0", "date": "2026-10-08", "reference": "TIF1234ABC", "journal_id": "...", "payment_id": "...", "credit_note_id": null }
+  ]
+}
+```
+
+`allocations` lists everything applied to the invoice: payments (`CASH`, `BANK`, `MPESA`, `OTHER`) and credit notes (`CREDIT_NOTE`, with `credit_note_id`). `unapplied_minor` > 0 means money arrived beyond what was owed (only possible via M-Pesa); it stays as credit on the customer. `balance_due_minor` is `"0"` for drafts, cancelled invoices, credit notes and pro-formas.
+
+### `PATCH /invoices/{id}` / `DELETE /invoices/{id}`
+
+`invoices:create`. **Drafts only** — anything else is `422 INVOICE_INVALID_STATE`. `PATCH` takes any of `customerId`, `receivableAccountId`, `issueDate`, `dueDate`, `taxMode`, `reference`, `notes`, `lines`; `lines` **replaces all lines**. Amounts are recalculated. `dueDate: null` recalculates it from the customer's terms; changing `issueDate` or `customerId` without `dueDate` also recalculates it. A credit note's customer and receivable account can't be changed. `DELETE` → `204`.
+
+### `POST /invoices/{id}/issue`
+
+`invoices:issue`. Body optional: `{ "overrideCreditLimit": false }`. Gives the number, posts the journal (not for a pro-forma) and returns the invoice as `ISSUED`.
+
+- **Credit limit** (invoices only): if the customer has a `creditLimitMinor` and their balance plus this invoice would exceed it → `422 CREDIT_LIMIT_EXCEEDED`. Owner and Accountant (`invoices:override_credit_limit`) may resend with `overrideCreditLimit: true`; it's recorded as `credit_limit_overridden: true`. Anyone else gets `403`. Show the 422 message and, for those allowed, an "Issue anyway" button.
+- **Credit notes** apply themselves to their invoice on issue (it becomes `PART_PAID` or `PAID`).
+
+**Errors:** `422 INVOICE_INVALID_STATE` (not a draft, or it changed while issuing — retry), `422 PERIOD_LOCKED` / `PERIOD_NOT_FOUND` (the issue date's period is closed or missing), `422 CREDIT_NOTE_EXCEEDS_BALANCE`, `422 ACCOUNT_INACTIVE`.
+
+### `POST /invoices/{id}/payments`
+
+`payments:create` (so Cashiers can). Records money received **outside** M-Pesa STK push — cash, bank transfer, cheque, or an M-Pesa payment the customer sent directly. Accepts `Idempotency-Key`.
+
+```json
+{
+  "clientUuid": "c3d4...",
+  "amountMinor": 90000,
+  "date": "2026-10-09",
+  "receivedAccountId": "<Cash 1000, Bank 1010 or M-Pesa 1020>",
+  "method": "CASH",
+  "reference": "RCPT-0091"
+}
+```
+
+`method`: `CASH` (default), `BANK`, `MPESA`, `OTHER` — informational; `receivedAccountId` decides where the money is posted. Posts Dr `receivedAccountId` / Cr the invoice's receivable account (customer-tagged), and returns the invoice (`201`) with the new allocation.
+
+**Errors:** `422 INVOICE_OVERPAYMENT` (more than `balance_due_minor` — nothing is posted), `422 INVOICE_INVALID_STATE` (draft, cancelled, paid, credit note or pro-forma), `409 DUPLICATE_VALUE` (`clientUuid` used).
+
+To collect by **M-Pesa STK push**, call [`POST /payments/mpesa/stk-push`](#post-paymentsmpesastk-push) with `invoiceId` instead; the payment is applied automatically once it succeeds.
+
+### `POST /invoices/{id}/cancel`
+
+`invoices:cancel`. `{ "reason": "Customer changed their mind" }`. For an issued invoice **with nothing paid or credited**: posts a reversing journal (`cancel_journal_id`) and sets `CANCELLED`. An issued pro-forma is simply cancelled.
+
+**Errors:** `422 INVOICE_HAS_PAYMENTS` — raise a credit note for what's left instead; `422 INVOICE_INVALID_STATE` — drafts are deleted, not cancelled; credit notes can't be cancelled.
+
+### `POST /invoices/{id}/credit-notes`
+
+`invoices:create`. Creates a **draft** credit note against an `ISSUED`/`PART_PAID`/`OVERDUE` invoice. Issue it with `POST /invoices/{creditNoteId}/issue`.
+
+```json
+{
+  "clientUuid": "e5f6...",
+  "notes": "2 bags returned damaged",
+  "lines": [
+    { "description": "Maize flour 2kg (returned)", "quantity": 2, "unitPriceMinor": 25000, "incomeAccountId": "<Sales Revenue>", "taxRateBps": 1600, "taxAccountId": "<VAT Payable>" }
+  ]
+}
+```
+
+Customer, currency and receivable account come from the invoice; `taxMode` defaults to the invoice's; `issueDate` defaults to today. A credit note can't exceed what's still owed (`422 CREDIT_NOTE_EXCEEDS_BALANCE`, counting other draft credit notes too) — refunds for paid invoices come later.
+
+### `POST /invoices/{id}/convert`
+
+`invoices:create`. Turns a draft or issued pro-forma into a new **draft invoice** with the same customer, lines and tax mode. `{ "clientUuid": "...", "issueDate": "2026-10-07", "receivableAccountId": "..." }` — `issueDate` defaults to today; `receivableAccountId` is needed if the pro-forma has none. `201` with the new invoice (`proforma_id` points back). Once only: a second convert is `409 DUPLICATE_VALUE`.
+
+### Notes for consuming clients (Invoices)
+
+- Typical flow: create draft → review → issue → collect (STK push with `invoiceId`, or `POST /invoices/{id}/payments`) → status follows automatically.
+- Drafts can be created offline with their `clientUuid`; issuing needs the server (it assigns the number).
+- Don't reverse an invoice's journal through `POST /journals/{id}/reverse` — cancel the invoice or raise a credit note, so the invoice and ledger stay in step.
+- Not built yet: PDF/SMS sending (next step), recurring invoices (Phase 2), refunds of overpayments, un-recording a payment.

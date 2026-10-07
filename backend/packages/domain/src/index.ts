@@ -5,4 +5,5 @@ export * from "./ids.js";
 export * from "./accounts.js";
 export * from "./journal.js";
 export * from "./permissions.js";
+export * from "./invoices.js";
 export * from "./schemas.js";

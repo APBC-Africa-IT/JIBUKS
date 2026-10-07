@@ -1,0 +1,28 @@
+meta {
+  name: Cancel Invoice
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/v1/invoices/{{invoiceId}}/cancel
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "reason": "Customer changed their mind"
+  }
+}
+
+docs {
+  Requires invoices:cancel. Only with nothing paid or credited: reverses the journal. Otherwise 422
+  INVOICE_HAS_PAYMENTS -- raise a credit note instead.
+}

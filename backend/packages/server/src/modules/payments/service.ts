@@ -11,7 +11,9 @@
  *      with an STK status query first (settle).
  *   3. settle: on confirmed success, mark SUCCEEDED and post
  *      Dr received account / Cr credit account (and Cr tax account for any
- *      VAT included) through the journals module.
+ *      VAT included) through the journals module. A collection for an
+ *      invoice is posted by the invoices module instead, which applies it
+ *      to the invoice in the same transaction (FR-PAY-04).
  *
  * A payment is never reported as succeeded without Safaricom confirming it
  * (FR-PAY-07). If the confirmation query can't be made right away, the
@@ -24,6 +26,7 @@ import { DomainError, isUuid, type CurrencyCode } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as accountsService from "../accounts/service.js";
 import * as customersService from "../customers/service.js";
+import * as invoicesService from "../invoices/service.js";
 import * as journalsService from "../journals/service.js";
 import { todayInNairobi } from "../periods/service.js";
 import * as repository from "./repository.js";
@@ -92,8 +95,11 @@ export interface InitiateStkPushRequest {
   readonly currency: "KES";
   /** Defaults to the tenant's M-Pesa account (created if missing). */
   readonly receivedAccountId?: string;
-  readonly creditAccountId: string;
+  /** Required unless invoiceId is given. */
+  readonly creditAccountId?: string;
   readonly customerId?: string;
+  /** Collect against this issued invoice; its customer and receivable account are used. */
+  readonly invoiceId?: string;
   /** Output VAT included in amountMinor; both or neither. */
   readonly taxAccountId?: string;
   readonly taxAmountMinor?: number;
@@ -104,6 +110,16 @@ export interface InitiateStkPushRequest {
 export async function initiateStkPush(request: InitiateStkPushRequest, audit: AuditContext): Promise<PaymentView> {
   const daraja = getDarajaClient(); // 503 before anything is recorded
 
+  // An invoice supplies the other side of the journal and the customer.
+  const invoice = request.invoiceId
+    ? await invoicesService.assertCollectable(request.tenantId, request.invoiceId, request.amountMinor)
+    : null;
+  if (invoice && invoice.currency !== request.currency) {
+    throw new DomainError("CURRENCY_MISMATCH", `Invoice ${invoice.number} is in ${invoice.currency}; M-Pesa collects KES`);
+  }
+  const creditAccountId = invoice?.receivableAccountId ?? request.creditAccountId!;
+  const customerId = invoice?.customerId ?? request.customerId;
+
   // Resolved by system key, not code, and created here if missing -- so a
   // Cashier (no accounts:create) can collect in a business onboarded
   // before the M-Pesa starter account existed.
@@ -113,16 +129,16 @@ export async function initiateStkPush(request: InitiateStkPushRequest, audit: Au
   // Validate everything the eventual journal needs NOW, so a customer is
   // never charged for a payment that then can't be posted.
   await assertPostableAccount(request.tenantId, receivedAccountId);
-  await assertPostableAccount(request.tenantId, request.creditAccountId);
+  await assertPostableAccount(request.tenantId, creditAccountId);
   if (request.taxAccountId) {
     await assertPostableAccount(request.tenantId, request.taxAccountId);
   }
-  if (request.customerId) {
-    await customersService.getCustomer(request.tenantId, request.customerId);
+  if (customerId) {
+    await customersService.getCustomer(request.tenantId, customerId);
   }
 
   const token = randomBytes(32).toString("base64url");
-  const accountReference = request.accountReference ?? DEFAULT_ACCOUNT_REFERENCE;
+  const accountReference = request.accountReference ?? invoice?.number ?? DEFAULT_ACCOUNT_REFERENCE;
   const payment = await repository.insertPayment(
     {
       tenantId: request.tenantId,
@@ -133,8 +149,9 @@ export async function initiateStkPush(request: InitiateStkPushRequest, audit: Au
       accountReference,
       ...(request.description !== undefined ? { description: request.description } : {}),
       receivedAccountId,
-      creditAccountId: request.creditAccountId,
-      ...(request.customerId !== undefined ? { customerId: request.customerId } : {}),
+      creditAccountId,
+      ...(customerId !== undefined ? { customerId } : {}),
+      ...(invoice ? { invoiceId: invoice.id } : {}),
       ...(request.taxAccountId !== undefined
         ? { taxAccountId: request.taxAccountId, taxAmountMinor: request.taxAmountMinor ?? 0 }
         : {}),
@@ -342,6 +359,27 @@ async function postToLedger(
   const description = payment.description ?? `M-Pesa payment from ${payment.phone}`;
   const taxAmountMinor = Number(payment.tax_amount_minor);
   try {
+    if (payment.invoice_id) {
+      // Posted and applied to the invoice in one transaction. Money beyond
+      // what the invoice still owes is kept as customer credit, not refused.
+      const applied = await invoicesService.applyPayment(
+        {
+          tenantId: payment.tenant_id,
+          invoiceId: payment.invoice_id,
+          clientUuid: payment.id,
+          amountMinor,
+          date: payment.transaction_date!,
+          receivedAccountId: payment.received_account_id,
+          method: "MPESA",
+          ...(payment.mpesa_receipt_number ? { reference: payment.mpesa_receipt_number } : {}),
+          paymentId: payment.id,
+          allowOverpayment: true,
+        },
+        actor,
+      );
+      await repository.setPostingResult(payment.tenant_id, payment.id, applied.journalId, null);
+      return;
+    }
     const journal = await journalsService.createJournal(
       {
         tenantId: payment.tenant_id,

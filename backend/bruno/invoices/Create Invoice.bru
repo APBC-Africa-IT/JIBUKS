@@ -1,0 +1,45 @@
+meta {
+  name: Create Invoice
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/invoices
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "customerId": "{{customerId}}",
+    "receivableAccountId": "{{arAccountId}}",
+    "issueDate": "2026-10-07",
+    "taxMode": "EXCLUSIVE",
+    "reference": "PO-778",
+    "notes": "Thank you for your business",
+    "lines": [
+      {
+        "description": "Maize flour 2kg",
+        "quantity": 10,
+        "unitPriceMinor": 25000,
+        "incomeAccountId": "{{salesAccountId}}",
+        "taxRateBps": 1600,
+        "taxAccountId": "{{vatAccountId}}"
+      }
+    ]
+  }
+}
+
+docs {
+  Requires invoices:create. Creates a DRAFT (no number, nothing posted). The server computes
+  all amounts: 10 x 250.00 = 2,500.00 + 16% VAT 400.00 = 2,900.00. Set invoiceId to the returned id.
+  VAT needs a VAT-registered business; otherwise use "taxMode": "NONE" and drop the tax fields.
+}

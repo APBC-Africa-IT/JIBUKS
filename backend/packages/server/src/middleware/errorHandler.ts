@@ -54,6 +54,14 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   PAYMENTS_NOT_CONFIGURED: 503,
   PAYMENT_PROVIDER_ERROR: 502,
   PAYMENT_NOT_REPOSTABLE: 422,
+  // invoices
+  INVOICE_NOT_FOUND: 404,
+  INVOICE_INVALID_STATE: 422,
+  INVOICE_HAS_PAYMENTS: 422,
+  INVOICE_OVERPAYMENT: 422,
+  CREDIT_NOTE_EXCEEDS_BALANCE: 422,
+  CREDIT_LIMIT_EXCEEDED: 422,
+  TAX_NOT_REGISTERED: 422,
   // idempotency -- status codes follow the IETF Idempotency-Key header
   // draft: reuse with a different payload is 422, a concurrent retry of a
   // still-running request is 409.

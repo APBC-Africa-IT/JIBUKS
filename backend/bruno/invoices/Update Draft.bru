@@ -1,0 +1,29 @@
+meta {
+  name: Update Draft
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/invoices/{{invoiceId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "notes": "Delivered to the back gate",
+    "dueDate": null
+  }
+}
+
+docs {
+  Requires invoices:create. Drafts only. "lines", if sent, replaces every line. dueDate null recomputes it
+  from the customer's payment terms.
+}

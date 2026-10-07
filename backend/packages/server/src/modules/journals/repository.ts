@@ -12,6 +12,9 @@
 import { randomUUID } from "node:crypto";
 import { recordAuditLog, withTenant, readAsTenant, type AuditContext } from "@jibuks/db";
 
+/** A transaction-scoped client, as handed out by withTenant. */
+export type TxClient = Parameters<Parameters<typeof withTenant>[1]>[0];
+
 export interface JournalRow {
   readonly id: string;
   readonly tenant_id: string;
@@ -75,7 +78,20 @@ export interface CreateJournalInput {
 }
 
 export async function createJournal(input: CreateJournalInput, audit: AuditContext): Promise<JournalWithLines> {
-  return withTenant(input.tenantId, async (client) => {
+  return withTenant(input.tenantId, (client) => insertJournal(client, input, audit));
+}
+
+/**
+ * Inserts a journal inside the caller's transaction, so another module can
+ * post it atomically with its own writes (e.g. an invoice and its journal).
+ * `client` must come from withTenant for input.tenantId.
+ */
+export async function insertJournal(
+  client: TxClient,
+  input: CreateJournalInput,
+  audit: AuditContext,
+): Promise<JournalWithLines> {
+  {
     const journalId = randomUUID();
 
     const journalResult = await client.query<JournalRow>(
@@ -133,12 +149,12 @@ export async function createJournal(input: CreateJournalInput, audit: AuditConte
       context: audit,
     });
 
-    // The deferred balance trigger (DR-04) fires when this transaction
-    // commits, right after this callback returns. If the lines don't
-    // balance, withTenant's COMMIT throws and the whole insert -- journal,
-    // lines, and audit log alike -- rolls back together.
+    // The deferred balance trigger (DR-04) fires when the enclosing
+    // transaction commits. If the lines don't balance, withTenant's COMMIT
+    // throws and everything written in it -- journal, lines, audit log and
+    // the caller's own rows alike -- rolls back together.
     return { ...journal, lines };
-  });
+  }
 }
 
 export async function listJournals(tenantId: string): Promise<JournalRow[]> {

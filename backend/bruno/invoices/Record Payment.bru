@@ -1,0 +1,33 @@
+meta {
+  name: Record Payment
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/v1/invoices/{{invoiceId}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "amountMinor": 100000,
+    "date": "2026-10-07",
+    "receivedAccountId": "{{cashAccountId}}",
+    "method": "CASH",
+    "reference": "RCPT-0091"
+  }
+}
+
+docs {
+  Requires payments:create (Cashiers can). Cash, bank or a direct M-Pesa transfer. Moves the invoice to
+  PART_PAID / PAID. More than balance_due_minor is 422 INVOICE_OVERPAYMENT. For STK push see payments/STK Push for Invoice.
+}
