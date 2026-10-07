@@ -18,11 +18,13 @@ export interface TenantRow {
   readonly tax_identifier: string | null;
   /** The chart-of-accounts template seeded at onboarding; null for older businesses. */
   readonly chart_template: string | null;
+  /** Manual journal approval: null = off, "0" = every one, N = totalling N or more (bigint as string). */
+  readonly manual_journal_approval_threshold_minor: string | null;
   readonly created_at: string;
 }
 
 const COLUMNS =
-  "id, name, type, base_currency, accounting_framework, plan_tier, status, vat_registered, tax_identifier, chart_template, created_at";
+  "id, name, type, base_currency, accounting_framework, plan_tier, status, vat_registered, tax_identifier, chart_template, manual_journal_approval_threshold_minor, created_at";
 
 export async function getTenant(tenantId: string): Promise<TenantRow | null> {
   return readAsTenant(tenantId, async (client) => {
@@ -34,19 +36,31 @@ export async function getTenant(tenantId: string): Promise<TenantRow | null> {
   });
 }
 
+export interface UpdateTenantInput {
+  readonly taxIdentifier?: string | null;
+  readonly manualJournalApprovalThresholdMinor?: number | null;
+}
+
 export async function updateTenant(
   tenantId: string,
-  input: { readonly taxIdentifier?: string | null },
+  input: UpdateTenantInput,
   audit: AuditContext,
 ): Promise<TenantRow> {
   return withTenant(tenantId, async (client) => {
     const before = await client.query<TenantRow>(`SELECT ${COLUMNS} FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
     const result = await client.query<TenantRow>(
       `UPDATE tenants
-          SET tax_identifier = CASE WHEN $2 THEN $3 ELSE tax_identifier END
+          SET tax_identifier = CASE WHEN $2 THEN $3 ELSE tax_identifier END,
+              manual_journal_approval_threshold_minor = CASE WHEN $4 THEN $5::bigint ELSE manual_journal_approval_threshold_minor END
         WHERE id = $1
        RETURNING ${COLUMNS}`,
-      [tenantId, input.taxIdentifier !== undefined, input.taxIdentifier ?? null],
+      [
+        tenantId,
+        input.taxIdentifier !== undefined,
+        input.taxIdentifier ?? null,
+        input.manualJournalApprovalThresholdMinor !== undefined,
+        input.manualJournalApprovalThresholdMinor ?? null,
+      ],
     );
     const tenant = result.rows[0]!;
     await recordAuditLog(client, {

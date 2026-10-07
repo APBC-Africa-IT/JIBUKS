@@ -16,7 +16,8 @@ import type { AccountId, BranchId, CustomerId, JournalId, SupplierId, TenantId, 
 export const JOURNAL_SOURCES = ["MANUAL", "CASHBOOK", "PAYMENT", "SALE", "BILL", "IMPORT", "COMMUNITY", "OPENING", "REVERSAL"] as const;
 export type JournalSource = (typeof JOURNAL_SOURCES)[number];
 
-export const JOURNAL_STATUSES = ["DRAFT", "PENDING_APPROVAL", "POSTED", "REVERSED"] as const;
+/** PENDING_APPROVAL waits for a second person (FR-JNL-01); REJECTED is final. Only POSTED counts. */
+export const JOURNAL_STATUSES = ["DRAFT", "PENDING_APPROVAL", "POSTED", "REJECTED", "REVERSED"] as const;
 export type JournalStatus = (typeof JOURNAL_STATUSES)[number];
 
 export interface JournalLineInput {

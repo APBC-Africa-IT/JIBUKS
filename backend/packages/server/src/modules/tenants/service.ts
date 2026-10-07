@@ -4,7 +4,10 @@
  * offer (FR-MIC-08): STARTER is the micro-trader tier.
  */
 
+import { DomainError } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
+import * as rolesService from "../roles/service.js";
+import * as usersService from "../users/service.js";
 import * as repository from "./repository.js";
 import type { TenantRow } from "./repository.js";
 
@@ -17,10 +20,31 @@ export async function getTenant(tenantId: string): Promise<TenantRow> {
   return tenant;
 }
 
+/**
+ * Changes the business's own settings. Turning manual journal approval on
+ * needs at least two active users who can approve: nobody may approve their
+ * own journal (FR-RBAC-03), so with one approver every journal would wait
+ * forever.
+ */
 export async function updateTenant(
   tenantId: string,
-  input: { readonly taxIdentifier?: string | null },
+  input: repository.UpdateTenantInput,
   audit: AuditContext,
 ): Promise<TenantRow> {
+  if (input.manualJournalApprovalThresholdMinor !== undefined && input.manualJournalApprovalThresholdMinor !== null) {
+    const users = await usersService.listUsers(tenantId);
+    let approvers = 0;
+    for (const user of users.filter((u) => u.status === "ACTIVE")) {
+      if ((await rolesService.effectivePermissions(tenantId, user.id)).has("journals:approve")) {
+        approvers++;
+      }
+    }
+    if (approvers < 2) {
+      throw new DomainError(
+        "NOT_ENOUGH_APPROVERS",
+        `Journal approval needs at least two active users who can approve journals (Owner or Accountant); this business has ${approvers}`,
+      );
+    }
+  }
   return repository.updateTenant(tenantId, input, audit);
 }

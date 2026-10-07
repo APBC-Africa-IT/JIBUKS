@@ -769,6 +769,9 @@ export const updateTenantSchema = z
   .object({
     /** The business's own tax PIN (e.g. KRA PIN), printed on its invoices. */
     taxIdentifier: taxIdentifierSchema.nullable().optional(),
+    /** Manual journal approval (FR-JNL-01): null = off, 0 = every manual
+     * journal, N = manual journals totalling N minor units or more. */
+    manualJournalApprovalThresholdMinor: minorUnitsSchema.nullable().optional(),
   })
   .refine(atLeastOneField, "Provide at least one field to update");
 
@@ -936,3 +939,17 @@ export const openingBalancesSchema = z.object({
 });
 
 export type OpeningBalancesDto = z.infer<typeof openingBalancesSchema>;
+
+// ---------------------------------------------------------------------
+// Journal approval -- FR-JNL-01, FR-RBAC-03
+// ---------------------------------------------------------------------
+
+/** POST /journals/{id}/reject */
+export const rejectJournalSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+
+/** GET /journals */
+export const listJournalsQuerySchema = z.object({
+  status: z.enum(["PENDING_APPROVAL", "POSTED", "REJECTED"]).optional(),
+});
