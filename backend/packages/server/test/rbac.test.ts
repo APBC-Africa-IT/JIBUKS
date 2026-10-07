@@ -99,6 +99,14 @@ describe("requirePermission enforcement", () => {
     expect(await status("invoices:cancel")).toBe(403);
   });
 
+  it("lets only OWNER change the business's details", async () => {
+    for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
+      const user = await seedUser([key]);
+      const response = await request(guardedApp(user, "tenant:edit")).post("/action");
+      expect(response.status, key).toBe(key === "OWNER" ? 200 : 403);
+    }
+  });
+
   it("lets only OWNER and ACCOUNTANT override a credit limit", async () => {
     for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
       const user = await seedUser([key]);

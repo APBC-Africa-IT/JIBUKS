@@ -36,6 +36,7 @@ import * as journalsService from "../journals/service.js";
 import type { CreateJournalLineRequest, PreparedJournal } from "../journals/service.js";
 import { todayInNairobi } from "../periods/service.js";
 import * as tenantsService from "../tenants/service.js";
+import { buildInvoicePdfModel, renderInvoicePdf } from "./pdf.js";
 import * as repository from "./repository.js";
 import type { AllocationRow, InvoiceLineRow, InvoiceListRow, InvoiceRow, LineInput } from "./repository.js";
 
@@ -853,3 +854,30 @@ export async function convertProforma(request: ConvertProformaRequest, audit: Au
   );
 }
 
+
+// ---------------------------------------------------------------------
+// PDF
+// ---------------------------------------------------------------------
+
+/** The invoice as a PDF, built on request (nothing is stored). */
+export async function getInvoicePdf(tenantId: string, invoiceId: string): Promise<{ filename: string; pdf: Buffer }> {
+  const invoice = await getInvoice(tenantId, invoiceId);
+  const [tenant, customer, credited] = await Promise.all([
+    tenantsService.getTenant(tenantId),
+    customersService.getCustomer(tenantId, invoice.customer_id),
+    invoice.credited_invoice_id ? repository.getInvoice(tenantId, invoice.credited_invoice_id) : null,
+  ]);
+  const model = buildInvoicePdfModel({
+    invoice,
+    business: { name: tenant.name, taxIdentifier: tenant.tax_identifier },
+    customer: {
+      name: customer.name,
+      taxIdentifier: customer.tax_identifier,
+      phone: customer.phone,
+      email: customer.email,
+      address: customer.address,
+    },
+    creditedInvoiceNumber: credited?.number ?? null,
+  });
+  return { filename: model.filename, pdf: await renderInvoicePdf(model) };
+}

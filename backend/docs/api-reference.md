@@ -117,7 +117,7 @@ FR-RBAC-01/02, FR-MIC-08. Each user has one or more **roles**, and each role gra
 
 | Role | Can do |
 |---|---|
-| `OWNER` | Everything, including managing users, roles and invites. |
+| `OWNER` | Everything, including managing users, roles and invites, and the business's own details (`PATCH /tenant`). |
 | `ACCOUNTANT` | All bookkeeping, period close/reopen, journal reversal, invoices (including credit-limit override), reports. Can view users/roles but not change them. |
 | `CASHIER` | Record cash sales and cash expenses, collect M-Pesa payments, take payments against invoices; view accounts, customers, suppliers and invoices. Can't raise, issue or cancel invoices. |
 | `VIEWER` | Read-only: every `:view` permission, including reports. |
@@ -166,6 +166,8 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /invoices/{id}/issue` | `invoices:issue` (+ `invoices:override_credit_limit` to pass `overrideCreditLimit: true`) |
 | `POST /invoices/{id}/cancel` | `invoices:cancel` |
 | `POST /invoices/{id}/payments` | `payments:create` |
+| `GET /invoices/{id}/pdf` | `invoices:view` |
+| `PATCH /tenant` | `tenant:edit` (Owner only) |
 | `GET /trial-balance`, `GET /profit-and-loss`, `GET /cash-flow` | `reports:view` |
 
 ---
@@ -1464,6 +1466,7 @@ The caller's own business. Needs no permission; every signed-in user can call it
   "plan_tier": "STARTER",
   "status": "ACTIVE",
   "vat_registered": false,
+  "tax_identifier": "P051234567X",
   "created_at": "2026-09-01T08:00:00.000Z"
 }
 ```
@@ -1475,6 +1478,23 @@ The caller's own business. Needs no permission; every signed-in user can call it
 | `plan_tier` | `STARTER` (micro-trader; every business starts here), `GROWTH`, `ENTERPRISE`. Use it to choose which roles to offer (see [Roles and permissions](#roles-and-permissions)). There is no endpoint to change it yet. |
 | `status` | `ACTIVE`, `SUSPENDED` |
 | `vat_registered` | Whether to offer VAT on sales, bills and expenses. |
+| `tax_identifier` | The business's KRA PIN (or other tax PIN), printed on its invoices. `null` until set. |
+
+### `PATCH /tenant`
+
+`tenant:edit` — **Owner only**. Accepts `Idempotency-Key`. Omitted fields are unchanged; `null` clears.
+
+```json
+{ "taxIdentifier": "P051234567X" }
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `taxIdentifier` | string \| null | The business's KRA PIN. Trimmed and upper-cased (`" p051234567x "` → `"P051234567X"`); letters, digits, spaces, `-` and `/`, up to 50. Same rules as a customer's `taxIdentifier`. |
+
+**Success Response:** `200 OK`, the tenant. **Error Response:** `400` (empty body or bad PIN), `403` for anyone but the Owner.
+
+Suggested place in the app: a "Business details" screen in settings, and a prompt to add the PIN the first time a VAT-registered business opens an invoice PDF without one.
 
 ---
 
@@ -1624,6 +1644,18 @@ List rows are the invoice header plus `customer_name`; fetch one invoice for its
 
 `invoices:create`. **Drafts only** — anything else is `422 INVOICE_INVALID_STATE`. `PATCH` takes any of `customerId`, `receivableAccountId`, `issueDate`, `dueDate`, `taxMode`, `reference`, `notes`, `lines`; `lines` **replaces all lines**. Amounts are recalculated. `dueDate: null` recalculates it from the customer's terms; changing `issueDate` or `customerId` without `dueDate` also recalculates it. A credit note's customer and receivable account can't be changed. `DELETE` → `204`.
 
+### `GET /invoices/{id}/pdf`
+
+`invoices:view`. The invoice, credit note or pro-forma as an A4 PDF (`Content-Type: application/pdf`). Built on request and never stored, so there's nothing to host or clean up.
+
+**What's on it:** the business name and KRA PIN ([`PATCH /tenant`](#patch-tenant)); the customer's name, address, phone, email and KRA PIN; the number, dates, reference and status; each line (description, quantity, unit price, VAT rate, amount); subtotal, VAT, total, paid and **balance due**; payments and credit notes received; notes. Drafts are stamped **DRAFT**, paid invoices **PAID** and cancelled ones **CANCELLED**. Credit notes name the invoice they credit; pro-formas say "Valid until" instead of "Due date".
+
+`Content-Disposition: inline; filename="INV-000012.pdf"` (drafts: `DRAFT-<first 8 characters of the id>.pdf`).
+
+**In the app:** download it with the normal `Authorization` header, then show it or hand the file to the phone's share sheet (WhatsApp, email, …). A link the customer can open without logging in comes with SMS sharing later.
+
+Amounts are exactly as issued; the business and customer details are their **current** values, so renaming the business changes the name on old invoices too.
+
 ### `POST /invoices/{id}/issue`
 
 `invoices:issue`. Body optional: `{ "overrideCreditLimit": false }`. Gives the number, posts the journal (not for a pro-forma) and returns the invoice as `ISSUED`.
@@ -1685,4 +1717,4 @@ Customer, currency and receivable account come from the invoice; `taxMode` defau
 - Typical flow: create draft → review → issue → collect (STK push with `invoiceId`, or `POST /invoices/{id}/payments`) → status follows automatically.
 - Drafts can be created offline with their `clientUuid`; issuing needs the server (it assigns the number).
 - Don't reverse an invoice's journal through `POST /journals/{id}/reverse` — cancel the invoice or raise a credit note, so the invoice and ledger stay in step.
-- Not built yet: PDF/SMS sending (next step), recurring invoices (Phase 2), refunds of overpayments, un-recording a payment.
+- Not built yet: SMS/email sending and a public share link (later), a business logo and custom templates (FR-TEN-03), recurring invoices (Phase 2), refunds of overpayments, un-recording a payment.

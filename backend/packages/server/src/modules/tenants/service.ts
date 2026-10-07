@@ -4,6 +4,7 @@
  * offer (FR-MIC-08): STARTER is the micro-trader tier.
  */
 
+import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
 import type { TenantRow } from "./repository.js";
 
@@ -14,4 +15,12 @@ export async function getTenant(tenantId: string): Promise<TenantRow> {
     throw new Error(`Tenant ${tenantId} not found for an authenticated user`);
   }
   return tenant;
+}
+
+export async function updateTenant(
+  tenantId: string,
+  input: { readonly taxIdentifier?: string | null },
+  audit: AuditContext,
+): Promise<TenantRow> {
+  return repository.updateTenant(tenantId, input, audit);
 }

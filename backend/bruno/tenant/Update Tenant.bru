@@ -1,0 +1,27 @@
+meta {
+  name: Update Tenant
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/tenant
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "taxIdentifier": "P051234567X"
+  }
+}
+
+docs {
+  Requires tenant:edit (Owner only). Sets the business's KRA PIN, printed on invoice PDFs. null clears it.
+}

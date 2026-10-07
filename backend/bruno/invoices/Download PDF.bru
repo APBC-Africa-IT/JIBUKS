@@ -1,0 +1,20 @@
+meta {
+  name: Download PDF
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/api/v1/invoices/{{invoiceId}}/pdf
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires invoices:view. Returns application/pdf (works for drafts, credit notes and pro-formas too).
+  Bruno shows the PDF in the response pane. The business KRA PIN on it comes from PATCH /tenant.
+}

@@ -742,3 +742,17 @@ export const listInvoicesQuerySchema = paginationSchema.extend({
 });
 
 export type ListInvoicesQueryDto = z.infer<typeof listInvoicesQuerySchema>;
+
+// ---------------------------------------------------------------------
+// Tenant -- the caller's own business
+// ---------------------------------------------------------------------
+
+/** PATCH /tenant. Omitted fields are unchanged; null clears. */
+export const updateTenantSchema = z
+  .object({
+    /** The business's own tax PIN (e.g. KRA PIN), printed on its invoices. */
+    taxIdentifier: taxIdentifierSchema.nullable().optional(),
+  })
+  .refine(atLeastOneField, "Provide at least one field to update");
+
+export type UpdateTenantDto = z.infer<typeof updateTenantSchema>;

@@ -128,3 +128,14 @@ export async function convert(req: Request, res: Response): Promise<void> {
   );
   res.status(201).json(invoice);
 }
+
+/** inline: the app can show it or hand it to the phone's share sheet. */
+export async function pdf(req: Request, res: Response): Promise<void> {
+  const { filename, pdf: body } = await service.getInvoicePdf(req.tenantId!, req.params["id"]!);
+  res
+    .status(200)
+    .type("application/pdf")
+    .set("Content-Disposition", `inline; filename="${filename}"`)
+    .set("Cache-Control", "private, no-store")
+    .send(body);
+}
