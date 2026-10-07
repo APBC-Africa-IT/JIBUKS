@@ -589,3 +589,53 @@ export async function applyAllocation(
   });
   return { invoice, allocation };
 }
+
+export interface OpenInvoiceRow {
+  readonly id: string;
+  readonly number: string;
+  readonly customer_id: string;
+  readonly customer_name: string;
+  readonly issue_date: string;
+  readonly due_date: string | null;
+  readonly total_minor: string;
+  /** What was still owed at the as-of date. */
+  readonly open_minor: string;
+}
+
+/**
+ * Invoices that had something left to pay at the end of `asOf`: issued on
+ * or before it, not yet cancelled then, and not covered by payments and
+ * credit notes dated on or before it. Reconstructed from allocation dates,
+ * so a past as-of date gives the past picture.
+ */
+export async function listOpenInvoicesAsOf(
+  tenantId: string,
+  asOf: string,
+  customerId?: string,
+): Promise<OpenInvoiceRow[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const params: unknown[] = [asOf];
+    if (customerId !== undefined) {
+      params.push(customerId);
+    }
+    const result = await client.query<OpenInvoiceRow>(
+      `SELECT * FROM (
+         SELECT i.id, i.number, i.customer_id, c.name AS customer_name, i.issue_date, i.due_date, i.total_minor,
+                (i.total_minor - COALESCE(
+                   (SELECT SUM(a.amount_minor) FROM invoice_allocations a WHERE a.invoice_id = i.id AND a.date <= $1::date),
+                   0))::text AS open_minor
+           FROM invoices i
+           JOIN customers c ON c.id = i.customer_id
+          WHERE i.kind = 'INVOICE'
+            AND i.status <> 'DRAFT'
+            AND i.issue_date <= $1::date
+            AND (i.status <> 'CANCELLED' OR (i.cancelled_at AT TIME ZONE 'Africa/Nairobi')::date > $1::date)
+            ${customerId !== undefined ? "AND i.customer_id = $2" : ""}
+       ) open
+       WHERE open.open_minor::bigint > 0
+       ORDER BY open.due_date NULLS FIRST, open.issue_date, open.number`,
+      params,
+    );
+    return result.rows;
+  });
+}

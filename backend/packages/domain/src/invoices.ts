@@ -128,3 +128,23 @@ export function invoiceViewStatus(
   }
   return status;
 }
+
+/**
+ * Aging buckets (FR-AR-04, FR-AP-03): current, then 30-day bands past the
+ * due date, then over 90.
+ */
+export const AGING_BUCKETS = ["CURRENT", "DAYS_1_30", "DAYS_31_60", "DAYS_61_90", "DAYS_OVER_90"] as const;
+export type AgingBucket = (typeof AGING_BUCKETS)[number];
+
+/** Whole days from dueDate to asOf; zero or less means not yet overdue. */
+export function daysPastDue(dueDate: string, asOf: string): number {
+  return Math.round((Date.parse(`${asOf}T00:00:00Z`) - Date.parse(`${dueDate}T00:00:00Z`)) / 86_400_000);
+}
+
+export function agingBucket(daysPastDueValue: number): AgingBucket {
+  if (daysPastDueValue <= 0) return "CURRENT";
+  if (daysPastDueValue <= 30) return "DAYS_1_30";
+  if (daysPastDueValue <= 60) return "DAYS_31_60";
+  if (daysPastDueValue <= 90) return "DAYS_61_90";
+  return "DAYS_OVER_90";
+}

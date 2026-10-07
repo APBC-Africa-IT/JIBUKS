@@ -63,3 +63,22 @@ describe("numbers and statuses", () => {
     expect(invoiceViewStatus("PROFORMA", "ISSUED", "2026-10-01", "2026-10-02")).toBe("ISSUED");
   });
 });
+
+describe("aging buckets", () => {
+  it("counts whole days past due and bands them", async () => {
+    const { agingBucket, daysPastDue } = await import("../src/index.js");
+    expect(daysPastDue("2026-10-01", "2026-10-01")).toBe(0);
+    expect(daysPastDue("2026-10-01", "2026-09-30")).toBe(-1);
+    expect(daysPastDue("2026-02-28", "2026-03-30")).toBe(30);
+    expect([0, 1, 30, 31, 60, 61, 90, 91].map(agingBucket)).toEqual([
+      "CURRENT",
+      "DAYS_1_30",
+      "DAYS_1_30",
+      "DAYS_31_60",
+      "DAYS_31_60",
+      "DAYS_61_90",
+      "DAYS_61_90",
+      "DAYS_OVER_90",
+    ]);
+  });
+});

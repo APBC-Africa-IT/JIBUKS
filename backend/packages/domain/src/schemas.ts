@@ -756,3 +756,17 @@ export const updateTenantSchema = z
   .refine(atLeastOneField, "Provide at least one field to update");
 
 export type UpdateTenantDto = z.infer<typeof updateTenantSchema>;
+
+// ---------------------------------------------------------------------
+// Aging -- FR-AR-04
+// ---------------------------------------------------------------------
+
+/** GET /receivables-aging */
+export const agingQuerySchema = z.object({
+  /** Age as at this date (default: today, Africa/Nairobi). */
+  as_of: accountingDateSchema.optional(),
+  /** Drill down: one customer's open invoices instead of the summary. */
+  customer_id: uuidSchema.optional(),
+});
+
+export type AgingQueryDto = z.infer<typeof agingQuerySchema>;

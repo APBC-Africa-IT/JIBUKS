@@ -51,6 +51,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.18 Payments](#718-payments)
 - [7.19 Tenant](#719-tenant)
 - [7.20 Invoices](#720-invoices)
+- [7.21 Receivables Aging](#721-receivables-aging)
 
 ---
 
@@ -168,7 +169,7 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /invoices/{id}/payments` | `payments:create` |
 | `GET /invoices/{id}/pdf` | `invoices:view` |
 | `PATCH /tenant` | `tenant:edit` (Owner only) |
-| `GET /trial-balance`, `GET /profit-and-loss`, `GET /cash-flow` | `reports:view` |
+| `GET /trial-balance`, `GET /profit-and-loss`, `GET /cash-flow`, `GET /receivables-aging` | `reports:view` |
 
 ---
 
@@ -1718,3 +1719,74 @@ Customer, currency and receivable account come from the invoice; `taxMode` defau
 - Drafts can be created offline with their `clientUuid`; issuing needs the server (it assigns the number).
 - Don't reverse an invoice's journal through `POST /journals/{id}/reverse` — cancel the invoice or raise a credit note, so the invoice and ledger stay in step.
 - Not built yet: SMS/email sending and a public share link (later), a business logo and custom templates (FR-TEN-03), recurring invoices (Phase 2), refunds of overpayments, un-recording a payment.
+
+---
+
+## 7.21 Receivables Aging
+
+FR-AR-04. What each customer owes, by how long it's past due. `reports:view`.
+
+### `GET /receivables-aging`
+
+| Query | Description |
+|---|---|
+| `as_of` | Date to age at (default today, Nairobi time). A past date gives the past picture: only invoices issued by then, and only payments and credit notes dated by then. |
+| `customer_id` | **Drill down** to one customer's open invoices (response shape below). |
+
+**Summary response:**
+
+```json
+{
+  "as_of": "2026-11-21",
+  "currency": "KES",
+  "buckets": ["CURRENT", "DAYS_1_30", "DAYS_31_60", "DAYS_61_90", "DAYS_OVER_90"],
+  "rows": [
+    {
+      "customer_id": "6f1e...",
+      "customer_name": "Wanjiku Stores",
+      "current_minor": "0",
+      "days_1_30_minor": "100000",
+      "days_31_60_minor": "30000",
+      "days_61_90_minor": "0",
+      "days_over_90_minor": "0",
+      "invoiced_minor": "130000",
+      "not_invoiced_minor": "30000",
+      "balance_minor": "160000"
+    }
+  ],
+  "totals": { "current_minor": "...", "days_1_30_minor": "...", "...": "...", "balance_minor": "..." }
+}
+```
+
+- **Buckets** age each invoice's **unpaid part** by days past its `due_date`: `CURRENT` = not yet due (or due today), then 1–30, 31–60, 61–90 and over 90 days late. Draft and cancelled invoices aren't included.
+- **`not_invoiced_minor`** is the rest of the customer's balance that isn't on an invoice, so it can't be aged: credit sales (`POST /credit-sales`), money received beyond an invoice (customer credit, negative), manual journals. Show it as its own column ("Not on an invoice").
+- **`balance_minor`** = buckets + `not_invoiced_minor` = the customer's ledger balance at `as_of` (the same figure as `GET /customers?as_of=`). Rows are sorted by balance, largest first; customers with nothing owed and no balance are left out.
+- `totals` sums every row.
+
+**Drill-down response** (`?customer_id=...`):
+
+```json
+{
+  "as_of": "2026-11-21",
+  "currency": "KES",
+  "customer_id": "6f1e...",
+  "customer_name": "Wanjiku Stores",
+  "invoices": [
+    { "id": "...", "number": "INV-000014", "issue_date": "2026-10-07", "due_date": "2026-10-07", "days_past_due": 45, "bucket": "DAYS_31_60", "total_minor": "50000", "open_minor": "30000" },
+    { "id": "...", "number": "INV-000013", "issue_date": "2026-10-07", "due_date": "2026-11-06", "days_past_due": 15, "bucket": "DAYS_1_30", "total_minor": "100000", "open_minor": "100000" }
+  ],
+  "invoiced_minor": "130000",
+  "not_invoiced_minor": "30000",
+  "balance_minor": "160000"
+}
+```
+
+Oldest due first. `open_minor` is what was still owed on that invoice at `as_of`. Tap an invoice to open `GET /invoices/{id}`.
+
+**Errors:** `400` bad `as_of` or `customer_id`; `404` unknown customer.
+
+### Notes for consuming clients (Receivables Aging)
+
+- Amounts are strings in minor units, like everywhere else; the currency is the base currency.
+- Supplier (payables) aging comes next, once supplier bills are stored as records.
+- Export to PDF/Excel/CSV (FR-RPT-04) isn't built yet.
