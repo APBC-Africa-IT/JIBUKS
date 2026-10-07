@@ -17,6 +17,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { closePool, withTenant } from "@jibuks/db";
 import { PERMISSIONS, SYSTEM_ROLES, type Permission } from "@jibuks/domain";
 import { createApp } from "../src/app.js";
+import { listen } from "./testServer.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { requirePermission } from "../src/middleware/requirePermission.js";
 import { onboard } from "../src/modules/onboarding/service.js";
@@ -24,7 +25,7 @@ import * as invitesService from "../src/modules/invites/service.js";
 import * as rolesService from "../src/modules/roles/service.js";
 import { authHeader, TEST_TENANT_ID, TEST_USER_ID } from "./testAuth.js";
 
-const app = createApp();
+const app = await listen(createApp());
 
 afterAll(async () => {
   await closePool();
@@ -52,27 +53,35 @@ async function createCustomRole(permissions: readonly Permission[]): Promise<str
   return response.body.id as string;
 }
 
-/** A one-route app: stand-in identity, then the real guard and error handler. */
-function guardedApp(userId: string, permission: Permission) {
-  const mini = express();
-  mini.use((req: Request, _res: Response, next: NextFunction) => {
-    req.tenantId = TEST_TENANT_ID;
-    req.actorUserId = userId;
-    next();
-  });
-  mini.post("/action", requirePermission(permission), (_req, res) => {
-    res.status(200).json({ ok: true });
-  });
-  mini.use(errorHandler);
-  return mini;
+/**
+ * One small app for the whole file: a stand-in identity (the user named in
+ * x-test-user), then the real guard for the permission in the path, then
+ * the real error handler.
+ */
+const mini = express();
+mini.use((req: Request, _res: Response, next: NextFunction) => {
+  req.tenantId = TEST_TENANT_ID;
+  req.actorUserId = req.header("x-test-user")!;
+  next();
+});
+mini.post("/action/:permission", (req, res, next) => requirePermission(req.params["permission"] as Permission)(req, res, next));
+mini.post("/action/:permission", (_req, res) => {
+  res.status(200).json({ ok: true });
+});
+mini.use(errorHandler);
+const guardedServer = await listen(mini);
+
+/** POSTs to an action guarded by `permission`, as `userId`. */
+function guarded(userId: string, permission: Permission) {
+  return request(guardedServer).post(`/action/${encodeURIComponent(permission)}`).set("x-test-user", userId);
 }
 
 describe("requirePermission enforcement", () => {
   it("lets a CASHIER record a cash sale but forbids posting a manual journal", async () => {
     const cashier = await seedUser(["CASHIER"]);
 
-    const allowed = await request(guardedApp(cashier, "cash_sales:create")).post("/action");
-    const denied = await request(guardedApp(cashier, "journals:create")).post("/action");
+    const allowed = await guarded(cashier, "cash_sales:create");
+    const denied = await guarded(cashier, "journals:create");
 
     expect(allowed.status).toBe(200);
     expect(denied.status).toBe(403);
@@ -83,14 +92,14 @@ describe("requirePermission enforcement", () => {
   it("forbids period reopen for everyone but OWNER and ACCOUNTANT", async () => {
     for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
       const user = await seedUser([key]);
-      const response = await request(guardedApp(user, "periods:reopen")).post("/action");
+      const response = await guarded(user, "periods:reopen");
       expect(response.status, key).toBe(key === "OWNER" || key === "ACCOUNTANT" ? 200 : 403);
     }
   });
 
   it("lets a CASHIER see invoices and take payment against them, but not raise, issue or cancel one", async () => {
     const cashier = await seedUser(["CASHIER"]);
-    const status = async (permission: Permission) => (await request(guardedApp(cashier, permission)).post("/action")).status;
+    const status = async (permission: Permission) => (await guarded(cashier, permission)).status;
 
     expect(await status("invoices:view")).toBe(200);
     expect(await status("payments:create")).toBe(200); // POST /invoices/{id}/payments
@@ -102,7 +111,7 @@ describe("requirePermission enforcement", () => {
   it("lets only OWNER change the business's details", async () => {
     for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
       const user = await seedUser([key]);
-      const response = await request(guardedApp(user, "tenant:edit")).post("/action");
+      const response = await guarded(user, "tenant:edit");
       expect(response.status, key).toBe(key === "OWNER" ? 200 : 403);
     }
   });
@@ -110,7 +119,7 @@ describe("requirePermission enforcement", () => {
   it("lets only OWNER and ACCOUNTANT override a credit limit", async () => {
     for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
       const user = await seedUser([key]);
-      const response = await request(guardedApp(user, "invoices:override_credit_limit")).post("/action");
+      const response = await guarded(user, "invoices:override_credit_limit");
       expect(response.status, key).toBe(key === "OWNER" || key === "ACCOUNTANT" ? 200 : 403);
     }
   });
@@ -119,24 +128,24 @@ describe("requirePermission enforcement", () => {
     const custom = await createCustomRole(["reports:view"]);
     const user = await seedUser(["AGENT", custom]);
 
-    expect((await request(guardedApp(user, "cash_sales:create")).post("/action")).status).toBe(200);
-    expect((await request(guardedApp(user, "reports:view")).post("/action")).status).toBe(200);
-    expect((await request(guardedApp(user, "bills:create")).post("/action")).status).toBe(403);
+    expect((await guarded(user, "cash_sales:create")).status).toBe(200);
+    expect((await guarded(user, "reports:view")).status).toBe(200);
+    expect((await guarded(user, "bills:create")).status).toBe(403);
   });
 
   it("grants nothing through a deactivated custom role", async () => {
     const custom = await createCustomRole(["journals:create"]);
     const user = await seedUser([custom]);
-    expect((await request(guardedApp(user, "journals:create")).post("/action")).status).toBe(200);
+    expect((await guarded(user, "journals:create")).status).toBe(200);
 
     await request(app).post(`/api/v1/roles/${custom}/deactivate`).set("Authorization", await authHeader());
 
-    expect((await request(guardedApp(user, "journals:create")).post("/action")).status).toBe(403);
+    expect((await guarded(user, "journals:create")).status).toBe(403);
   });
 
   it("forbids a user with no roles at all", async () => {
     const user = await seedUser([]);
-    expect((await request(guardedApp(user, "accounts:view")).post("/action")).status).toBe(403);
+    expect((await guarded(user, "accounts:view")).status).toBe(403);
   });
 });
 

@@ -12,6 +12,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { closePool, withTenant } from "@jibuks/db";
 import { createApp } from "../src/app.js";
+import { listen } from "./testServer.js";
 import { todayInNairobi } from "../src/modules/periods/service.js";
 import { onboard } from "../src/modules/onboarding/service.js";
 import * as invoicesService from "../src/modules/invoices/service.js";
@@ -24,7 +25,7 @@ import {
 } from "../src/modules/payments/daraja.js";
 import { authHeader, TEST_TENANT_ID } from "./testAuth.js";
 
-const app = createApp();
+const app = await listen(createApp());
 const today = todayInNairobi();
 
 beforeAll(async () => {
