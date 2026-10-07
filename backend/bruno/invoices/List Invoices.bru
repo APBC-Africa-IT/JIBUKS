@@ -1,0 +1,20 @@
+meta {
+  name: List Invoices
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/invoices?limit=20
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires invoices:view. Newest first. Filters: status (incl. OVERDUE), kind, customer_id, from, to.
+  When has_more is true, pass next_cursor as ?cursor= for the next page.
+}

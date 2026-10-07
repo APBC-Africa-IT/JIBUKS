@@ -1,0 +1,29 @@
+meta {
+  name: Issue Invoice
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/invoices/{{invoiceId}}/issue
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "overrideCreditLimit": false
+  }
+}
+
+docs {
+  Requires invoices:issue. Numbers it (INV-000001...) and posts Dr AR / Cr Sales / Cr VAT.
+  422 CREDIT_LIMIT_EXCEEDED past the customer's limit: Owner/Accountant can resend with overrideCreditLimit true.
+  Also issues credit notes (applied to their invoice) and pro-formas (no journal).
+}

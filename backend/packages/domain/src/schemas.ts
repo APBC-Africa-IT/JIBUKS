@@ -11,6 +11,7 @@ import { CURRENCIES } from "./currency.js";
 import { ACCOUNT_TYPES } from "./accounts.js";
 import { JOURNAL_SOURCES } from "./journal.js";
 import { PERMISSIONS, SYSTEM_ROLE_KEYS } from "./permissions.js";
+import { INVOICE_KINDS, INVOICE_PAYMENT_METHODS, INVOICE_VIEW_STATUSES, TAX_MODES } from "./invoices.js";
 
 export const uuidSchema = z.string().uuid();
 
@@ -551,8 +552,13 @@ export const createStkPushSchema = z
       .refine((n) => n % 100 === 0, "M-Pesa collects whole shillings only (amountMinor must be a multiple of 100)")
       .refine((n) => n <= 25_000_000, "M-Pesa's per-transaction limit is KES 250,000"),
     receivedAccountId: uuidSchema.optional(),
-    creditAccountId: uuidSchema,
+    /** Required unless invoiceId is given (the invoice's receivable account is used). */
+    creditAccountId: uuidSchema.optional(),
     customerId: uuidSchema.optional(),
+    /** Collect against an issued invoice: on success the payment is applied
+     * to it (FR-PAY-04). Its customer and receivable account are used, so
+     * creditAccountId, customerId and tax must be left out. */
+    invoiceId: uuidSchema.optional(),
     /** Shown on the customer's phone; M-Pesa truncates it to 12 characters. */
     accountReference: z.string().trim().min(1).max(12).optional(),
     description: z.string().max(500).optional(),
@@ -567,6 +573,172 @@ export const createStkPushSchema = z
   .refine((r) => r.taxAmountMinor < r.amountMinor, {
     message: "taxAmountMinor must be less than amountMinor (amountMinor is the gross amount, VAT included)",
     path: ["taxAmountMinor"],
-  });
+  })
+  .refine((r) => r.invoiceId !== undefined || r.creditAccountId !== undefined, {
+    message: "creditAccountId is required unless invoiceId is given",
+    path: ["creditAccountId"],
+  })
+  .refine(
+    (r) =>
+      r.invoiceId === undefined ||
+      (r.creditAccountId === undefined && r.customerId === undefined && r.taxAmountMinor === 0 && r.taxAccountId === undefined),
+    {
+      message: "With invoiceId, leave out creditAccountId, customerId and tax -- they come from the invoice",
+      path: ["invoiceId"],
+    },
+  );
 
 export type CreateStkPushDto = z.infer<typeof createStkPushSchema>;
+
+// ---------------------------------------------------------------------
+// Invoices -- FR-AR-02/05, FR-TAX-01, FR-PAY-04
+// ---------------------------------------------------------------------
+
+const invoiceLineSchema = z.object({
+  description: z.string().trim().min(1).max(500),
+  /** Up to three decimal places, e.g. 2.5 kg. */
+  quantity: z
+    .number()
+    .positive()
+    .max(99_999_999_999)
+    .refine((q) => Math.abs(Math.round(q * 1000) - q * 1000) < 1e-6, "Quantity has at most three decimal places"),
+  /** Before tax under EXCLUSIVE, tax included under INCLUSIVE. */
+  unitPriceMinor: minorUnitsSchema,
+  incomeAccountId: uuidSchema,
+  /** Basis points: 1600 = 16% (Kenyan VAT). 0 = zero-rated / exempt line. */
+  taxRateBps: z.number().int().min(0).max(10000).default(0),
+  taxAccountId: uuidSchema.optional(),
+});
+
+const invoiceLinesSchema = z.array(invoiceLineSchema).min(1, "An invoice needs at least one line").max(200);
+
+/** Tax rules that need the whole document: NONE means no rates; a rate needs an account. */
+function checkInvoiceTax(
+  body: { taxMode?: (typeof TAX_MODES)[number] | undefined; lines?: z.infer<typeof invoiceLinesSchema> | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  body.lines?.forEach((line, i) => {
+    if (body.taxMode === "NONE" && line.taxRateBps > 0) {
+      ctx.addIssue({ code: "custom", path: ["lines", i, "taxRateBps"], message: "taxMode NONE allows no tax rate" });
+    }
+    if (line.taxRateBps > 0 && line.taxAccountId === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lines", i, "taxAccountId"],
+        message: "taxAccountId is required when taxRateBps is greater than zero",
+      });
+    }
+  });
+}
+
+/** POST /invoices -- a DRAFT invoice or pro-forma. */
+export const createInvoiceSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    kind: z.enum(["INVOICE", "PROFORMA"]).default("INVOICE"),
+    branchId: uuidSchema.optional(),
+    customerId: uuidSchema,
+    /** Required for an invoice; optional on a pro-forma until it's converted. */
+    receivableAccountId: uuidSchema.optional(),
+    issueDate: accountingDateSchema,
+    /** Omit to use issueDate + the customer's payment terms (0 days if none). */
+    dueDate: accountingDateSchema.optional(),
+    /** Omit for the tenant's base currency -- the only currency invoices support in Phase 1. */
+    currency: currencySchema.optional(),
+    taxMode: z.enum(TAX_MODES).default("NONE"),
+    reference: z.string().max(100).optional(),
+    notes: z.string().max(2000).optional(),
+    lines: invoiceLinesSchema,
+  })
+  .superRefine((body, ctx) => {
+    checkInvoiceTax(body, ctx);
+    if (body.kind === "INVOICE" && body.receivableAccountId === undefined) {
+      ctx.addIssue({ code: "custom", path: ["receivableAccountId"], message: "An invoice needs a receivableAccountId" });
+    }
+    if (body.dueDate !== undefined && body.dueDate < body.issueDate) {
+      ctx.addIssue({ code: "custom", path: ["dueDate"], message: "dueDate can't be before issueDate" });
+    }
+  });
+
+export type CreateInvoiceDto = z.infer<typeof createInvoiceSchema>;
+
+/** PATCH /invoices/{id} -- drafts only. `lines`, when given, replaces every line. */
+export const updateInvoiceSchema = z
+  .object({
+    customerId: uuidSchema.optional(),
+    receivableAccountId: uuidSchema.optional(),
+    issueDate: accountingDateSchema.optional(),
+    /** null recomputes it from the customer's payment terms. */
+    dueDate: accountingDateSchema.nullable().optional(),
+    taxMode: z.enum(TAX_MODES).optional(),
+    reference: z.string().max(100).nullable().optional(),
+    notes: z.string().max(2000).nullable().optional(),
+    lines: invoiceLinesSchema.optional(),
+  })
+  .refine(atLeastOneField, "Provide at least one field to update");
+
+export type UpdateInvoiceDto = z.infer<typeof updateInvoiceSchema>;
+
+/** POST /invoices/{id}/credit-notes -- a DRAFT credit note against an issued invoice. */
+export const createCreditNoteSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    /** Omit for today (Africa/Nairobi). */
+    issueDate: accountingDateSchema.optional(),
+    /** Omit to use the invoice's own tax mode. */
+    taxMode: z.enum(TAX_MODES).optional(),
+    reference: z.string().max(100).optional(),
+    /** Why the customer is being credited -- printed on the credit note. */
+    notes: z.string().max(2000).optional(),
+    lines: invoiceLinesSchema,
+  })
+  .superRefine(checkInvoiceTax);
+
+export type CreateCreditNoteDto = z.infer<typeof createCreditNoteSchema>;
+
+/** POST /invoices/{id}/issue */
+export const issueInvoiceSchema = z.object({
+  /** Issue even though it takes the customer past their credit limit.
+   * Needs the invoices:override_credit_limit permission. */
+  overrideCreditLimit: z.boolean().default(false),
+});
+
+/** POST /invoices/{id}/cancel */
+export const cancelInvoiceSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+
+/** POST /invoices/{id}/payments -- a payment received outside M-Pesa STK push. */
+export const recordInvoicePaymentSchema = z.object({
+  clientUuid: uuidSchema,
+  amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+  date: accountingDateSchema,
+  /** The cash, bank or M-Pesa account the money went into. */
+  receivedAccountId: uuidSchema,
+  method: z.enum(INVOICE_PAYMENT_METHODS).default("CASH"),
+  /** e.g. a cheque number or M-Pesa receipt code. */
+  reference: z.string().max(100).optional(),
+});
+
+export type RecordInvoicePaymentDto = z.infer<typeof recordInvoicePaymentSchema>;
+
+/** POST /invoices/{id}/convert -- pro-forma to a DRAFT invoice. */
+export const convertProformaSchema = z.object({
+  clientUuid: uuidSchema,
+  /** Omit for today (Africa/Nairobi). */
+  issueDate: accountingDateSchema.optional(),
+  /** Required if the pro-forma has none. */
+  receivableAccountId: uuidSchema.optional(),
+});
+
+/** GET /invoices -- filters plus cursor pagination (Section 9.1). */
+export const listInvoicesQuerySchema = paginationSchema.extend({
+  status: z.enum(INVOICE_VIEW_STATUSES).optional(),
+  kind: z.enum(INVOICE_KINDS).optional(),
+  customer_id: uuidSchema.optional(),
+  /** issue_date range, inclusive. */
+  from: accountingDateSchema.optional(),
+  to: accountingDateSchema.optional(),
+});
+
+export type ListInvoicesQueryDto = z.infer<typeof listInvoicesQuerySchema>;

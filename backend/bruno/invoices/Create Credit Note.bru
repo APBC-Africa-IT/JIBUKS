@@ -1,0 +1,39 @@
+meta {
+  name: Create Credit Note
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/api/v1/invoices/{{invoiceId}}/credit-notes
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "notes": "2 bags returned damaged",
+    "lines": [
+      {
+        "description": "Maize flour 2kg (returned)",
+        "quantity": 2,
+        "unitPriceMinor": 25000,
+        "incomeAccountId": "{{salesAccountId}}",
+        "taxRateBps": 1600,
+        "taxAccountId": "{{vatAccountId}}"
+      }
+    ]
+  }
+}
+
+docs {
+  Requires invoices:create. A DRAFT credit note against invoiceId. Then run "Issue Invoice" with the
+  credit note's id to post it and apply it to the invoice.
+}

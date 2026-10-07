@@ -1,0 +1,33 @@
+meta {
+  name: STK Push for Invoice
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/payments/mpesa/stk-push
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "phone": "{{mpesaPhone}}",
+    "currency": "KES",
+    "amountMinor": 100,
+    "invoiceId": "{{invoiceId}}"
+  }
+}
+
+docs {
+  Requires payments:create. Collects against an issued invoice: no creditAccountId, customerId or tax --
+  they come from the invoice, and accountReference defaults to its number. amountMinor can't exceed the
+  balance due. When the payment succeeds it is applied to the invoice (PART_PAID / PAID) automatically.
+}

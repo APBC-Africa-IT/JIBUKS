@@ -27,6 +27,7 @@ export interface PaymentRow {
   readonly received_account_id: string;
   readonly credit_account_id: string;
   readonly customer_id: string | null;
+  readonly invoice_id: string | null;
   readonly tax_account_id: string | null;
   readonly tax_amount_minor: string; // bigint
   readonly merchant_request_id: string | null;
@@ -55,6 +56,7 @@ export interface InsertPaymentInput {
   readonly receivedAccountId: string;
   readonly creditAccountId: string;
   readonly customerId?: string;
+  readonly invoiceId?: string;
   readonly taxAccountId?: string;
   readonly taxAmountMinor?: number;
   readonly callbackTokenHash: string;
@@ -72,8 +74,8 @@ export async function insertPayment(input: InsertPaymentInput, audit: AuditConte
       `INSERT INTO payments
          (id, tenant_id, client_uuid, provider, method, amount_minor, currency, phone, account_reference,
           description, received_account_id, credit_account_id, customer_id, tax_account_id, tax_amount_minor,
-          callback_token_hash, initiated_by)
-       VALUES ($1, $2, $3, 'MPESA', 'STK_PUSH', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          callback_token_hash, initiated_by, invoice_id)
+       VALUES ($1, $2, $3, 'MPESA', 'STK_PUSH', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         randomUUID(),
@@ -91,6 +93,7 @@ export async function insertPayment(input: InsertPaymentInput, audit: AuditConte
         input.taxAmountMinor ?? 0,
         input.callbackTokenHash,
         audit.actorUserId,
+        input.invoiceId ?? null,
       ],
     );
     const payment = result.rows[0]!;

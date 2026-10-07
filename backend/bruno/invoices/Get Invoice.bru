@@ -1,0 +1,19 @@
+meta {
+  name: Get Invoice
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/invoices/{{invoiceId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires invoices:view. Includes lines and allocations (payments and credit notes applied).
+}

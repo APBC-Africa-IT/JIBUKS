@@ -88,6 +88,25 @@ describe("requirePermission enforcement", () => {
     }
   });
 
+  it("lets a CASHIER see invoices and take payment against them, but not raise, issue or cancel one", async () => {
+    const cashier = await seedUser(["CASHIER"]);
+    const status = async (permission: Permission) => (await request(guardedApp(cashier, permission)).post("/action")).status;
+
+    expect(await status("invoices:view")).toBe(200);
+    expect(await status("payments:create")).toBe(200); // POST /invoices/{id}/payments
+    expect(await status("invoices:create")).toBe(403);
+    expect(await status("invoices:issue")).toBe(403);
+    expect(await status("invoices:cancel")).toBe(403);
+  });
+
+  it("lets only OWNER and ACCOUNTANT override a credit limit", async () => {
+    for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
+      const user = await seedUser([key]);
+      const response = await request(guardedApp(user, "invoices:override_credit_limit")).post("/action");
+      expect(response.status, key).toBe(key === "OWNER" || key === "ACCOUNTANT" ? 200 : 403);
+    }
+  });
+
   it("unions permissions across a user's roles", async () => {
     const custom = await createCustomRole(["reports:view"]);
     const user = await seedUser(["AGENT", custom]);
