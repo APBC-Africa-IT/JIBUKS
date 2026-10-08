@@ -20,7 +20,6 @@ body:json {
   {
     "clientUuid": "{{$randomUUID}}",
     "customerId": "{{customerId}}",
-    "receivableAccountId": "{{arAccountId}}",
     "issueDate": "2026-10-07",
     "taxMode": "EXCLUSIVE",
     "reference": "PO-778",
@@ -31,8 +30,7 @@ body:json {
         "quantity": 10,
         "unitPriceMinor": 25000,
         "incomeAccountId": "{{salesAccountId}}",
-        "taxRateBps": 1600,
-        "taxAccountId": "{{vatAccountId}}"
+        "taxRateBps": 1600
       }
     ]
   }
@@ -42,4 +40,6 @@ docs {
   Requires invoices:create. Creates a DRAFT (no number, nothing posted). The server computes
   all amounts: 10 x 250.00 = 2,500.00 + 16% VAT 400.00 = 2,900.00. Set invoiceId to the returned id.
   VAT needs a VAT-registered business; otherwise use "taxMode": "NONE" and drop the tax fields.
+  receivableAccountId and lines[].taxAccountId are left out, so the business's RECEIVABLE and
+  VAT_OUTPUT accounts are used (422 SYSTEM_ACCOUNT_MISSING if it has none -- see Set Account Purpose).
 }

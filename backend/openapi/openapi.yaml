@@ -888,7 +888,7 @@ paths:
               properties:
                 clientUuid: { type: string, format: uuid }
                 issueDate: { type: string, format: date, description: Defaults to today (Africa/Nairobi). }
-                receivableAccountId: { type: string, format: uuid, description: Required if the pro-forma has none. }
+                receivableAccountId: { type: string, format: uuid, description: "Defaults to the pro-forma's own, then the business's RECEIVABLE account." }
       responses:
         '201':
           description: The new draft invoice
@@ -1736,11 +1736,14 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       tags: [Accounts]
-      summary: Rename, recode, retag or move an account
+      summary: Rename, recode, retag, move or re-key an account
       description: >
         Requires `accounts:edit` (FR-COA-03/04). Type and currency can't be
         changed. The parent must be the same type and not the account or one
-        of its sub-accounts (422); a code in use is 409.
+        of its sub-accounts (422); a code in use is 409. `systemKey` makes
+        this the business's account for that purpose, taking the key off
+        whichever account had it; the account must be active, postable, of
+        the key's type and carry no other key (422).
       parameters:
         - $ref: '#/components/parameters/AccountIdPath'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -1756,6 +1759,10 @@ paths:
                 name: { type: string, maxLength: 200 }
                 tags: { type: array, items: { type: string, maxLength: 50 }, maxItems: 20 }
                 parentAccountId: { type: string, format: uuid, nullable: true, description: null = top level. }
+                systemKey:
+                  type: string
+                  enum: [RECEIVABLE, PAYABLE, VAT_INPUT, VAT_OUTPUT, CASH, BANK]
+                  description: Make this the business's account for that purpose. MPESA and OPENING_BALANCE can't be moved.
       responses:
         '200':
           description: The updated account
@@ -1769,7 +1776,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/DuplicateValue' }
         '422':
-          description: Parent of another type, or a loop
+          description: Parent of another type, a loop, or a systemKey on an account of the wrong type, inactive, or already carrying another key
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -2344,7 +2351,11 @@ paths:
     get:
       tags: [Journals]
       summary: List journals
-      description: Returns every journal for the caller's tenant, most recent first. Lines are NOT included — fetch a single journal for its lines.
+      description: >
+        Returns the caller's tenant's journals, most recent first. Without
+        `status` that is every journal -- POSTED, PENDING_APPROVAL and
+        REJECTED -- so show `status` as a badge. Lines are NOT included --
+        fetch a single journal for its lines.
       parameters:
         - name: status
           in: query
@@ -3308,6 +3319,21 @@ components:
           nullable: true
           description: Manual journal approval -- null off, "0" every manual journal, N = totalling N or more.
         created_at: { type: string, format: date-time }
+        system_accounts:
+          type: object
+          description: >
+            The id of the account carrying each system_key, or null if the
+            business has none. Find accounts here, never by code.
+          required: [MPESA, OPENING_BALANCE, RECEIVABLE, PAYABLE, VAT_INPUT, VAT_OUTPUT, CASH, BANK]
+          properties:
+            MPESA: { type: string, format: uuid, nullable: true }
+            OPENING_BALANCE: { type: string, format: uuid, nullable: true }
+            RECEIVABLE: { type: string, format: uuid, nullable: true }
+            PAYABLE: { type: string, format: uuid, nullable: true }
+            VAT_INPUT: { type: string, format: uuid, nullable: true }
+            VAT_OUTPUT: { type: string, format: uuid, nullable: true }
+            CASH: { type: string, format: uuid, nullable: true }
+            BANK: { type: string, format: uuid, nullable: true }
     UserWithAccess:
       allOf:
         - $ref: '#/components/schemas/User'
@@ -3451,7 +3477,7 @@ components:
         unitPriceMinor: { type: integer, minimum: 0, description: "Per unit; before VAT (EXCLUSIVE) or including it (INCLUSIVE)." }
         incomeAccountId: { type: string, format: uuid }
         taxRateBps: { type: integer, minimum: 0, maximum: 10000, default: 0, description: "Basis points: 1600 = 16%." }
-        taxAccountId: { type: string, format: uuid, description: Output VAT account; required when taxRateBps > 0. }
+        taxAccountId: { type: string, format: uuid, description: "Output VAT account; omit for the business's VAT_OUTPUT account (422 SYSTEM_ACCOUNT_MISSING if none)." }
     CreateInvoiceRequest:
       type: object
       required: [clientUuid, customerId, issueDate, lines]
@@ -3460,7 +3486,7 @@ components:
         kind: { type: string, enum: [INVOICE, PROFORMA], default: INVOICE }
         branchId: { type: string, format: uuid }
         customerId: { type: string, format: uuid }
-        receivableAccountId: { type: string, format: uuid, description: Required for an INVOICE. }
+        receivableAccountId: { type: string, format: uuid, description: "Omit for the business's RECEIVABLE account (422 SYSTEM_ACCOUNT_MISSING if none). A pro-forma gets one when converted." }
         issueDate: { type: string, format: date }
         dueDate: { type: string, format: date, description: "Defaults to issueDate + the customer's paymentTermsDays." }
         currency: { type: string, description: Must be the base currency (the default). }
@@ -3657,15 +3683,15 @@ components:
         unitPriceMinor: { type: integer, minimum: 0 }
         expenseAccountId: { type: string, format: uuid, description: Expense or asset account. }
         taxRateBps: { type: integer, minimum: 0, maximum: 10000, default: 0 }
-        taxAccountId: { type: string, format: uuid, description: Input VAT (VAT Recoverable); required when taxRateBps > 0. }
+        taxAccountId: { type: string, format: uuid, description: "Input VAT (VAT Recoverable); omit for the business's VAT_INPUT account." }
     CreateSupplierBillRequest:
       type: object
-      required: [clientUuid, supplierId, payableAccountId, billDate, lines]
+      required: [clientUuid, supplierId, billDate, lines]
       properties:
         clientUuid: { type: string, format: uuid }
         branchId: { type: string, format: uuid }
         supplierId: { type: string, format: uuid }
-        payableAccountId: { type: string, format: uuid }
+        payableAccountId: { type: string, format: uuid, description: "Omit for the business's PAYABLE account (422 SYSTEM_ACCOUNT_MISSING if none)." }
         billDate: { type: string, format: date }
         dueDate: { type: string, format: date, description: "Defaults to billDate + the supplier's paymentTermsDays." }
         supplierReference: { type: string, maxLength: 100, description: "The supplier's own invoice number; unique per supplier." }
@@ -3908,9 +3934,16 @@ components:
             type: string
         system_key:
           type: string
-          enum: [MPESA]
+          enum: [MPESA, OPENING_BALANCE, RECEIVABLE, PAYABLE, VAT_INPUT, VAT_OUTPUT, CASH, BANK]
           nullable: true
-          description: Marks the account the server uses for a purpose. MPESA = where M-Pesa collections are received. Set by the server only.
+          description: >
+            Marks the account the server and clients find by purpose rather
+            than code (codes differ between chart templates). At most one
+            account per key. MPESA = where M-Pesa collections land;
+            OPENING_BALANCE = Opening Balance Equity; RECEIVABLE / PAYABLE /
+            VAT_INPUT / VAT_OUTPUT = defaults on invoices and bills; CASH /
+            BANK = money accounts. Seeded by the chart templates; the Owner
+            can move the last six with PATCH /accounts/{id}.
         created_at: { type: string, format: date-time }
         balance_minor:
           type: string

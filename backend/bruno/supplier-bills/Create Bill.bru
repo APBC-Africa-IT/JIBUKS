@@ -20,7 +20,6 @@ body:json {
   {
     "clientUuid": "{{$randomUUID}}",
     "supplierId": "{{supplierId}}",
-    "payableAccountId": "{{apAccountId}}",
     "billDate": "2026-10-07",
     "supplierReference": "INV-7788",
     "taxMode": "EXCLUSIVE",
@@ -30,8 +29,7 @@ body:json {
         "quantity": 4,
         "unitPriceMinor": 300000,
         "expenseAccountId": "{{expenseAccountId}}",
-        "taxRateBps": 1600,
-        "taxAccountId": "{{inputVatAccountId}}"
+        "taxRateBps": 1600
       }
     ]
   }
@@ -41,4 +39,6 @@ docs {
   Requires supplier_bills:create. A DRAFT bill; set billId to the returned id. supplierReference is the
   supplier's own invoice number -- entering the same one twice for a supplier is 409.
   Not VAT-registered? Use "taxMode": "NONE" and the gross amount.
+  payableAccountId and lines[].taxAccountId are left out, so the business's PAYABLE and VAT_INPUT
+  accounts are used (422 SYSTEM_ACCOUNT_MISSING if it has none -- see Set Account Purpose).
 }

@@ -273,7 +273,22 @@ The new user's `external_idp_subject` is taken directly from the verified token'
 }
 ```
 
-**Templates.** Every template (including `GENERAL`) has `3900 Opening Balance Equity` (`system_key: "OPENING_BALANCE"`, used by [opening balances](#724-opening-balances)). VAT accounts are added only when `vatRegistered: true`. `SME_TRADING` and `MICRO_TRADER` have an M-Pesa account at `1020` (`system_key: "MPESA"`); `NGO` and `CORPORATE` get one created on their first M-Pesa collection. Codes differ between templates (e.g. receivables are `1100` in `GENERAL`/`CORPORATE` but `1030` in `SME_TRADING`/`MICRO_TRADER`) — **use the returned account ids or `system_key`, never hard-coded codes.** Micro-trader accounts have plain-language names ("Money I Owe", "My Money in the Business"); show names, not codes.
+**Templates.** Every template (including `GENERAL`) has `3900 Opening Balance Equity` (`system_key: "OPENING_BALANCE"`, used by [opening balances](#724-opening-balances)). VAT accounts are added only when `vatRegistered: true` (in every template, including `SME_TRADING`'s `2200 VAT Payable`). `SME_TRADING` and `MICRO_TRADER` have an M-Pesa account at `1020` (`system_key: "MPESA"`); `NGO` and `CORPORATE` get one created on their first M-Pesa collection. Codes differ between templates (e.g. receivables are `1100` in `GENERAL`/`CORPORATE` but `1030` in `SME_TRADING`/`MICRO_TRADER`) — **use the returned account ids or `system_key`, never hard-coded codes.** Micro-trader accounts have plain-language names ("Money I Owe", "My Money in the Business"); show names, not codes.
+
+**Accounts by purpose (`system_key`).** These accounts carry a key the server and the app find them by:
+
+| `system_key` | Account | GENERAL | SME_TRADING | NGO | CORPORATE | MICRO_TRADER |
+|---|---|---|---|---|---|---|
+| `CASH` | Cash | 1000 | 1000 | 1000 Cash Unrestricted | 1000 | 1000 |
+| `BANK` | Bank | 1010 | 1010 | — | — | — |
+| `MPESA` | M-Pesa | 1020 | 1020 | created on first use | created on first use | 1020 |
+| `RECEIVABLE` | Accounts Receivable | 1100 | 1030 | 1100 Grants Receivable | 1100 | 1030 |
+| `VAT_INPUT` | VAT Recoverable (VAT-registered only) | 1200 | 1250 | 1250 | 1250 | 1250 |
+| `PAYABLE` | Accounts Payable | 2000 | 2000 | 2000 | 2000 | 2000 |
+| `VAT_OUTPUT` | VAT Payable (VAT-registered only) | 2100 | 2200 | 2200 | 2510 | 2200 |
+| `OPENING_BALANCE` | Opening Balance Equity | 3900 | 3900 | 3900 | 3900 | 3900 |
+
+[`GET /tenant`](#719-tenant) returns all of them as `system_accounts`. A key can be missing (e.g. no `BANK` in NGO/CORPORATE/MICRO_TRADER) — then let the user pick an account. Businesses that existed before the keys got them tagged only where the account was still exactly as seeded (same code, type and name); the Owner can mark any other account with [`PATCH /accounts/{id}`](#patch-accountsid) `{"systemKey": "..."}`.
 
 **The `GENERAL` starter chart of accounts** always includes Cash, Bank, M-Pesa (`1020`, `system_key: "MPESA"`, where M-Pesa collections land — see [7.18 Payments](#718-payments)), Accounts Receivable, Accounts Payable, Owner's Equity, Sales Revenue, Purchases, and General Expenses (codes `1000`–`5100` above). If `vatRegistered: true`, two more accounts are added: `1200` VAT Recoverable (Input VAT, an ASSET — used as `taxAccountId` on `POST /bills`) and `2100` VAT Payable (Output VAT, a LIABILITY — used as `taxAccountId` on `POST /credit-sales`/`POST /cash-sales`).
 
@@ -627,7 +642,9 @@ List / fetch accounts for the caller's tenant, enforced at the database level. E
 { "name": "Rent and Utilities", "code": "5210", "tags": ["shop"], "parentAccountId": null }
 ```
 
-Any of `name`, `code`, `tags` (replaces the list), `parentAccountId` (`null` = top level). The parent must be the same type and can't be the account itself or one of its sub-accounts (`422`). A code already in use is `409`. **Type and currency can't be changed.** Renaming a system account (M-Pesa, Opening Balance Equity) is fine — the server finds them by `system_key`.
+Any of `name`, `code`, `tags` (replaces the list), `parentAccountId` (`null` = top level), `systemKey`. The parent must be the same type and can't be the account itself or one of its sub-accounts (`422`). A code already in use is `409`. **Type and currency can't be changed.** Renaming or recoding an account with a `system_key` is fine — the server finds it by its key.
+
+**`systemKey`** makes this account the business's account for that purpose: `RECEIVABLE`, `PAYABLE`, `VAT_INPUT`, `VAT_OUTPUT`, `CASH` or `BANK` (see [Accounts by purpose](#post-onboarding)). Whichever account had the key loses it. The account must be active, postable and of the key's type (`RECEIVABLE`/`VAT_INPUT`/`CASH`/`BANK` → `ASSET`; `PAYABLE`/`VAT_OUTPUT` → `LIABILITY`), and must not already carry another key — otherwise `422 ACCOUNT_NOT_POSTABLE`. `MPESA` and `OPENING_BALANCE` can't be moved (`400`). Use it when invoices or bills return `422 SYSTEM_ACCOUNT_MISSING`: "Which account is your Accounts Receivable?"
 
 ### `POST /accounts/{id}/deactivate` / `POST /accounts/{id}/reactivate` 
 
@@ -895,7 +912,7 @@ A line may optionally carry `customerId` **or** `supplierId` (never both) to att
 
 ### `GET /journals` / `GET /journals/{id}` 
 
-List (no lines) / get (with lines). `?status=PENDING_APPROVAL` lists what's waiting for approval (also `POSTED`, `REJECTED`).
+List (no lines) / get (with lines). **Without `?status` the list has every journal — posted, pending and rejected** — so show `status` as a badge (a rejected journal also has `rejection_reason`). `?status=PENDING_APPROVAL` lists what's waiting for approval (also `POSTED`, `REJECTED`).
 
 ### Journal approval
 
@@ -1520,7 +1537,11 @@ The caller's own business. Needs no permission; every signed-in user can call it
   "status": "ACTIVE",
   "vat_registered": false,
   "tax_identifier": "P051234567X",
-  "created_at": "2026-09-01T08:00:00.000Z"
+  "created_at": "2026-09-01T08:00:00.000Z",
+  "system_accounts": {
+    "MPESA": "1b0e...", "OPENING_BALANCE": "2c4f...", "RECEIVABLE": "3d71...", "PAYABLE": "4e82...",
+    "VAT_INPUT": null, "VAT_OUTPUT": null, "CASH": "5f93...", "BANK": "60a4..."
+  }
 }
 ```
 
@@ -1532,6 +1553,7 @@ The caller's own business. Needs no permission; every signed-in user can call it
 | `status` | `ACTIVE`, `SUSPENDED` |
 | `vat_registered` | Whether to offer VAT on sales, bills and expenses. |
 | `tax_identifier` | The business's KRA PIN (or other tax PIN), printed on its invoices. `null` until set. |
+| `system_accounts` | The account id for each purpose (`null` if the business has none): see [Accounts by purpose](#post-onboarding). **Find accounts here, never by code** — codes differ between templates. Use `CASH`/`BANK`/`MPESA` as the default "money went into/out of" account on payments. `PATCH /tenant` returns it too. |
 
 ### `PATCH /tenant`
 
@@ -1610,7 +1632,7 @@ Base path: `/api/v1/invoices`. Sales invoices, credit notes and pro-formas (FR-A
 | `clientUuid` | uuid | ✅ Yes | The invoice's identity (DR-05). |
 | `kind` | string | No | `INVOICE` (default) or `PROFORMA`. |
 | `customerId` | uuid | ✅ Yes | |
-| `receivableAccountId` | uuid | For `INVOICE` | Accounts Receivable. Optional on a pro-forma until it's converted. |
+| `receivableAccountId` | uuid | No | Accounts Receivable. Omit for the business's `RECEIVABLE` account (a pro-forma gets it when converted). |
 | `issueDate` | date | ✅ Yes | The invoice date, and the date its journal posts on. Its period must be open when you issue (the current month opens automatically). |
 | `dueDate` | date | No | Defaults to `issueDate` + the customer's `paymentTermsDays` (0 = due on issue). Pro-formas have none unless given. |
 | `currency` | string | No | Defaults to the base currency; anything else is `400`. |
@@ -1621,13 +1643,13 @@ Base path: `/api/v1/invoices`. Sales invoices, credit notes and pro-formas (FR-A
 | `lines[].unitPriceMinor` | integer | ✅ Yes | Per unit, before VAT under `EXCLUSIVE`, including VAT under `INCLUSIVE`. |
 | `lines[].incomeAccountId` | uuid | ✅ Yes | Usually Sales Revenue. |
 | `lines[].taxRateBps` | integer | No | Basis points: `1600` = 16%. `0` (default) = zero-rated or exempt. Must be `0` under `NONE`. |
-| `lines[].taxAccountId` | uuid | If rate > 0 | Output VAT account. |
+| `lines[].taxAccountId` | uuid | No | Output VAT account. Omit for the business's `VAT_OUTPUT` account. |
 
 **The server calculates the amounts** and stores them; the app doesn't send totals. Per line: amount = quantity × unit price, rounded half up to the cent; then VAT = amount × rate (`EXCLUSIVE`) or amount × rate / (1 + rate) (`INCLUSIVE`), rounded half up. Totals are the sums of the rounded lines. `@jibuks/domain` exports `computeInvoiceTotals`, the same code, to preview totals in the app before saving.
 
 **Success Response:** `201 Created`, the invoice with `lines` and `allocations` (see [`GET /invoices/{id}`](#get-invoicesid)).
 
-**Error Response:** `400` validation (tax rate without `taxAccountId`, rate under `NONE`, `dueDate` before `issueDate`, no `receivableAccountId` on an invoice, more than 3 decimals); `404` unknown customer or account; `409 DUPLICATE_VALUE` (`clientUuid` used); `422 ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE`; `422 JOURNAL_LINE_EMPTY` (total is zero); `422 TAX_NOT_REGISTERED` (VAT on a business that isn't VAT-registered — check `vat_registered` on [`GET /tenant`](#719-tenant)).
+**Error Response:** `400` validation (rate under `NONE`, `dueDate` before `issueDate`, more than 3 decimals); `404` unknown customer or account; `409 DUPLICATE_VALUE` (`clientUuid` used); `422 ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE`; `422 SYSTEM_ACCOUNT_MISSING` (an account was left out and the business has none marked for that purpose — `details[0].path` names the field; send it, or mark the account with [`PATCH /accounts/{id}`](#patch-accountsid)); `422 JOURNAL_LINE_EMPTY` (total is zero); `422 TAX_NOT_REGISTERED` (VAT on a business that isn't VAT-registered — check `vat_registered` on [`GET /tenant`](#719-tenant)).
 
 ### `GET /invoices`
 
@@ -1764,7 +1786,7 @@ Customer, currency and receivable account come from the invoice; `taxMode` defau
 
 ### `POST /invoices/{id}/convert`
 
-`invoices:create`. Turns a draft or issued pro-forma into a new **draft invoice** with the same customer, lines and tax mode. `{ "clientUuid": "...", "issueDate": "2026-10-07", "receivableAccountId": "..." }` — `issueDate` defaults to today; `receivableAccountId` is needed if the pro-forma has none. `201` with the new invoice (`proforma_id` points back). Once only: a second convert is `409 DUPLICATE_VALUE`.
+`invoices:create`. Turns a draft or issued pro-forma into a new **draft invoice** with the same customer, lines and tax mode. `{ "clientUuid": "...", "issueDate": "2026-10-07", "receivableAccountId": "..." }` — `issueDate` defaults to today; `receivableAccountId` defaults to the pro-forma's own, then the business's `RECEIVABLE` account. `201` with the new invoice (`proforma_id` points back). Once only: a second convert is `409 DUPLICATE_VALUE`.
 
 ### Notes for consuming clients (Invoices)
 
@@ -1881,12 +1903,12 @@ Statuses are the same as invoices: `DRAFT` → `ISSUED` (shown in the app as "Po
 |---|---|---|
 | `clientUuid` | ✅ | |
 | `supplierId` | ✅ | |
-| `payableAccountId` | ✅ | Accounts Payable. |
+| `payableAccountId` | No | Accounts Payable. Omit for the business's `PAYABLE` account. |
 | `billDate` | ✅ | The date on the supplier's invoice; the journal posts on it. |
 | `dueDate` | No | Defaults to `billDate` + the supplier's `paymentTermsDays`. |
 | `supplierReference` | No | The supplier's own invoice number. **The same supplier + reference can't be entered twice** (`409 DUPLICATE_VALUE`) unless the earlier bill was cancelled. |
 | `taxMode`, `reference`, `notes`, `currency` | No | As for invoices. VAT here is **input** VAT (`taxAccountId` = VAT Recoverable); a business that isn't VAT-registered gets `422 TAX_NOT_REGISTERED` and should enter the gross amount with `taxMode: "NONE"`. |
-| `lines[]` | ✅ | `description`, `quantity` (up to 3 decimals), `unitPriceMinor`, `expenseAccountId` (expense or asset account), `taxRateBps`, `taxAccountId`. |
+| `lines[]` | ✅ | `description`, `quantity` (up to 3 decimals), `unitPriceMinor`, `expenseAccountId` (expense or asset account), `taxRateBps`, `taxAccountId` (omit for the business's `VAT_INPUT` account). |
 
 **Success:** `201`, the bill with `lines` and `allocations`.
 

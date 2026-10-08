@@ -30,6 +30,7 @@ export type DomainErrorCode =
   | "ACCOUNT_NOT_FOUND"
   | "ACCOUNT_INACTIVE"
   | "ACCOUNT_NOT_POSTABLE"
+  | "SYSTEM_ACCOUNT_MISSING"
   | "TENANT_MISMATCH"
   // customers / suppliers
   | "CUSTOMER_NOT_FOUND"

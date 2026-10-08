@@ -70,6 +70,7 @@ export async function update(req: Request, res: Response): Promise<void> {
       ...(body.name !== undefined ? { name: body.name } : {}),
       ...(body.tags !== undefined ? { tags: body.tags } : {}),
       ...(body.parentAccountId !== undefined ? { parentAccountId: body.parentAccountId } : {}),
+      ...(body.systemKey !== undefined ? { systemKey: body.systemKey } : {}),
     },
     auditContextFrom(req),
   );

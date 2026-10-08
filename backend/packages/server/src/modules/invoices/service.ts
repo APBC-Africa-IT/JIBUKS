@@ -279,10 +279,8 @@ export async function convertProforma(request: ConvertProformaRequest, audit: Au
   if (proforma.kind !== "PROFORMA" || proforma.status === "CANCELLED") {
     throw new DomainError("INVOICE_INVALID_STATE", "Only a draft or issued pro-forma can be converted to an invoice");
   }
-  const receivableAccountId = request.receivableAccountId ?? proforma.receivable_account_id;
-  if (receivableAccountId === null) {
-    throw new DomainError("INVOICE_INVALID_STATE", "The pro-forma has no receivable account; pass receivableAccountId");
-  }
+  const receivableAccountId =
+    request.receivableAccountId ?? proforma.receivable_account_id ?? (await documents.defaultControlAccountId(AR, request.tenantId));
   const lines = documents.linesFromRows(await repository.getLines(request.tenantId, proforma.id));
   return toInvoiceDetail(
     await documents.create(

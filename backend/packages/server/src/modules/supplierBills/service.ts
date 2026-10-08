@@ -206,7 +206,8 @@ export interface CreateBillRequest {
   readonly clientUuid: string;
   readonly branchId?: string;
   readonly supplierId: string;
-  readonly payableAccountId: string;
+  /** Omit for the business's PAYABLE account. */
+  readonly payableAccountId?: string;
   readonly billDate: string;
   readonly dueDate?: string;
   readonly supplierReference?: string;
@@ -226,7 +227,7 @@ export async function createBill(request: CreateBillRequest, audit: AuditContext
         ...rest,
         kind: "BILL",
         partyId: supplierId,
-        controlAccountId: payableAccountId,
+        ...(payableAccountId !== undefined ? { controlAccountId: payableAccountId } : {}),
         issueDate: billDate,
         lines: toLineRequests(lines),
       },

@@ -25,6 +25,9 @@ describe("GET /api/v1/tenant", () => {
     expect(["STARTER", "GROWTH", "ENTERPRISE"]).toContain(response.body.plan_tier);
     expect(response.body).toHaveProperty("vat_registered");
     expect(response.body).toHaveProperty("base_currency");
+    expect(Object.keys(response.body.system_accounts).sort()).toEqual(
+      ["BANK", "CASH", "MPESA", "OPENING_BALANCE", "PAYABLE", "RECEIVABLE", "VAT_INPUT", "VAT_OUTPUT"],
+    );
   });
 
   it("rejects a request with no Authorization header", async () => {
