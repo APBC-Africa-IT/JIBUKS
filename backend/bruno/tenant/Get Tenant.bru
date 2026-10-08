@@ -17,4 +17,6 @@ headers {
 docs {
   The caller's own business. Any signed-in user. plan_tier STARTER = micro-trader
   (offer Owner, Cashier, Agent only); GROWTH / ENTERPRISE = all roles + custom roles.
+  system_accounts maps each purpose (RECEIVABLE, PAYABLE, VAT_INPUT, VAT_OUTPUT, CASH, BANK, MPESA,
+  OPENING_BALANCE) to its account id, or null -- find accounts here, never by code.
 }

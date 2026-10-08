@@ -8,7 +8,7 @@ import * as service from "./service.js";
 
 export async function get(req: Request, res: Response): Promise<void> {
   const tenant = await service.getTenant(req.tenantId!);
-  res.json(tenant);
+  res.json(await service.toTenantView(tenant));
 }
 
 export async function update(req: Request, res: Response): Promise<void> {
@@ -23,5 +23,5 @@ export async function update(req: Request, res: Response): Promise<void> {
     },
     { actorUserId: req.actorUserId!, ...(req.ip !== undefined ? { ipAddress: req.ip } : {}) },
   );
-  res.json(tenant);
+  res.json(await service.toTenantView(tenant));
 }

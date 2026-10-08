@@ -11,7 +11,7 @@ import { CURRENCIES } from "./currency.js";
 import { ACCOUNT_TYPES } from "./accounts.js";
 import { JOURNAL_SOURCES } from "./journal.js";
 import { PERMISSIONS, SYSTEM_ROLE_KEYS } from "./permissions.js";
-import { CHART_TEMPLATE_KEYS } from "./chartTemplates.js";
+import { ASSIGNABLE_SYSTEM_ACCOUNT_KEYS, CHART_TEMPLATE_KEYS } from "./chartTemplates.js";
 import { BILL_KINDS, INVOICE_PAYMENT_METHODS, INVOICE_VIEW_STATUSES, SALES_KINDS, TAX_MODES } from "./invoices.js";
 
 export const uuidSchema = z.string().uuid();
@@ -116,6 +116,8 @@ export const updateAccountSchema = z
     name: z.string().trim().min(1).max(200).optional(),
     tags: z.array(z.string().max(50)).max(20).optional(),
     parentAccountId: uuidSchema.nullable().optional(),
+    /** Make this the business's account for that purpose (RECEIVABLE, PAYABLE, VAT_INPUT, VAT_OUTPUT, CASH, BANK). */
+    systemKey: z.enum(ASSIGNABLE_SYSTEM_ACCOUNT_KEYS).optional(),
   })
   .refine((body) => Object.keys(body).length > 0, "Provide at least one field to update");
 
@@ -624,12 +626,14 @@ const invoiceLineSchema = z.object({
   incomeAccountId: uuidSchema,
   /** Basis points: 1600 = 16% (Kenyan VAT). 0 = zero-rated / exempt line. */
   taxRateBps: z.number().int().min(0).max(10000).default(0),
+  /** Output VAT account. Omit for the business's VAT_OUTPUT account. */
   taxAccountId: uuidSchema.optional(),
 });
 
 const invoiceLinesSchema = z.array(invoiceLineSchema).min(1, "An invoice needs at least one line").max(200);
 
-/** Tax rules that need the whole document: NONE means no rates; a rate needs an account. */
+/** Tax rules that need the whole document: NONE means no rates. A taxed line
+ * without taxAccountId posts to the business's VAT_OUTPUT account. */
 function checkInvoiceTax(
   body: { taxMode?: (typeof TAX_MODES)[number] | undefined; lines?: z.infer<typeof invoiceLinesSchema> | undefined },
   ctx: z.RefinementCtx,
@@ -637,13 +641,6 @@ function checkInvoiceTax(
   body.lines?.forEach((line, i) => {
     if (body.taxMode === "NONE" && line.taxRateBps > 0) {
       ctx.addIssue({ code: "custom", path: ["lines", i, "taxRateBps"], message: "taxMode NONE allows no tax rate" });
-    }
-    if (line.taxRateBps > 0 && line.taxAccountId === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["lines", i, "taxAccountId"],
-        message: "taxAccountId is required when taxRateBps is greater than zero",
-      });
     }
   });
 }
@@ -655,7 +652,7 @@ export const createInvoiceSchema = z
     kind: z.enum(["INVOICE", "PROFORMA"]).default("INVOICE"),
     branchId: uuidSchema.optional(),
     customerId: uuidSchema,
-    /** Required for an invoice; optional on a pro-forma until it's converted. */
+    /** Omit for the business's RECEIVABLE account (a pro-forma gets one when converted). */
     receivableAccountId: uuidSchema.optional(),
     issueDate: accountingDateSchema,
     /** Omit to use issueDate + the customer's payment terms (0 days if none). */
@@ -669,9 +666,6 @@ export const createInvoiceSchema = z
   })
   .superRefine((body, ctx) => {
     checkInvoiceTax(body, ctx);
-    if (body.kind === "INVOICE" && body.receivableAccountId === undefined) {
-      ctx.addIssue({ code: "custom", path: ["receivableAccountId"], message: "An invoice needs a receivableAccountId" });
-    }
     if (body.dueDate !== undefined && body.dueDate < body.issueDate) {
       ctx.addIssue({ code: "custom", path: ["dueDate"], message: "dueDate can't be before issueDate" });
     }
@@ -744,7 +738,7 @@ export const convertProformaSchema = z.object({
   clientUuid: uuidSchema,
   /** Omit for today (Africa/Nairobi). */
   issueDate: accountingDateSchema.optional(),
-  /** Required if the pro-forma has none. */
+  /** Omit for the pro-forma's own, else the business's RECEIVABLE account. */
   receivableAccountId: uuidSchema.optional(),
 });
 
@@ -807,7 +801,7 @@ const billLineInputSchema = z.object({
   expenseAccountId: uuidSchema,
   /** Basis points: 1600 = 16% input VAT. */
   taxRateBps: z.number().int().min(0).max(10000).default(0),
-  /** Input VAT account (VAT Recoverable). */
+  /** Input VAT account (VAT Recoverable). Omit for the business's VAT_INPUT account. */
   taxAccountId: uuidSchema.optional(),
 });
 
@@ -821,13 +815,6 @@ function checkBillTax(
     if (body.taxMode === "NONE" && line.taxRateBps > 0) {
       ctx.addIssue({ code: "custom", path: ["lines", i, "taxRateBps"], message: "taxMode NONE allows no tax rate" });
     }
-    if (line.taxRateBps > 0 && line.taxAccountId === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["lines", i, "taxAccountId"],
-        message: "taxAccountId is required when taxRateBps is greater than zero",
-      });
-    }
   });
 }
 
@@ -837,8 +824,8 @@ export const createSupplierBillSchema = z
     clientUuid: uuidSchema,
     branchId: uuidSchema.optional(),
     supplierId: uuidSchema,
-    /** Accounts Payable. */
-    payableAccountId: uuidSchema,
+    /** Accounts Payable. Omit for the business's PAYABLE account. */
+    payableAccountId: uuidSchema.optional(),
     /** The date on the supplier's invoice. */
     billDate: accountingDateSchema,
     /** Omit to use billDate + the supplier's payment terms (0 days if none). */

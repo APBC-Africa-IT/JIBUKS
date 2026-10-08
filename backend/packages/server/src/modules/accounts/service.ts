@@ -7,7 +7,14 @@
  * for module boundaries to mean anything.
  */
 
-import { DomainError, isCurrencyCode, type AccountType } from "@jibuks/domain";
+import {
+  DomainError,
+  SYSTEM_ACCOUNT_KEYS,
+  SYSTEM_ACCOUNT_TYPES,
+  isCurrencyCode,
+  type AccountType,
+  type AssignableSystemAccountKey,
+} from "@jibuks/domain";
 import type { AccountSnapshot } from "@jibuks/ledger";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
@@ -87,6 +94,46 @@ export async function findSystemAccount(tenantId: string, systemKey: SystemAccou
   return repository.findAccountBySystemKey(tenantId, systemKey);
 }
 
+const SYSTEM_ACCOUNT_NAMES: Readonly<Record<SystemAccountKey, string>> = {
+  MPESA: "M-Pesa",
+  OPENING_BALANCE: "Opening Balance Equity",
+  RECEIVABLE: "Accounts Receivable",
+  PAYABLE: "Accounts Payable",
+  VAT_INPUT: "VAT Recoverable (input VAT)",
+  VAT_OUTPUT: "VAT Payable (output VAT)",
+  CASH: "Cash",
+  BANK: "Bank",
+};
+
+/**
+ * The account carrying `systemKey`; 422 SYSTEM_ACCOUNT_MISSING if none.
+ * Never created on the fly: a tenant without the key usually has the
+ * account under another name or code, and a second Accounts Receivable
+ * would split its balance. `field` names the request field that would
+ * have avoided the lookup.
+ */
+export async function requireSystemAccount(tenantId: string, systemKey: SystemAccountKey, field: string): Promise<AccountRow> {
+  const account = await repository.findAccountBySystemKey(tenantId, systemKey);
+  if (!account) {
+    throw new DomainError(
+      "SYSTEM_ACCOUNT_MISSING",
+      `No account is marked as this business's ${SYSTEM_ACCOUNT_NAMES[systemKey]}. Pass ${field}, or mark the account with PATCH /accounts/{id} {"systemKey": "${systemKey}"}`,
+      [{ path: field, message: `Required: no ${systemKey} account is set` }],
+    );
+  }
+  return account;
+}
+
+/** Every system key with the id of the account carrying it, or null -- for GET /tenant. */
+export async function systemAccountIds(tenantId: string): Promise<Record<SystemAccountKey, string | null>> {
+  const tagged = await repository.listSystemAccounts(tenantId);
+  const ids = Object.fromEntries(SYSTEM_ACCOUNT_KEYS.map((key) => [key, null])) as Record<SystemAccountKey, string | null>;
+  for (const account of tagged) {
+    ids[account.system_key!] = account.id;
+  }
+  return ids;
+}
+
 /** The tenant's Opening Balance Equity account (system_key 'OPENING_BALANCE'), created on first use. */
 export async function getOrCreateOpeningBalanceAccount(tenantId: string, audit: AuditContext): Promise<AccountRow> {
   return (
@@ -100,11 +147,14 @@ export interface UpdateAccountRequest {
   readonly name?: string;
   readonly tags?: string[];
   readonly parentAccountId?: string | null;
+  /** Make this the account for that purpose, taking the key off whichever account had it. */
+  readonly systemKey?: AssignableSystemAccountKey;
 }
 
 /**
  * FR-COA-03/04. A parent must exist, have the same type, and not be the
  * account itself or one of its descendants. Type and currency never change.
+ * A system key needs an active, postable account of the key's type.
  */
 export async function updateAccount(
   tenantId: string,
@@ -130,6 +180,29 @@ export async function updateAccount(
       if (at.id === accountId) {
         throw new DomainError("ACCOUNT_NOT_POSTABLE", "An account can't be placed under itself or one of its own sub-accounts");
       }
+    }
+  }
+  if (request.systemKey !== undefined) {
+    const expected = SYSTEM_ACCOUNT_TYPES[request.systemKey];
+    if (account.type !== expected) {
+      throw new DomainError(
+        "ACCOUNT_NOT_POSTABLE",
+        `${request.systemKey} needs an ${expected} account; ${account.code} is ${account.type}`,
+        [{ path: "systemKey", message: `Needs an ${expected} account` }],
+      );
+    }
+    if (!account.is_active) {
+      throw new DomainError("ACCOUNT_INACTIVE", `Account ${account.code} is inactive`);
+    }
+    if (!account.is_postable) {
+      throw new DomainError("ACCOUNT_NOT_POSTABLE", `Account ${account.code} is a header account and can't be posted to`);
+    }
+    if (account.system_key !== null && account.system_key !== request.systemKey) {
+      throw new DomainError(
+        "ACCOUNT_NOT_POSTABLE",
+        `Account ${account.code} is already this business's ${account.system_key} account`,
+        [{ path: "systemKey", message: `Already ${account.system_key}` }],
+      );
     }
   }
   const updated = await repository.updateAccount(tenantId, accountId, request, audit);

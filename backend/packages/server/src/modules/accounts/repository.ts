@@ -124,6 +124,13 @@ export async function findAccountBySystemKey(tenantId: string, systemKey: System
   });
 }
 
+export async function listSystemAccounts(tenantId: string): Promise<AccountRow[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<AccountRow>(`SELECT * FROM accounts WHERE system_key IS NOT NULL`);
+    return result.rows;
+  });
+}
+
 /**
  * Returns the account carrying `systemKey`, creating it if the tenant has
  * none. The new account takes the first free code among `codes`. A
@@ -209,9 +216,11 @@ export interface UpdateAccountInput {
   readonly tags?: string[];
   /** null = top level. */
   readonly parentAccountId?: string | null;
+  /** Moved here from whichever account had it, in the same transaction. */
+  readonly systemKey?: SystemAccountKey;
 }
 
-/** FR-COA-03/04: rename, recode, retag or re-parent. Returns null if not found. */
+/** FR-COA-03/04: rename, recode, retag, re-parent or re-key. Returns null if not found. */
 export async function updateAccount(
   tenantId: string,
   accountId: string,
@@ -223,9 +232,29 @@ export async function updateAccount(
     if (before.rows.length === 0) {
       return null;
     }
+    if (input.systemKey !== undefined) {
+      // One account per key (unique index): free the key first.
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext('system_account:' || $1))`, [tenantId]);
+      const previous = await client.query<AccountRow>(
+        `UPDATE accounts SET system_key = NULL WHERE system_key = $1 AND id <> $2 RETURNING *`,
+        [input.systemKey, accountId],
+      );
+      for (const after of previous.rows) {
+        await recordAuditLog(client, {
+          tenantId,
+          action: "UPDATE",
+          entityType: "account",
+          entityId: after.id,
+          beforeState: { ...after, system_key: input.systemKey },
+          afterState: after,
+          context: audit,
+        });
+      }
+    }
     const result = await client.query<AccountRow>(
       `UPDATE accounts
           SET code = COALESCE($2, code),
+              system_key = COALESCE($7, system_key),
               name = COALESCE($3, name),
               tags = COALESCE($4, tags),
               parent_account_id = CASE WHEN $5 THEN $6::uuid ELSE parent_account_id END
@@ -238,6 +267,7 @@ export async function updateAccount(
         input.tags ?? null,
         input.parentAccountId !== undefined,
         input.parentAccountId ?? null,
+        input.systemKey ?? null,
       ],
     );
     const account = result.rows[0]!;

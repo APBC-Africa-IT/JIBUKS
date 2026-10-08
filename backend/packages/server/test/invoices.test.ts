@@ -202,15 +202,13 @@ describe("invoice drafts", () => {
     expect(response.body).toMatchObject({ subtotal_minor: "15603", tax_minor: "2497", total_minor: "18100" });
   });
 
-  it("rejects a tax rate without a tax account, or under taxMode NONE, with 400", async () => {
+  it("rejects a tax rate under taxMode NONE with 400", async () => {
     const f = await makeFixture();
     const line = { description: "x", quantity: 1, unitPriceMinor: 100, incomeAccountId: f.salesAccountId, taxRateBps: 1600 };
 
-    const noAccount = await createDraft(draftBody(f, { taxMode: "EXCLUSIVE", lines: [line] }));
     const noneMode = await createDraft(draftBody(f, { lines: [{ ...line, taxAccountId: f.vatAccountId }] }));
-    const noReceivable = await createDraft(draftBody(f, { receivableAccountId: undefined }));
 
-    expect([noAccount.status, noneMode.status, noReceivable.status]).toEqual([400, 400, 400]);
+    expect(noneMode.status).toBe(400);
   });
 
   it("rejects an unknown customer or account with 404 and a zero total with 422", async () => {
@@ -495,7 +493,6 @@ describe("pro-formas", () => {
     const draft = await createDraft(draftBody(f, { kind: "PROFORMA", receivableAccountId: undefined }));
 
     const issued = await post(`/${draft.body.id}/issue`);
-    const noAccount = await post(`/${draft.body.id}/convert`, { clientUuid: randomUUID() });
     const converted = await post(`/${draft.body.id}/convert`, { clientUuid: randomUUID(), receivableAccountId: f.arAccountId });
     const twice = await post(`/${draft.body.id}/convert`, { clientUuid: randomUUID(), receivableAccountId: f.arAccountId });
     const payment = await post(`/${draft.body.id}/payments`, {
@@ -508,7 +505,6 @@ describe("pro-formas", () => {
     expect(issued.status).toBe(200);
     expect(issued.body.number).toMatch(/^PF-\d{6,}$/);
     expect(issued.body.journal_id).toBeNull();
-    expect(noAccount.status).toBe(422);
     expect(converted.status).toBe(201);
     expect(converted.body).toMatchObject({ kind: "INVOICE", status: "DRAFT", proforma_id: draft.body.id, total_minor: "50000" });
     expect(twice.status).toBe(409);

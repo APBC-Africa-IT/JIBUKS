@@ -4,8 +4,9 @@
  * offer (FR-MIC-08): STARTER is the micro-trader tier.
  */
 
-import { DomainError } from "@jibuks/domain";
+import { DomainError, type SystemAccountKey } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
+import * as accountsService from "../accounts/service.js";
 import * as rolesService from "../roles/service.js";
 import * as usersService from "../users/service.js";
 import * as repository from "./repository.js";
@@ -18,6 +19,16 @@ export async function getTenant(tenantId: string): Promise<TenantRow> {
     throw new Error(`Tenant ${tenantId} not found for an authenticated user`);
   }
   return tenant;
+}
+
+/** What GET/PATCH /tenant return: the tenant plus the id of the account
+ * set for each purpose (null if none), so clients never find accounts by code. */
+export interface TenantView extends TenantRow {
+  readonly system_accounts: Record<SystemAccountKey, string | null>;
+}
+
+export async function toTenantView(tenant: TenantRow): Promise<TenantView> {
+  return { ...tenant, system_accounts: await accountsService.systemAccountIds(tenant.id) };
 }
 
 /**

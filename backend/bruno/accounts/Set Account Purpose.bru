@@ -1,0 +1,27 @@
+meta {
+  name: Set Account Purpose
+  type: http
+  seq: 11
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/accounts/{{accountId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "systemKey": "RECEIVABLE"
+  }
+}
+
+docs {
+  Requires accounts:edit. Makes this the business's account for that purpose: RECEIVABLE, PAYABLE, VAT_INPUT, VAT_OUTPUT, CASH or BANK. Whichever account had the key loses it. The account must be active, postable, of the key's type (RECEIVABLE/VAT_INPUT/CASH/BANK = ASSET, PAYABLE/VAT_OUTPUT = LIABILITY) and carry no other key, else 422. Use it after a 422 SYSTEM_ACCOUNT_MISSING on an invoice or bill.
+}

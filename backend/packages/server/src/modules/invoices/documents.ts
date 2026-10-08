@@ -275,6 +275,16 @@ async function buildLines(
     throw new DomainError("INVOICE_INVALID_STATE", "taxMode NONE allows no tax rate on any line");
   }
 
+  // A taxed line without its own VAT account posts to the business's.
+  if (taxMode !== "NONE" && lines.some((l) => l.taxRateBps > 0 && l.taxAccountId === undefined)) {
+    const vatAccount = await accountsService.requireSystemAccount(
+      tenantId,
+      side.direction === "AR" ? "VAT_OUTPUT" : "VAT_INPUT",
+      `lines[${lines.findIndex((l) => l.taxRateBps > 0 && l.taxAccountId === undefined)}].taxAccountId`,
+    );
+    lines = lines.map((l) => (l.taxRateBps > 0 && l.taxAccountId === undefined ? { ...l, taxAccountId: vatAccount.id } : l));
+  }
+
   const accountIds = new Set<string>(
     lines.flatMap((l) => [l.accountId, ...(l.taxRateBps > 0 && l.taxAccountId ? [l.taxAccountId] : [])]),
   );
@@ -346,9 +356,25 @@ export interface CreateRequest {
   readonly proformaId?: string;
 }
 
+/**
+ * The business's Accounts Receivable (AR) or Payable (AP), for a document
+ * that names none. 422 SYSTEM_ACCOUNT_MISSING if it isn't marked.
+ */
+export async function defaultControlAccountId(side: Side, tenantId: string): Promise<string> {
+  const account =
+    side.direction === "AR"
+      ? await accountsService.requireSystemAccount(tenantId, "RECEIVABLE", "receivableAccountId")
+      : await accountsService.requireSystemAccount(tenantId, "PAYABLE", "payableAccountId");
+  return account.id;
+}
+
 export async function create(side: Side, request: CreateRequest, audit: AuditContext): Promise<DocumentDetail> {
   const currency = await baseCurrency(side, request.tenantId, request.currency);
   const party = await loadTradingParty(side, request.tenantId, request.partyId, currency);
+  // A pro-forma posts nothing, so it only gets a control account if asked.
+  if (request.controlAccountId === undefined && request.kind === side.main) {
+    request = { ...request, controlAccountId: await defaultControlAccountId(side, request.tenantId) };
+  }
   const built = await buildLines(side, request.tenantId, request.taxMode, request.lines, request.controlAccountId ?? null);
   const dueDate =
     request.dueDate ??
