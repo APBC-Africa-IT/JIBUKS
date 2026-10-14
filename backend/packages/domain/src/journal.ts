@@ -16,6 +16,11 @@ import type { AccountId, BranchId, CustomerId, JournalId, SupplierId, TenantId, 
 export const JOURNAL_SOURCES = ["MANUAL", "CASHBOOK", "PAYMENT", "SALE", "BILL", "IMPORT", "COMMUNITY", "OPENING", "REVERSAL"] as const;
 export type JournalSource = (typeof JOURNAL_SOURCES)[number];
 
+/** JE-000042 -- a hand-entered journal's number, zero-padded to six digits, growing past that if needed. */
+export function formatJournalNumber(sequence: number): string {
+  return `JE-${String(sequence).padStart(6, "0")}`;
+}
+
 /** PENDING_APPROVAL waits for a second person (FR-JNL-01); REJECTED is final. Only POSTED counts. */
 export const JOURNAL_STATUSES = ["DRAFT", "PENDING_APPROVAL", "POSTED", "REJECTED", "REVERSED"] as const;
 export type JournalStatus = (typeof JOURNAL_STATUSES)[number];

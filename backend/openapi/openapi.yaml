@@ -4586,6 +4586,15 @@ components:
         currency: { type: string }
         description: { type: string }
         reference: { type: string, nullable: true }
+        number:
+          type: string
+          nullable: true
+          example: JE-000123
+          description: >
+            Gapless per business, on journals entered through POST /journals
+            (given on save, kept if held for approval). Null on journals
+            posted by other modules, on reversals, and on manual journals
+            from before numbering.
         source:
           $ref: '#/components/schemas/JournalSource'
         status:

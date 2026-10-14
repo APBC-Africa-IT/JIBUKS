@@ -12,6 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import { recordAuditLog, withTenant, readAsTenant, type AuditContext } from "@jibuks/db";
+import { formatJournalNumber } from "@jibuks/domain";
 
 /** A transaction-scoped client, as handed out by withTenant. */
 export type TxClient = Parameters<Parameters<typeof withTenant>[1]>[0];
@@ -26,6 +27,8 @@ export interface JournalRow {
   readonly currency: string;
   readonly description: string;
   readonly reference: string | null;
+  /** JE-000001 on journals entered by hand; null on journals posted by other modules. */
+  readonly number: string | null;
   readonly source: string;
   readonly status: "DRAFT" | "PENDING_APPROVAL" | "POSTED" | "REJECTED";
   readonly reversal_of_journal_id: string | null;
@@ -81,6 +84,8 @@ export interface CreateJournalInput {
   readonly reversalOfJournalId?: string;
   /** POSTED (default), or PENDING_APPROVAL to hold it for a second person. */
   readonly status?: "POSTED" | "PENDING_APPROVAL";
+  /** Give it the next JE- number (journals entered by hand). */
+  readonly numbered?: boolean;
   readonly lines: readonly CreateJournalLineInput[];
 }
 
@@ -100,11 +105,25 @@ export async function insertJournal(
 ): Promise<JournalWithLines> {
   {
     const journalId = randomUUID();
+    // The counter row stays locked until commit, so numbers are gapless.
+    const number = input.numbered
+      ? formatJournalNumber(
+          (
+            await client.query<{ last_value: number }>(
+              `INSERT INTO journal_number_sequences (tenant_id, last_value) VALUES ($1, 1)
+               ON CONFLICT (tenant_id) DO UPDATE SET last_value = journal_number_sequences.last_value + 1
+               RETURNING last_value`,
+              [input.tenantId],
+            )
+          ).rows[0]!.last_value,
+        )
+      : null;
 
     const journalResult = await client.query<JournalRow>(
       `INSERT INTO journals
-         (id, tenant_id, branch_id, client_uuid, period_id, date, currency, description, reference, source, status, reversal_of_journal_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $13, $11, $12)
+         (id, tenant_id, branch_id, client_uuid, period_id, date, currency, description, reference, source, status,
+          reversal_of_journal_id, created_by, number)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $13, $11, $12, $14)
        RETURNING *`,
       [
         journalId,
@@ -120,6 +139,7 @@ export async function insertJournal(
         input.reversalOfJournalId ?? null,
         input.createdBy,
         input.status ?? "POSTED",
+        number,
       ],
     );
     const journal = journalResult.rows[0]!;
