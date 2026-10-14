@@ -1,0 +1,35 @@
+meta {
+  name: Create Invoice from Item
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/api/v1/invoices
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "customerId": "{{customerId}}",
+    "issueDate": "2026-10-14",
+    "lines": [
+      { "itemId": "{{itemId}}", "quantity": 2 },
+      { "itemId": "{{itemId}}", "quantity": 1, "unitPriceMinor": 25000, "description": "Discounted" }
+    ]
+  }
+}
+
+docs {
+  Requires invoices:create. Lines picked from the catalogue (set itemId via items/Create Item):
+  description, unitPriceMinor and incomeAccountId come from the item unless the line sends them.
+  422 ITEM_INVALID if the item has no rate/income account and the line doesn't either, or it's inactive.
+}

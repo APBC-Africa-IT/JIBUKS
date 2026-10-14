@@ -3698,8 +3698,10 @@ components:
       enum: [EXCLUSIVE, INCLUSIVE, NONE]
     InvoiceLineInput:
       type: object
-      required: [description, quantity, unitPriceMinor, incomeAccountId]
+      description: Without itemId, description, unitPriceMinor and incomeAccountId are required.
+      required: [quantity]
       properties:
+        itemId: { type: string, format: uuid, description: "Catalogue item; fills in whatever of description, unitPriceMinor and the account the line leaves out." }
         description: { type: string, minLength: 1, maxLength: 500 }
         quantity: { type: number, exclusiveMinimum: 0, description: Up to 3 decimal places. }
         unitPriceMinor: { type: integer, minimum: 0, description: "Per unit; before VAT (EXCLUSIVE) or including it (INCLUSIVE)." }
@@ -3810,6 +3812,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         line_no: { type: integer }
+        item_id: { type: string, format: uuid, nullable: true, description: The catalogue item, if picked from one. }
         description: { type: string }
         quantity: { type: string, example: "1.500" }
         unit_price_minor: { type: string }
@@ -3904,8 +3907,13 @@ components:
     # -- Supplier bills --
     BillLineInput:
       type: object
-      required: [description, quantity, unitPriceMinor, expenseAccountId]
+      description: >
+        Without itemId, description, unitPriceMinor and expenseAccountId are
+        required. With an INVENTORY item the account defaults to its
+        inventory account, otherwise its expense account.
+      required: [quantity]
       properties:
+        itemId: { type: string, format: uuid, description: "Catalogue item; fills in whatever of description, unitPriceMinor and the account the line leaves out." }
         description: { type: string, minLength: 1, maxLength: 500 }
         quantity: { type: number, exclusiveMinimum: 0, description: Up to 3 decimal places. }
         unitPriceMinor: { type: integer, minimum: 0 }
@@ -4019,6 +4027,7 @@ components:
                 properties:
                   id: { type: string, format: uuid }
                   line_no: { type: integer }
+                  item_id: { type: string, format: uuid, nullable: true }
                   description: { type: string }
                   quantity: { type: string }
                   unit_price_minor: { type: string }
@@ -4602,9 +4611,11 @@ components:
         updated_at: { type: string, format: date-time }
     SalesReceiptLineInput:
       type: object
-      required: [item, quantity, unitPriceMinor, incomeAccountId]
+      description: Without itemId, item, unitPriceMinor and incomeAccountId are required.
+      required: [quantity]
       properties:
-        item: { type: string, minLength: 1, maxLength: 200, description: What was sold -- free text until an item catalogue exists. }
+        itemId: { type: string, format: uuid, description: "Catalogue item; fills in whatever of item (its full_name), unitPriceMinor and incomeAccountId the line leaves out." }
+        item: { type: string, minLength: 1, maxLength: 200, description: What was sold, typed in. }
         description: { type: string, maxLength: 500 }
         quantity: { type: number, exclusiveMinimum: 0, description: Up to 3 decimal places. }
         unitPriceMinor: { type: integer, minimum: 0, description: Includes VAT under INCLUSIVE. }
@@ -4674,6 +4685,7 @@ components:
                 properties:
                   id: { type: string, format: uuid }
                   line_no: { type: integer }
+                  item_id: { type: string, format: uuid, nullable: true }
                   item: { type: string }
                   description: { type: string, nullable: true }
                   quantity: { type: string }

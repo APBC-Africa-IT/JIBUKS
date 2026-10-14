@@ -15,7 +15,7 @@ import * as customersService from "../customers/service.js";
 import { todayInNairobi } from "../periods/service.js";
 import * as tenantsService from "../tenants/service.js";
 import * as documents from "./documents.js";
-import { AR, type DocumentDetail, type DocumentView, type LineRequest, type Page } from "./documents.js";
+import { AR, type DocumentDetail, type DocumentView, type LineDraft, type Page } from "./documents.js";
 import { buildInvoicePdfModel, renderInvoicePdf } from "./pdf.js";
 import * as repository from "./repository.js";
 import type { AllocationRow, InvoiceLineRow } from "./repository.js";
@@ -86,17 +86,22 @@ export async function listInvoices(tenantId: string, request: ListInvoicesReques
 // Drafts
 // ---------------------------------------------------------------------
 
+/** With itemId, description, unitPriceMinor and incomeAccountId default from the item. */
 export interface InvoiceLineRequest {
-  readonly description: string;
+  readonly itemId?: string;
+  readonly description?: string;
   readonly quantity: number;
-  readonly unitPriceMinor: number;
-  readonly incomeAccountId: string;
+  readonly unitPriceMinor?: number;
+  readonly incomeAccountId?: string;
   readonly taxRateBps: number;
   readonly taxAccountId?: string;
 }
 
-function toLineRequests(lines: readonly InvoiceLineRequest[]): LineRequest[] {
-  return lines.map(({ incomeAccountId, ...line }) => ({ ...line, accountId: incomeAccountId }));
+function toLineRequests(lines: readonly InvoiceLineRequest[]): LineDraft[] {
+  return lines.map(({ incomeAccountId, ...line }) => ({
+    ...line,
+    ...(incomeAccountId !== undefined ? { accountId: incomeAccountId } : {}),
+  }));
 }
 
 export interface CreateInvoiceRequest {
