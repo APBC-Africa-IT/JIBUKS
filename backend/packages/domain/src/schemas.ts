@@ -614,8 +614,25 @@ export type CreateStkPushDto = z.infer<typeof createStkPushSchema>;
 // Invoices -- FR-AR-02/05, FR-TAX-01, FR-PAY-04
 // ---------------------------------------------------------------------
 
+/** With itemId, a line may leave out what the item supplies (price, account,
+ * description); without one it must state them. */
+function requireUnlessItem<T extends { itemId?: string | undefined }>(fields: readonly (keyof T & string)[]) {
+  return (line: T, ctx: z.RefinementCtx) => {
+    if (line.itemId !== undefined) {
+      return;
+    }
+    for (const field of fields) {
+      if (line[field] === undefined) {
+        ctx.addIssue({ code: "custom", path: [field], message: `Required unless itemId is given` });
+      }
+    }
+  };
+}
+
 const invoiceLineSchema = z.object({
-  description: z.string().trim().min(1).max(500),
+  /** A catalogue item: fills in price, income account and description when they're left out. */
+  itemId: uuidSchema.optional(),
+  description: z.string().trim().min(1).max(500).optional(),
   /** Up to three decimal places, e.g. 2.5 kg. */
   quantity: z
     .number()
@@ -623,13 +640,13 @@ const invoiceLineSchema = z.object({
     .max(99_999_999_999)
     .refine((q) => Math.abs(Math.round(q * 1000) - q * 1000) < 1e-6, "Quantity has at most three decimal places"),
   /** Before tax under EXCLUSIVE, tax included under INCLUSIVE. */
-  unitPriceMinor: minorUnitsSchema,
-  incomeAccountId: uuidSchema,
+  unitPriceMinor: minorUnitsSchema.optional(),
+  incomeAccountId: uuidSchema.optional(),
   /** Basis points: 1600 = 16% (Kenyan VAT). 0 = zero-rated / exempt line. */
   taxRateBps: z.number().int().min(0).max(10000).default(0),
   /** Output VAT account. Omit for the business's VAT_OUTPUT account. */
   taxAccountId: uuidSchema.optional(),
-});
+}).superRefine(requireUnlessItem(["description", "unitPriceMinor", "incomeAccountId"]));
 
 const invoiceLinesSchema = z.array(invoiceLineSchema).min(1, "An invoice needs at least one line").max(200);
 
@@ -791,20 +808,22 @@ export type AgingQueryDto = z.infer<typeof agingQuerySchema>;
 // ---------------------------------------------------------------------
 
 const billLineInputSchema = z.object({
-  description: z.string().trim().min(1).max(500),
+  /** A catalogue item: fills in price, account (inventory or expense) and description when left out. */
+  itemId: uuidSchema.optional(),
+  description: z.string().trim().min(1).max(500).optional(),
   quantity: z
     .number()
     .positive()
     .max(99_999_999_999)
     .refine((q) => Math.abs(Math.round(q * 1000) - q * 1000) < 1e-6, "Quantity has at most three decimal places"),
-  unitPriceMinor: minorUnitsSchema,
+  unitPriceMinor: minorUnitsSchema.optional(),
   /** The expense (or asset) account the purchase is for. */
-  expenseAccountId: uuidSchema,
+  expenseAccountId: uuidSchema.optional(),
   /** Basis points: 1600 = 16% input VAT. */
   taxRateBps: z.number().int().min(0).max(10000).default(0),
   /** Input VAT account (VAT Recoverable). Omit for the business's VAT_INPUT account. */
   taxAccountId: uuidSchema.optional(),
-});
+}).superRefine(requireUnlessItem(["description", "unitPriceMinor", "expenseAccountId"]));
 
 const billLinesSchema = z.array(billLineInputSchema).min(1, "A bill needs at least one line").max(200);
 
@@ -915,8 +934,10 @@ export const payablesAgingQuerySchema = z.object({
 // ---------------------------------------------------------------------
 
 const salesReceiptLineSchema = z.object({
-  /** What was sold, free text for now (e.g. "Haircut") -- there is no item catalogue yet. */
-  item: z.string().trim().min(1).max(200),
+  /** A catalogue item: fills in item, price and income account when they're left out. */
+  itemId: uuidSchema.optional(),
+  /** What was sold, e.g. "Haircut". Free text, or omit with itemId for the item's name. */
+  item: z.string().trim().min(1).max(200).optional(),
   /** Optional extra detail for the line. */
   description: z.string().trim().max(500).optional(),
   /** Up to three decimal places, e.g. 2.5 kg. */
@@ -926,13 +947,13 @@ const salesReceiptLineSchema = z.object({
     .max(99_999_999_999)
     .refine((q) => Math.abs(Math.round(q * 1000) - q * 1000) < 1e-6, "Quantity has at most three decimal places"),
   /** Before tax under EXCLUSIVE, tax included under INCLUSIVE. */
-  unitPriceMinor: minorUnitsSchema,
-  incomeAccountId: uuidSchema,
+  unitPriceMinor: minorUnitsSchema.optional(),
+  incomeAccountId: uuidSchema.optional(),
   /** Basis points: 1600 = 16% (Kenyan VAT). 0 = zero-rated / exempt line. */
   taxRateBps: z.number().int().min(0).max(10000).default(0),
   /** Output VAT account. Omit for the business's VAT_OUTPUT account. */
   taxAccountId: uuidSchema.optional(),
-});
+}).superRefine(requireUnlessItem(["item", "unitPriceMinor", "incomeAccountId"]));
 
 /**
  * POST /sales-receipts -- a cash sale, posted and PAID on creation:

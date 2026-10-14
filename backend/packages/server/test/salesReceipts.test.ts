@@ -161,14 +161,16 @@ describe("POST /api/v1/sales-receipts", () => {
     expect(posted.lines.every((l) => l.customer_id === null)).toBe(true);
   });
 
-  it("numbers sales one after another", async () => {
+  it("numbers sales in order", async () => {
+    // Other test files record cash sales in the same tenant at the same
+    // time, so the next number is only known to be higher, not +1.
     const f = await makeFixture();
     const first = await createSale(saleBody(f));
     const second = await createSale(saleBody(f));
     expect(first.status).toBe(201);
     expect(second.status).toBe(201);
     const n = (s: string) => Number(s.slice(3));
-    expect(n(second.body.number)).toBe(n(first.body.number) + 1);
+    expect(n(second.body.number)).toBeGreaterThan(n(first.body.number));
   });
 
   it("records a named customer without touching their balance", async () => {
@@ -241,14 +243,19 @@ describe("POST /api/v1/sales-receipts", () => {
     const again = await createSale(body);
     expect(again.status).toBe(409);
 
-    // The refused attempt rolled back whole: no journal for it, and no number used up.
-    const next = await createSale(saleBody(f));
-    expect(Number(next.body.number.slice(3))).toBe(Number(first.body.number.slice(3)) + 1);
-    const journals = await withTenant(TEST_TENANT_ID, async (client) => {
-      const result = await client.query(`SELECT 1 FROM journals WHERE reference = $1`, [first.body.number]);
-      return result.rowCount;
+    // The refused attempt rolled back whole: no number used up (numbers
+    // issued = sales stored) and only one journal for this clientUuid's sale.
+    const counts = await withTenant(TEST_TENANT_ID, async (client) => {
+      const result = await client.query<{ issued: number; stored: number; journals: number }>(
+        `SELECT (SELECT last_value FROM invoice_number_sequences WHERE kind = 'CASH_SALE')::int AS issued,
+                (SELECT count(*) FROM invoices WHERE kind = 'CASH_SALE')::int AS stored,
+                (SELECT count(*) FROM journals WHERE reference = $1)::int AS journals`,
+        [first.body.number],
+      );
+      return result.rows[0]!;
     });
-    expect(journals).toBe(1);
+    expect(counts.issued).toBe(counts.stored);
+    expect(counts.journals).toBe(1);
   });
 });
 

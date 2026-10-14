@@ -1644,10 +1644,11 @@ Base path: `/api/v1/invoices`. Sales invoices, credit notes and pro-formas (FR-A
 | `currency` | string | No | Defaults to the base currency; anything else is `400`. |
 | `taxMode` | string | No | `EXCLUSIVE` (prices before VAT; VAT added on top), `INCLUSIVE` (prices include VAT; VAT extracted), `NONE` (default; no VAT on any line). |
 | `reference`, `notes` | string | No | Printed on the invoice. |
-| `lines[].description` | string | ✅ Yes | |
+| `lines[].itemId` | uuid | No | A catalogue item ([7.26](#726-items)). Whatever the line leaves out of `description`, `unitPriceMinor` and `incomeAccountId` comes from the item. |
+| `lines[].description` | string | ✅ unless `itemId` | Defaults to the item's description, else its `full_name`. |
 | `lines[].quantity` | number | ✅ Yes | > 0, up to 3 decimal places (`2.5`). |
-| `lines[].unitPriceMinor` | integer | ✅ Yes | Per unit, before VAT under `EXCLUSIVE`, including VAT under `INCLUSIVE`. |
-| `lines[].incomeAccountId` | uuid | ✅ Yes | Usually Sales Revenue. |
+| `lines[].unitPriceMinor` | integer | ✅ unless `itemId` | Per unit, before VAT under `EXCLUSIVE`, including VAT under `INCLUSIVE`. Defaults to the item's `rate_minor`. |
+| `lines[].incomeAccountId` | uuid | ✅ unless `itemId` | Usually Sales Revenue. Defaults to the item's income account. |
 | `lines[].taxRateBps` | integer | No | Basis points: `1600` = 16%. `0` (default) = zero-rated or exempt. Must be `0` under `NONE`. |
 | `lines[].taxAccountId` | uuid | No | Output VAT account. Omit for the business's `VAT_OUTPUT` account. |
 
@@ -1914,7 +1915,7 @@ Statuses are the same as invoices: `DRAFT` → `ISSUED` (shown in the app as "Po
 | `dueDate` | No | Defaults to `billDate` + the supplier's `paymentTermsDays`. |
 | `supplierReference` | No | The supplier's own invoice number. **The same supplier + reference can't be entered twice** (`409 DUPLICATE_VALUE`) unless the earlier bill was cancelled. |
 | `taxMode`, `reference`, `notes`, `currency` | No | As for invoices. VAT here is **input** VAT (`taxAccountId` = VAT Recoverable); a business that isn't VAT-registered gets `422 TAX_NOT_REGISTERED` and should enter the gross amount with `taxMode: "NONE"`. |
-| `lines[]` | ✅ | `description`, `quantity` (up to 3 decimals), `unitPriceMinor`, `expenseAccountId` (expense or asset account), `taxRateBps`, `taxAccountId` (omit for the business's `VAT_INPUT` account). |
+| `lines[]` | ✅ | `itemId` (optional catalogue item), `description`, `quantity` (up to 3 decimals), `unitPriceMinor`, `expenseAccountId` (expense or asset account), `taxRateBps`, `taxAccountId` (omit for the business's `VAT_INPUT` account). With `itemId`, a left-out `description`, `unitPriceMinor` or `expenseAccountId` comes from the item. The account is the item's **inventory account** for an `INVENTORY` item and its expense account otherwise. |
 
 **Success:** `201`, the bill with `lines` and `allocations`.
 
@@ -2074,11 +2075,12 @@ Each line:
 
 | Field | Required | Screen column | Description |
 |---|---|---|---|
-| `item` | ✅ | Item | Free text for now (there is no item catalogue yet). |
-| `description` | No | Desc | |
+| `itemId` | No | Item (picked from the catalogue) | A catalogue item ([7.26](#726-items)). Fills in whatever the line leaves out of `item`, `unitPriceMinor` and `incomeAccountId`. |
+| `item` | ✅ unless `itemId` | Item (typed in) | Free text, e.g. "Haircut". With `itemId`, defaults to the item's `full_name`. |
+| `description` | No | Desc | Defaults to the item's description, if any. |
 | `quantity` | ✅ | Qty | Up to 3 decimal places. |
-| `unitPriceMinor` | ✅ | Rate | Includes VAT under `INCLUSIVE`. |
-| `incomeAccountId` | ✅ | | The income account the sale is credited to. Pre-select the business's sales account for micro-traders. |
+| `unitPriceMinor` | ✅ unless `itemId` | Rate | Includes VAT under `INCLUSIVE`. Defaults to the item's `rate_minor`. |
+| `incomeAccountId` | ✅ unless `itemId` | | The income account the sale is credited to. Defaults to the item's income account. Pre-select the business's sales account for typed-in items. |
 | `taxRateBps` | No | VAT | `1600` = 16%, `0` = zero-rated or exempt (default). |
 | `taxAccountId` | No | | Omit for the business's `VAT_OUTPUT` account. |
 
@@ -2219,4 +2221,6 @@ Items are never deleted, only deactivated, so old sales and bills that name them
 
 ### Notes for consuming clients (Items)
 
-- Picking an item on an invoice, bill or cash sale line doesn't fill anything in from the server yet; the next release adds `itemId` on lines. Until then, copy `rate_minor`, `description` and `income_account_id` into the line yourself.
+- **Picking an item on a line:** send `itemId` on an invoice, credit note, pro-forma, bill, debit note or cash sale line. Leave out what the item supplies, or send it to override (e.g. a discounted price). Every line in a response has `item_id` (`null` if typed in). The line keeps its own copy of price, account and description, so editing the item later never changes an existing document.
+- **Show the defaults in the form:** prefill the line from the item (`rate_minor` etc.) so the user sees the price and the totals preview stays right. The server applies the same defaults if you leave them out.
+- An item with no rate or no suitable account, and none on the line, gives `422 ITEM_INVALID`. An inactive item can't go on a new line (`422 ITEM_INVALID`), but drafts that already hold it can still be edited, and pro-formas converted.

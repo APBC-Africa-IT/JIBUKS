@@ -11,7 +11,7 @@
 import type { InvoiceKind, InvoicePaymentMethod, InvoiceViewStatus, TaxMode } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as documents from "../invoices/documents.js";
-import { AP, type DocumentDetail, type DocumentView, type LineRequest, type Page } from "../invoices/documents.js";
+import { AP, type DocumentDetail, type DocumentView, type LineDraft, type Page } from "../invoices/documents.js";
 import type { AllocationRow, InvoiceLineRow } from "../invoices/repository.js";
 
 // ---------------------------------------------------------------------
@@ -56,6 +56,7 @@ export interface BillView {
 export interface BillLineView {
   readonly id: string;
   readonly line_no: number;
+  readonly item_id: string | null;
   readonly description: string;
   readonly quantity: string;
   readonly unit_price_minor: string;
@@ -127,6 +128,7 @@ function toLineView(l: InvoiceLineRow): BillLineView {
   return {
     id: l.id,
     line_no: l.line_no,
+    item_id: l.item_id,
     description: l.description,
     quantity: l.quantity,
     unit_price_minor: l.unit_price_minor,
@@ -188,17 +190,22 @@ export async function listBills(tenantId: string, request: ListBillsRequest): Pr
 // Drafts
 // ---------------------------------------------------------------------
 
+/** With itemId, description, unitPriceMinor and expenseAccountId default from the item. */
 export interface BillLineRequest {
-  readonly description: string;
+  readonly itemId?: string;
+  readonly description?: string;
   readonly quantity: number;
-  readonly unitPriceMinor: number;
-  readonly expenseAccountId: string;
+  readonly unitPriceMinor?: number;
+  readonly expenseAccountId?: string;
   readonly taxRateBps: number;
   readonly taxAccountId?: string;
 }
 
-function toLineRequests(lines: readonly BillLineRequest[]): LineRequest[] {
-  return lines.map(({ expenseAccountId, ...line }) => ({ ...line, accountId: expenseAccountId }));
+function toLineRequests(lines: readonly BillLineRequest[]): LineDraft[] {
+  return lines.map(({ expenseAccountId, ...line }) => ({
+    ...line,
+    ...(expenseAccountId !== undefined ? { accountId: expenseAccountId } : {}),
+  }));
 }
 
 export interface CreateBillRequest {

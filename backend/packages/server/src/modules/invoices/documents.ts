@@ -35,6 +35,7 @@ import {
 } from "@jibuks/domain";
 import { withTenant, type AuditContext } from "@jibuks/db";
 import * as accountsService from "../accounts/service.js";
+import * as itemsService from "../items/service.js";
 import * as customersService from "../customers/service.js";
 import * as suppliersService from "../suppliers/service.js";
 import * as journalsService from "../journals/service.js";
@@ -239,6 +240,8 @@ export async function list(side: DocumentScope, tenantId: string, request: ListR
 // ---------------------------------------------------------------------
 
 export interface LineRequest {
+  /** The catalogue item picked for this line, if any. */
+  readonly itemId?: string;
   /** What was sold -- cash sale lines only. */
   readonly itemName?: string;
   readonly description: string;
@@ -248,6 +251,72 @@ export interface LineRequest {
   readonly accountId: string;
   readonly taxRateBps: number;
   readonly taxAccountId?: string;
+}
+
+/** A line as sent by a client: with an itemId, what's left out comes from the item. */
+export type LineDraft = Omit<LineRequest, "description" | "unitPriceMinor" | "accountId"> & {
+  readonly description?: string;
+  readonly unitPriceMinor?: number;
+  readonly accountId?: string;
+};
+
+/**
+ * Fills each line's blanks from its item: price from rate_minor, account
+ * from the item (income on sales; inventory, else expense, on purchases),
+ * description from the item's description or name, and on cash sales the
+ * item name. What the line states itself always wins. A line without an
+ * item must state everything (the schemas enforce that). Inactive items
+ * can't go on a new line unless allowInactive (copying an existing document).
+ */
+export async function resolveLines(
+  side: DocumentScope,
+  tenantId: string,
+  drafts: readonly LineDraft[],
+  options: { readonly allowInactive?: boolean } = {},
+): Promise<LineRequest[]> {
+  const ids = [...new Set(drafts.flatMap((d) => (d.itemId !== undefined ? [d.itemId] : [])))];
+  const items = new Map(await Promise.all(ids.map(async (id) => [id, await itemsService.getItem(tenantId, id)] as const)));
+
+  return drafts.map((draft, i) => {
+    const item = draft.itemId !== undefined ? items.get(draft.itemId)! : null;
+    if (item && !item.is_active && !options.allowInactive) {
+      throw new DomainError("ITEM_INVALID", `${item.full_name} is inactive and can't be added to a new line`, [
+        { path: `lines[${i}].itemId`, message: "Item is inactive" },
+      ]);
+    }
+    const itemAccount =
+      item === null
+        ? null
+        : side.direction === "AR"
+          ? item.income_account_id
+          : item.type === "INVENTORY"
+            ? item.inventory_account_id
+            : item.expense_account_id;
+    const accountId = draft.accountId ?? itemAccount;
+    const unitPriceMinor = draft.unitPriceMinor ?? (item?.rate_minor != null ? Number(item.rate_minor) : undefined);
+    const accountField = side.direction === "AR" ? "incomeAccountId" : "expenseAccountId";
+    if (accountId == null) {
+      throw new DomainError(
+        "ITEM_INVALID",
+        `${item?.full_name ?? "This line"} has no ${side.direction === "AR" ? "income" : "purchase"} account; pass ${accountField} or set it on the item`,
+        [{ path: `lines[${i}].${accountField}`, message: "Required" }],
+      );
+    }
+    if (unitPriceMinor === undefined) {
+      throw new DomainError("ITEM_INVALID", `${item?.full_name ?? "This line"} has no rate; pass unitPriceMinor or set it on the item`, [
+        { path: `lines[${i}].unitPriceMinor`, message: "Required" },
+      ]);
+    }
+    const isCashSale = side.kinds.includes("CASH_SALE");
+    return {
+      ...draft,
+      ...(isCashSale && draft.itemName === undefined && item ? { itemName: item.full_name } : {}),
+      // On a cash sale the name is already the line's item; elsewhere it stands in for a missing description.
+      description: draft.description ?? item?.description ?? (isCashSale ? "" : (item?.full_name ?? "")),
+      unitPriceMinor,
+      accountId,
+    };
+  });
 }
 
 export function addDays(date: string, days: number): string {
@@ -316,6 +385,7 @@ export async function buildLines(
   }
   return {
     lines: lines.map((line, i) => ({
+      ...(line.itemId !== undefined ? { itemId: line.itemId } : {}),
       ...(line.itemName !== undefined ? { itemName: line.itemName } : {}),
       description: line.description,
       quantity: line.quantity,
@@ -370,7 +440,7 @@ export interface CreateRequest {
   readonly supplierReference?: string;
   readonly reference?: string;
   readonly notes?: string;
-  readonly lines: readonly LineRequest[];
+  readonly lines: readonly LineDraft[];
   readonly proformaId?: string;
 }
 
@@ -393,7 +463,9 @@ export async function create(side: Side, request: CreateRequest, audit: AuditCon
   if (request.controlAccountId === undefined && request.kind === side.main) {
     request = { ...request, controlAccountId: await defaultControlAccountId(side, request.tenantId) };
   }
-  const built = await buildLines(side, request.tenantId, request.taxMode, request.lines, request.controlAccountId ?? null);
+  // A converted pro-forma copies its lines as they are, items deactivated since included.
+  const lines = await resolveLines(side, request.tenantId, request.lines, { allowInactive: request.proformaId !== undefined });
+  const built = await buildLines(side, request.tenantId, request.taxMode, lines, request.controlAccountId ?? null);
   const dueDate =
     request.dueDate ??
     (request.kind === side.main ? addDays(request.issueDate, party.payment_terms_days ?? 0) : null);
@@ -431,11 +503,12 @@ export interface UpdateRequest {
   readonly supplierReference?: string | null;
   readonly reference?: string | null;
   readonly notes?: string | null;
-  readonly lines?: readonly LineRequest[];
+  readonly lines?: readonly LineDraft[];
 }
 
 export function linesFromRows(rows: readonly InvoiceLineRow[]): LineRequest[] {
   return rows.map((row) => ({
+    ...(row.item_id ? { itemId: row.item_id } : {}),
     description: row.description,
     quantity: Number(row.quantity),
     unitPriceMinor: Number(row.unit_price_minor),
@@ -475,7 +548,9 @@ export async function update(
   const issueDate = patch.issueDate ?? current.issue_date;
   const taxMode = patch.taxMode ?? current.tax_mode;
   const controlAccountId = patch.controlAccountId ?? current.receivable_account_id;
-  const lines = patch.lines ?? linesFromRows(await repository.getLines(tenantId, id));
+  const lines = patch.lines
+    ? await resolveLines(side, tenantId, patch.lines)
+    : linesFromRows(await repository.getLines(tenantId, id));
   const built = await buildLines(side, tenantId, taxMode, lines, controlAccountId);
 
   let dueDate: string | null;
@@ -894,7 +969,7 @@ export interface ReductionRequest {
   readonly taxMode?: TaxMode;
   readonly reference?: string;
   readonly notes?: string;
-  readonly lines: readonly LineRequest[];
+  readonly lines: readonly LineDraft[];
 }
 
 /** A DRAFT credit note (AR) or debit note (AP) against an issued document; issuing it applies it. */
@@ -902,7 +977,8 @@ export async function createReduction(side: Side, request: ReductionRequest, aud
   const original = await getRow(side, request.tenantId, request.originalId);
   assertReducible(side, original);
   const taxMode = request.taxMode ?? original.tax_mode;
-  const built = await buildLines(side, request.tenantId, taxMode, request.lines, original.receivable_account_id);
+  const lines = await resolveLines(side, request.tenantId, request.lines);
+  const built = await buildLines(side, request.tenantId, taxMode, lines, original.receivable_account_id);
   assertReductionFits(side, original, built.totalMinor + (await repository.sumDraftCreditNotes(request.tenantId, original.id)));
 
   const note = await repository.insertInvoice(

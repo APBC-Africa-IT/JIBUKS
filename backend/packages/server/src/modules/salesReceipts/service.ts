@@ -44,6 +44,7 @@ import * as tenantsService from "../tenants/service.js";
 export interface SalesReceiptLineView {
   readonly id: string;
   readonly line_no: number;
+  readonly item_id: string | null;
   readonly item: string;
   readonly description: string | null;
   readonly quantity: string;
@@ -117,6 +118,7 @@ function toLineView(l: InvoiceLineRow): SalesReceiptLineView {
   return {
     id: l.id,
     line_no: l.line_no,
+    item_id: l.item_id,
     item: l.item_name ?? l.description,
     description: l.item_name !== null && l.description !== "" ? l.description : null,
     quantity: l.quantity,
@@ -164,12 +166,14 @@ export async function listSalesReceipts(tenantId: string, request: ListSalesRece
 // Create
 // ---------------------------------------------------------------------
 
+/** With itemId, item, unitPriceMinor and incomeAccountId default from the item. */
 export interface SalesReceiptLineRequest {
-  readonly item: string;
+  readonly itemId?: string;
+  readonly item?: string;
   readonly description?: string;
   readonly quantity: number;
-  readonly unitPriceMinor: number;
-  readonly incomeAccountId: string;
+  readonly unitPriceMinor?: number;
+  readonly incomeAccountId?: string;
   readonly taxRateBps: number;
   readonly taxAccountId?: string;
 }
@@ -260,21 +264,21 @@ export async function createSalesReceipt(
   }
   const depositAccountId =
     request.depositAccountId ?? (await defaultDepositAccountId(request.tenantId, request.paymentMethod, audit));
-  const built = await documents.buildLines(
+  const lines = await documents.resolveLines(
     CASH_SALES,
     request.tenantId,
-    request.taxMode,
     request.lines.map((line) => ({
-      itemName: line.item,
-      description: line.description ?? "",
+      ...(line.itemId !== undefined ? { itemId: line.itemId } : {}),
+      ...(line.item !== undefined ? { itemName: line.item } : {}),
+      ...(line.description !== undefined ? { description: line.description } : {}),
       quantity: line.quantity,
-      unitPriceMinor: line.unitPriceMinor,
-      accountId: line.incomeAccountId,
+      ...(line.unitPriceMinor !== undefined ? { unitPriceMinor: line.unitPriceMinor } : {}),
+      ...(line.incomeAccountId !== undefined ? { accountId: line.incomeAccountId } : {}),
       taxRateBps: line.taxRateBps,
       ...(line.taxAccountId !== undefined ? { taxAccountId: line.taxAccountId } : {}),
     })),
-    depositAccountId,
   );
+  const built = await documents.buildLines(CASH_SALES, request.tenantId, request.taxMode, lines, depositAccountId);
 
   const date = request.date ?? todayInNairobi();
   // The sale's id is chosen now so it can be its journal's clientUuid:

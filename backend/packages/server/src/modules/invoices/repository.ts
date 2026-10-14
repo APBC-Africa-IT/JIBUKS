@@ -79,6 +79,8 @@ export interface InvoiceLineRow {
   readonly line_no: number;
   /** What was sold (CASH_SALE lines); null on other documents. */
   readonly item_name: string | null;
+  /** The catalogue item the line was picked from, if any. */
+  readonly item_id: string | null;
   readonly description: string;
   readonly quantity: string; // numeric
   readonly unit_price_minor: string;
@@ -116,6 +118,7 @@ export interface InvoiceDetail extends InvoiceListRow {
 }
 
 export interface LineInput {
+  readonly itemId?: string;
   readonly itemName?: string;
   readonly description: string;
   readonly quantity: number;
@@ -166,8 +169,8 @@ async function insertLines(client: TxClient, tenantId: string, invoiceId: string
     const result = await client.query<InvoiceLineRow>(
       `INSERT INTO invoice_lines
          (id, tenant_id, invoice_id, line_no, description, quantity, unit_price_minor, income_account_id,
-          tax_rate_bps, tax_account_id, net_minor, tax_minor, total_minor, item_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          tax_rate_bps, tax_account_id, net_minor, tax_minor, total_minor, item_name, item_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         randomUUID(),
@@ -184,6 +187,7 @@ async function insertLines(client: TxClient, tenantId: string, invoiceId: string
         line.taxMinor,
         line.totalMinor,
         line.itemName ?? null,
+        line.itemId ?? null,
       ],
     );
     rows.push(result.rows[0]!);
