@@ -1,0 +1,19 @@
+meta {
+  name: List Cheques
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/cheque-payments?limit=20
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires cheques:view. Newest first, no lines. Filters: supplier_id, from, to.
+}

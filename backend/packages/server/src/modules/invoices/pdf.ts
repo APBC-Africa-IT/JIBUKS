@@ -59,6 +59,7 @@ const TITLES: Readonly<Record<InvoiceKind, string>> = {
   BILL: "BILL",
   DEBIT_NOTE: "DEBIT NOTE",
   CASH_SALE: "CASH SALE RECEIPT",
+  CHEQUE: "CHEQUE PAYMENT",
 };
 
 const STATUS_LABELS: Readonly<Record<InvoiceViewStatus, string>> = {

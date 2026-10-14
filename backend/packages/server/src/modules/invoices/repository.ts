@@ -59,9 +59,12 @@ export interface InvoiceRow {
   readonly updated_at: string;
   readonly issued_at: string | null;
   readonly cancelled_at: string | null;
-  /** CASH_SALE only: how and into which account it was paid. */
+  /** CASH_SALE only: how it was paid. */
   readonly payment_method: InvoicePaymentMethod | null;
+  /** CASH_SALE / CHEQUE: the money account -- where a sale's money went, or the bank a cheque is drawn on. */
   readonly deposit_account_id: string | null;
+  /** CHEQUE only: the number on the cheque leaf. */
+  readonly cheque_number: string | null;
   /** Internal note; `notes` is what the customer sees. */
   readonly memo: string | null;
   readonly po_number: string | null;
@@ -264,17 +267,23 @@ export async function insertInvoice(input: InsertInvoiceInput, audit: AuditConte
   });
 }
 
-export interface InsertCashSaleInput {
+export interface InsertSettledInput {
   /** Chosen before the transaction: it is also the journal's clientUuid. */
   readonly id: string;
   readonly tenantId: string;
   readonly clientUuid: string;
   readonly branchId?: string;
+  readonly kind: "CASH_SALE" | "CHEQUE";
   readonly customerId?: string;
+  readonly supplierId?: string;
   readonly issueDate: string;
   readonly currency: string;
-  readonly paymentMethod: InvoicePaymentMethod;
-  readonly depositAccountId: string;
+  /** CASH_SALE only. */
+  readonly paymentMethod?: InvoicePaymentMethod;
+  /** Where a sale's money went, or the bank a cheque is drawn on. */
+  readonly moneyAccountId: string;
+  /** CHEQUE only. */
+  readonly chequeNumber?: string;
   readonly taxMode: TaxMode;
   readonly subtotalMinor: number;
   readonly taxMinor: number;
@@ -287,15 +296,19 @@ export interface InsertCashSaleInput {
   readonly lines: readonly LineInput[];
 }
 
-/** A cash sale, inserted already numbered, posted and PAID -- inside the transaction that posted its journal. */
-export async function insertCashSale(client: TxClient, input: InsertCashSaleInput, audit: AuditContext): Promise<InvoiceRow> {
+/**
+ * A document settled on the spot -- a cash sale (AR) or a cheque (AP) --
+ * inserted already numbered, posted and PAID, inside the transaction that
+ * posted its journal.
+ */
+export async function insertSettledDocument(client: TxClient, input: InsertSettledInput, audit: AuditContext): Promise<InvoiceRow> {
   const result = await client.query<InvoiceRow>(
     `INSERT INTO invoices
        (id, tenant_id, client_uuid, branch_id, direction, kind, status, number, customer_id, issue_date, currency,
         payment_method, deposit_account_id, tax_mode, subtotal_minor, tax_minor, total_minor, amount_paid_minor,
-        reference, notes, memo, journal_id, created_by, issued_by, issued_at)
-     VALUES ($1, $2, $3, $4, 'AR', 'CASH_SALE', 'PAID', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14,
-             $15, $16, $17, $18, $19, $19, now())
+        reference, notes, memo, journal_id, created_by, issued_by, issued_at, supplier_id, cheque_number)
+     VALUES ($1, $2, $3, $4, $20, $21, 'PAID', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14,
+             $15, $16, $17, $18, $19, $19, now(), $22, $23)
      RETURNING *`,
     [
       input.id,
@@ -306,8 +319,8 @@ export async function insertCashSale(client: TxClient, input: InsertCashSaleInpu
       input.customerId ?? null,
       input.issueDate,
       input.currency,
-      input.paymentMethod,
-      input.depositAccountId,
+      input.paymentMethod ?? null,
+      input.moneyAccountId,
       input.taxMode,
       input.subtotalMinor,
       input.taxMinor,
@@ -317,19 +330,23 @@ export async function insertCashSale(client: TxClient, input: InsertCashSaleInpu
       input.memo ?? null,
       input.journalId,
       audit.actorUserId,
+      input.kind === "CHEQUE" ? "AP" : "AR",
+      input.kind,
+      input.supplierId ?? null,
+      input.chequeNumber ?? null,
     ],
   );
-  const sale = result.rows[0]!;
-  const lines = await insertLines(client, input.tenantId, sale.id, input.lines);
+  const doc = result.rows[0]!;
+  const lines = await insertLines(client, input.tenantId, doc.id, input.lines);
   await recordAuditLog(client, {
     tenantId: input.tenantId,
     action: "CREATE",
     entityType: "invoice",
-    entityId: sale.id,
-    afterState: { ...sale, lines },
+    entityId: doc.id,
+    afterState: { ...doc, lines },
     context: audit,
   });
-  return sale;
+  return doc;
 }
 
 export interface UpdateDraftInput {

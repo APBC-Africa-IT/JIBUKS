@@ -50,6 +50,7 @@ export const PERMISSIONS = [
   "cash_sales:view",
   "cash_sales:create",
   "bills:create",
+  "cheques:view",
   "cheques:create",
   "cash_expenses:create",
   "payments:view",

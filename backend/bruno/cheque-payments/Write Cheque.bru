@@ -1,0 +1,36 @@
+meta {
+  name: Write Cheque
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/cheque-payments
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "chequeNumber": "004512",
+    "supplierId": "{{supplierId}}",
+    "taxMode": "EXCLUSIVE",
+    "lines": [
+      { "accountId": "{{expenseAccountId}}", "amountMinor": 3000000, "description": "October rent", "taxRateBps": 1600 }
+    ]
+  }
+}
+
+docs {
+  Requires cheques:create. The Write Cheque screen: numbered CHQ-, posted and PAID (Dr expense + input VAT / Cr bank).
+  Set chequePaymentId to the returned id. bankAccountId left out = the business's BANK account. chequeNumber can't
+  repeat on the same bank account (409). Stock Purchase tab: { "itemId": "{{itemId}}", "quantity": 3 } instead of
+  accountId + amountMinor. To pay a supplier's bill use supplier-bills/Pay Bill instead.
+}

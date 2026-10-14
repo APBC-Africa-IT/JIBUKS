@@ -305,10 +305,11 @@ export async function createSalesReceipt(
       { ...prepared, description: `Cash sale ${number}`, reference: number },
       audit,
     );
-    await repository.insertCashSale(
+    await repository.insertSettledDocument(
       client,
       {
         id,
+        kind: "CASH_SALE",
         tenantId: request.tenantId,
         clientUuid: request.clientUuid,
         ...(request.branchId !== undefined ? { branchId: request.branchId } : {}),
@@ -316,7 +317,7 @@ export async function createSalesReceipt(
         issueDate: date,
         currency,
         paymentMethod: request.paymentMethod,
-        depositAccountId,
+        moneyAccountId: depositAccountId,
         taxMode: request.taxMode,
         subtotalMinor: built.subtotalMinor,
         taxMinor: built.taxMinor,

@@ -56,6 +56,8 @@ export interface DocumentScope {
   readonly kinds: readonly InvoiceKind[];
   /** "invoice" / "bill" / "cash sale" -- used in messages. */
   readonly noun: string;
+  /** The request's name for a line's account, for error paths. Default incomeAccountId (AR) / expenseAccountId (AP). */
+  readonly lineAccountField?: string;
 }
 
 export interface Side extends DocumentScope {
@@ -94,6 +96,14 @@ export const CASH_SALES: DocumentScope = {
   noun: "cash sale",
 };
 
+/** Cheques (/cheque-payments): written posted and paid, like cash sales. */
+export const CHEQUES: DocumentScope = {
+  direction: "AP",
+  kinds: ["CHEQUE"],
+  noun: "cheque",
+  lineAccountField: "accountId",
+};
+
 export const DOC_NAMES: Readonly<Record<InvoiceKind, string>> = {
   INVOICE: "Invoice",
   CREDIT_NOTE: "Credit note",
@@ -101,6 +111,7 @@ export const DOC_NAMES: Readonly<Record<InvoiceKind, string>> = {
   BILL: "Bill",
   DEBIT_NOTE: "Debit note",
   CASH_SALE: "Cash sale",
+  CHEQUE: "Cheque",
 };
 
 function partyIdOf(side: Side, row: InvoiceRow): string {
@@ -303,7 +314,7 @@ export async function resolveLines(
         : item?.rate_minor != null
           ? Number(item.rate_minor)
           : undefined);
-    const accountField = side.direction === "AR" ? "incomeAccountId" : "expenseAccountId";
+    const accountField = side.lineAccountField ?? (side.direction === "AR" ? "incomeAccountId" : "expenseAccountId");
     if (accountId == null) {
       throw new DomainError(
         "ITEM_INVALID",
@@ -362,7 +373,7 @@ export async function buildLines(
         "TAX_NOT_REGISTERED",
         side.direction === "AR"
           ? `This business isn't registered for VAT, so its ${side.noun}s can't charge tax`
-          : "This business isn't registered for VAT, so it can't claim input VAT; enter the bill with taxMode NONE",
+          : `This business isn't registered for VAT, so it can't claim input VAT; enter the ${side.noun} with taxMode NONE`,
       );
     }
   }
