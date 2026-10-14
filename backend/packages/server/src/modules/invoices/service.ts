@@ -39,7 +39,7 @@ export interface InvoiceView
   readonly customer_name: string;
 }
 
-export type InvoiceLineView = Omit<InvoiceLineRow, "item_name">;
+export type InvoiceLineView = Omit<InvoiceLineRow, "item_name" | "amount_minor">;
 
 export interface InvoiceDetailView extends InvoiceView {
   readonly lines: InvoiceLineView[];
@@ -53,7 +53,7 @@ function toInvoiceView(view: DocumentView): InvoiceView {
 
 function toInvoiceDetail(detail: DocumentDetail): InvoiceDetailView {
   const { lines, allocations, ...view } = detail;
-  return { ...toInvoiceView(view), lines: lines.map(({ item_name, ...line }) => line), allocations };
+  return { ...toInvoiceView(view), lines: lines.map(({ item_name, amount_minor, ...line }) => line), allocations };
 }
 
 export async function getInvoice(tenantId: string, invoiceId: string): Promise<InvoiceDetailView> {

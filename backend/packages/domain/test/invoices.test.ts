@@ -4,7 +4,13 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { computeInvoiceLine, computeInvoiceTotals, formatInvoiceNumber, invoiceViewStatus } from "../src/index.js";
+import {
+  computeInvoiceLine,
+  computeInvoiceTotals,
+  formatInvoiceNumber,
+  invoiceViewStatus,
+  unitPriceFromAmount,
+} from "../src/index.js";
 
 describe("computeInvoiceLine", () => {
   it("adds exclusive tax on top, rounding half up", () => {
@@ -80,5 +86,29 @@ describe("aging buckets", () => {
       "DAYS_61_90",
       "DAYS_OVER_90",
     ]);
+  });
+});
+
+describe("lines entered as an amount", () => {
+  it("use the amount as entered instead of quantity x unit price", () => {
+    // 3 for 1,000.00: the rounded unit price (333.33) would give 999.99.
+    const unitPriceMinor = unitPriceFromAmount(100000, 3);
+    expect(unitPriceMinor).toBe(33333);
+    expect(computeInvoiceLine({ quantity: 3, unitPriceMinor, taxRateBps: 1600, amountMinor: 100000 }, "EXCLUSIVE")).toEqual({
+      netMinor: 100000,
+      taxMinor: 16000,
+      totalMinor: 116000,
+    });
+    expect(computeInvoiceLine({ quantity: 3, unitPriceMinor, taxRateBps: 1600, amountMinor: 116000 }, "INCLUSIVE")).toEqual({
+      netMinor: 100000,
+      taxMinor: 16000,
+      totalMinor: 116000,
+    });
+  });
+
+  it("round the shown unit price half up", () => {
+    expect(unitPriceFromAmount(200000, 3)).toBe(66667);
+    expect(unitPriceFromAmount(30000, 1)).toBe(30000);
+    expect(unitPriceFromAmount(100, 0.5)).toBe(200);
   });
 });
