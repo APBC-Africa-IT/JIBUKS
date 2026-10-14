@@ -24,6 +24,7 @@ import {
   DomainError,
   computeInvoiceTotals,
   formatInvoiceNumber,
+  unitPriceFromAmount,
   invoiceViewStatus,
   isUuid,
   type CurrencyCode,
@@ -247,6 +248,8 @@ export interface LineRequest {
   readonly description: string;
   readonly quantity: number;
   readonly unitPriceMinor: number;
+  /** The line's total as entered (bills); used instead of quantity x unitPriceMinor. */
+  readonly amountMinor?: number;
   /** Income (AR) or expense/asset (AP) account. */
   readonly accountId: string;
   readonly taxRateBps: number;
@@ -293,7 +296,13 @@ export async function resolveLines(
             ? item.inventory_account_id
             : item.expense_account_id;
     const accountId = draft.accountId ?? itemAccount;
-    const unitPriceMinor = draft.unitPriceMinor ?? (item?.rate_minor != null ? Number(item.rate_minor) : undefined);
+    const unitPriceMinor =
+      draft.unitPriceMinor ??
+      (draft.amountMinor !== undefined
+        ? unitPriceFromAmount(draft.amountMinor, draft.quantity)
+        : item?.rate_minor != null
+          ? Number(item.rate_minor)
+          : undefined);
     const accountField = side.direction === "AR" ? "incomeAccountId" : "expenseAccountId";
     if (accountId == null) {
       throw new DomainError(
@@ -390,6 +399,7 @@ export async function buildLines(
       description: line.description,
       quantity: line.quantity,
       unitPriceMinor: line.unitPriceMinor,
+      ...(line.amountMinor !== undefined ? { amountMinor: line.amountMinor } : {}),
       accountId: line.accountId,
       taxRateBps: taxMode === "NONE" ? 0 : line.taxRateBps,
       ...(line.taxRateBps > 0 && taxMode !== "NONE" && line.taxAccountId ? { taxAccountId: line.taxAccountId } : {}),
@@ -528,6 +538,7 @@ export function linesFromRows(rows: readonly InvoiceLineRow[]): LineRequest[] {
     description: row.description,
     quantity: Number(row.quantity),
     unitPriceMinor: Number(row.unit_price_minor),
+    ...(row.amount_minor !== null ? { amountMinor: Number(row.amount_minor) } : {}),
     accountId: row.income_account_id,
     taxRateBps: row.tax_rate_bps,
     ...(row.tax_account_id ? { taxAccountId: row.tax_account_id } : {}),

@@ -60,6 +60,8 @@ export interface BillLineView {
   readonly description: string;
   readonly quantity: string;
   readonly unit_price_minor: string;
+  /** The total as entered, if the line was entered as an amount; null when it is quantity x unit price. */
+  readonly amount_minor: string | null;
   readonly expense_account_id: string;
   readonly tax_rate_bps: number;
   readonly tax_account_id: string | null;
@@ -132,6 +134,7 @@ function toLineView(l: InvoiceLineRow): BillLineView {
     description: l.description,
     quantity: l.quantity,
     unit_price_minor: l.unit_price_minor,
+    amount_minor: l.amount_minor,
     expense_account_id: l.income_account_id,
     tax_rate_bps: l.tax_rate_bps,
     tax_account_id: l.tax_account_id,
@@ -196,6 +199,8 @@ export interface BillLineRequest {
   readonly description?: string;
   readonly quantity: number;
   readonly unitPriceMinor?: number;
+  /** The line's total, instead of unitPriceMinor. */
+  readonly amountMinor?: number;
   readonly expenseAccountId?: string;
   readonly taxRateBps: number;
   readonly taxAccountId?: string;

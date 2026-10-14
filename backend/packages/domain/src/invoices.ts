@@ -61,6 +61,12 @@ export interface InvoiceLineAmountsInput {
   readonly unitPriceMinor: number;
   /** Basis points: 1600 = 16%. */
   readonly taxRateBps: number;
+  /**
+   * The line's amount as entered (before VAT under EXCLUSIVE, including it
+   * under INCLUSIVE). When set it is used instead of quantity x unit price,
+   * so a total that doesn't divide evenly by the quantity stays exact.
+   */
+  readonly amountMinor?: number;
 }
 
 export interface InvoiceLineAmounts {
@@ -100,8 +106,11 @@ export function quantityInThousandths(quantity: number): number {
 
 export function computeInvoiceLine(line: InvoiceLineAmountsInput, taxMode: TaxMode): InvoiceLineAmounts {
   const rate = BigInt(taxMode === "NONE" ? 0 : line.taxRateBps);
-  // quantity x unit price, rounded once to whole minor units.
-  const amount = divideHalfUp(BigInt(quantityInThousandths(line.quantity)) * BigInt(line.unitPriceMinor), 1000n);
+  // The entered amount, else quantity x unit price rounded once to whole minor units.
+  const amount =
+    line.amountMinor !== undefined
+      ? BigInt(line.amountMinor)
+      : divideHalfUp(BigInt(quantityInThousandths(line.quantity)) * BigInt(line.unitPriceMinor), 1000n);
 
   let net: bigint;
   let tax: bigint;
@@ -113,6 +122,11 @@ export function computeInvoiceLine(line: InvoiceLineAmountsInput, taxMode: TaxMo
     tax = divideHalfUp(amount * rate, 10000n);
   }
   return { netMinor: toSafe(net), taxMinor: toSafe(tax), totalMinor: toSafe(net + tax) };
+}
+
+/** The unit price shown for a line entered as an amount: amount / quantity, rounded half up. */
+export function unitPriceFromAmount(amountMinor: number, quantity: number): number {
+  return toSafe(divideHalfUp(BigInt(amountMinor) * 1000n, BigInt(quantityInThousandths(quantity))));
 }
 
 export function computeInvoiceTotals(lines: readonly InvoiceLineAmountsInput[], taxMode: TaxMode): InvoiceTotals {

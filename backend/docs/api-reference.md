@@ -1936,7 +1936,13 @@ Statuses are the same as invoices: `DRAFT` → `ISSUED` (shown in the app as "Po
 | `dueDate` | No | Defaults to `billDate` + the supplier's `paymentTermsDays`. |
 | `supplierReference` | No | The supplier's own invoice number. **The same supplier + reference can't be entered twice** (`409 DUPLICATE_VALUE`) unless the earlier bill was cancelled. |
 | `taxMode`, `reference`, `notes`, `currency` | No | As for invoices. VAT here is **input** VAT (`taxAccountId` = VAT Recoverable); a business that isn't VAT-registered gets `422 TAX_NOT_REGISTERED` and should enter the gross amount with `taxMode: "NONE"`. |
-| `lines[]` | ✅ | `itemId` (optional catalogue item), `description`, `quantity` (up to 3 decimals), `unitPriceMinor`, `expenseAccountId` (expense or asset account), `taxRateBps`, `taxAccountId` (omit for the business's `VAT_INPUT` account). With `itemId`, a left-out `description`, `unitPriceMinor` or `expenseAccountId` comes from the item. The account is the item's **inventory account** for an `INVENTORY` item and its expense account otherwise. |
+| `lines[]` | ✅ | `itemId` (optional catalogue item), `description`, `quantity` (up to 3 decimals), `unitPriceMinor` **or** `amountMinor` (see below), `expenseAccountId` (expense or asset account), `taxRateBps`, `taxAccountId` (omit for the business's `VAT_INPUT` account). With `itemId`, a left-out `description`, `unitPriceMinor` or `expenseAccountId` comes from the item. The account is the item's **inventory account** for an `INVENTORY` item and its expense account otherwise. |
+
+**Price per unit or line total.** The Bill screen's **Amount** column is the line's total, so send `amountMinor` instead of `unitPriceMinor` (one or the other, not both; `400` otherwise). It's before VAT under `EXCLUSIVE` and includes VAT under `INCLUSIVE`, like a unit price. The amount is kept **exact**: 3 bags for 1,000.00 posts 1,000.00, where a unit price of 333.33 would give 999.99. Lines in the response have:
+- `amount_minor`: the entered total, or `null` for a line priced per unit;
+- `unit_price_minor`: the amount divided by the quantity, rounded, for display.
+
+With `itemId` and neither field, the item's rate is used as the unit price.
 
 **Success:** `201`, the bill with `lines` and `allocations`.
 

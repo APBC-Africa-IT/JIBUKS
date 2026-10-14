@@ -89,6 +89,8 @@ export interface InvoiceLineRow {
   readonly description: string;
   readonly quantity: string; // numeric
   readonly unit_price_minor: string;
+  /** Set when the line was entered as a total; then it, not quantity x unit price, is the amount. */
+  readonly amount_minor: string | null;
   /** Income account on AR lines, expense/asset account on AP lines. */
   readonly income_account_id: string;
   readonly tax_rate_bps: number;
@@ -128,6 +130,7 @@ export interface LineInput {
   readonly description: string;
   readonly quantity: number;
   readonly unitPriceMinor: number;
+  readonly amountMinor?: number;
   /** Income (AR) or expense/asset (AP) account. */
   readonly accountId: string;
   readonly taxRateBps: number;
@@ -179,8 +182,8 @@ async function insertLines(client: TxClient, tenantId: string, invoiceId: string
     const result = await client.query<InvoiceLineRow>(
       `INSERT INTO invoice_lines
          (id, tenant_id, invoice_id, line_no, description, quantity, unit_price_minor, income_account_id,
-          tax_rate_bps, tax_account_id, net_minor, tax_minor, total_minor, item_name, item_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          tax_rate_bps, tax_account_id, net_minor, tax_minor, total_minor, item_name, item_id, amount_minor)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         randomUUID(),
@@ -198,6 +201,7 @@ async function insertLines(client: TxClient, tenantId: string, invoiceId: string
         line.totalMinor,
         line.itemName ?? null,
         line.itemId ?? null,
+        line.amountMinor ?? null,
       ],
     );
     rows.push(result.rows[0]!);

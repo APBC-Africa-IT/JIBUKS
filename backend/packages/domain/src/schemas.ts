@@ -845,13 +845,27 @@ const billLineInputSchema = z.object({
     .max(99_999_999_999)
     .refine((q) => Math.abs(Math.round(q * 1000) - q * 1000) < 1e-6, "Quantity has at most three decimal places"),
   unitPriceMinor: minorUnitsSchema.optional(),
+  /**
+   * The line's total instead of a unit price (the screen's Amount column):
+   * before VAT under EXCLUSIVE, including it under INCLUSIVE. Kept exact;
+   * the unit price shown is amount / quantity rounded.
+   */
+  amountMinor: minorUnitsSchema.optional(),
   /** The expense (or asset) account the purchase is for. */
   expenseAccountId: uuidSchema.optional(),
   /** Basis points: 1600 = 16% input VAT. */
   taxRateBps: z.number().int().min(0).max(10000).default(0),
   /** Input VAT account (VAT Recoverable). Omit for the business's VAT_INPUT account. */
   taxAccountId: uuidSchema.optional(),
-}).superRefine(requireUnlessItem(["description", "unitPriceMinor", "expenseAccountId"]));
+})
+  .superRefine(requireUnlessItem(["description", "expenseAccountId"]))
+  .superRefine((line, ctx) => {
+    if (line.unitPriceMinor !== undefined && line.amountMinor !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["amountMinor"], message: "Send unitPriceMinor or amountMinor, not both" });
+    } else if (line.itemId === undefined && line.unitPriceMinor === undefined && line.amountMinor === undefined) {
+      ctx.addIssue({ code: "custom", path: ["unitPriceMinor"], message: "Send unitPriceMinor or amountMinor unless itemId is given" });
+    }
+  });
 
 const billLinesSchema = z.array(billLineInputSchema).min(1, "A bill needs at least one line").max(200);
 

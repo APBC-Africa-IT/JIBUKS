@@ -3932,15 +3932,17 @@ components:
     BillLineInput:
       type: object
       description: >
-        Without itemId, description, unitPriceMinor and expenseAccountId are
-        required. With an INVENTORY item the account defaults to its
-        inventory account, otherwise its expense account.
+        Without itemId, description, expenseAccountId and one of
+        unitPriceMinor / amountMinor are required. With an INVENTORY item
+        the account defaults to its inventory account, otherwise its
+        expense account.
       required: [quantity]
       properties:
         itemId: { type: string, format: uuid, description: "Catalogue item; fills in whatever of description, unitPriceMinor and the account the line leaves out." }
         description: { type: string, minLength: 1, maxLength: 500 }
         quantity: { type: number, exclusiveMinimum: 0, description: Up to 3 decimal places. }
         unitPriceMinor: { type: integer, minimum: 0 }
+        amountMinor: { type: integer, minimum: 0, description: "The line's total instead of unitPriceMinor (not both); kept exact. Before VAT under EXCLUSIVE, including it under INCLUSIVE." }
         expenseAccountId: { type: string, format: uuid, description: Expense or asset account. }
         taxRateBps: { type: integer, minimum: 0, maximum: 10000, default: 0 }
         taxAccountId: { type: string, format: uuid, description: "Input VAT (VAT Recoverable); omit for the business's VAT_INPUT account." }
@@ -4054,7 +4056,8 @@ components:
                   item_id: { type: string, format: uuid, nullable: true }
                   description: { type: string }
                   quantity: { type: string }
-                  unit_price_minor: { type: string }
+                  unit_price_minor: { type: string, description: amount_minor / quantity rounded when the line was entered as an amount. }
+                  amount_minor: { type: string, nullable: true, description: The total as entered; null when priced per unit. }
                   expense_account_id: { type: string, format: uuid }
                   tax_rate_bps: { type: integer }
                   tax_account_id: { type: string, format: uuid, nullable: true }
