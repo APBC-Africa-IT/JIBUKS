@@ -120,6 +120,8 @@ describe("manual journals under approval", () => {
 
     expect(small.status).toBe("POSTED");
     expect(large.status).toBe("PENDING_APPROVAL");
+    // Numbered when entered, held or not -- a fresh business starts at JE-000001.
+    expect([small.number, large.number]).toEqual(["JE-000001", "JE-000002"]);
     expect(await balance(b, b.bank)).toBe("999999");
     const pending = await journalsService.listJournals(b.tenantId, "PENDING_APPROVAL");
     expect(pending.map((j) => j.id)).toEqual([large.id]);

@@ -224,7 +224,10 @@ export async function createManualJournal(request: CreateJournalRequest, audit: 
   const threshold = tenant.manual_journal_approval_threshold_minor;
   const total = request.lines.reduce((sum, line) => sum + line.debitMinor, 0);
   const needsApproval = threshold !== null && total >= Number(threshold);
-  return repository.createJournal(needsApproval ? { ...prepared, status: "PENDING_APPROVAL" } : prepared, audit);
+  return repository.createJournal(
+    { ...prepared, numbered: true, ...(needsApproval ? { status: "PENDING_APPROVAL" as const } : {}) },
+    audit,
+  );
 }
 
 function notPending(journal: { id: string; status: string }): DomainError {

@@ -907,6 +907,8 @@ Enforces **double-entry bookkeeping**: debits must equal credits, checked both b
 }
 ```
 
+**Numbering:** every journal entered through `POST /journals` gets the next **`number`**, `JE-000001`, gapless per business. This is the Journal Entry screen's **Ref#**. It's given on save, so show it blank or "Auto" until then. A journal held for approval gets its number straight away and keeps it whether approved or rejected. `reference` stays a free-text field of your own. Journals posted by other screens (sales, bills, payments, cheques) and reversals have `number: null`; their document number is in `reference`. Manual journals entered before numbering existed also have `null`.
+
 A journal is created with `status: "POSTED"` — unless the business requires **approval** for manual journals of this size, in which case it comes back `201` with `status: "PENDING_APPROVAL"` and doesn't count anywhere until approved (see [Approval](#journal-approval) below). Everything is still checked at submission: balance, period, accounts.
 
 A line may optionally carry `customerId` **or** `supplierId` (never both) to attribute it to a customer's/supplier's subledger balance — see [7.5 Customers](#75-customers) / [7.6 Suppliers](#76-suppliers). For example, a credit sale debits Accounts Receivable with `customerId` set and credits Sales:
@@ -952,6 +954,17 @@ Creates a **new** journal with every line's debit/credit swapped, dated today, r
 - Parse `debit_minor`/`credit_minor` as strings, not numbers.
 - A journal can only be reversed once.
 - Create at least one open period before attempting to post journals.
+- **Journal Entry screen, field by field:**
+  - Date* → `date`
+  - Ref# → `number`, returned on save
+  - Description* → `description`
+  - Account → `accountId`
+  - Debit / Credit → `debitMinor` / `creditMinor`
+  - Name → `customerId` or `supplierId`, never both. One picker can list both; tag the line with whichever the user picks.
+  - Memo → `narrative`
+- **Account picker** (Assets / Liabilities / Equity / Income / Expenses with search): build it from `GET /accounts`. Group by `type` (`ASSET`, `LIABILITY`, `EQUITY`, `INCOME`, `EXPENSE`), nest by `parent_account_id` if you like, search on `code` and `name`, and leave out inactive and header (`is_postable: false`) accounts.
+- **VAT and Billable columns: hide them.** Journal lines carry no VAT. To book VAT by hand, add a separate line to the VAT account (`system_accounts.VAT_OUTPUT` / `VAT_INPUT` from `GET /tenant`). Billable (charging an expense on to a customer) isn't built yet.
+- **Print/Share:** `GET /journals/{id}` has everything; there's no server PDF.
 
 ---
 
