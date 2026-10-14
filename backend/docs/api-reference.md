@@ -55,6 +55,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.22 Supplier Bills](#722-supplier-bills)
 - [7.23 Payables Aging](#723-payables-aging)
 - [7.24 Opening Balances](#724-opening-balances)
+- [7.25 Sales Receipts](#725-sales-receipts)
 
 ---
 
@@ -123,9 +124,9 @@ FR-RBAC-01/02, FR-MIC-08. Each user has one or more **roles**, and each role gra
 |---|---|
 | `OWNER` | Everything, including managing users, roles and invites, and the business's own details (`PATCH /tenant`). |
 | `ACCOUNTANT` | All bookkeeping, period close/reopen, journal reversal, invoices (including credit-limit override), supplier bills, reports. Can view users/roles but not change them. |
-| `CASHIER` | Record cash sales and cash expenses, collect M-Pesa payments, take payments against invoices; view accounts, customers, suppliers and invoices. Can't raise, issue or cancel invoices. |
+| `CASHIER` | Record and view cash sales, record cash expenses, collect M-Pesa payments, take payments against invoices; view accounts, customers, suppliers and invoices. Can't raise, issue or cancel invoices. |
 | `VIEWER` | Read-only: every `:view` permission, including reports. |
-| `AGENT` | Record cash sales and collect M-Pesa payments; view accounts and customers. (Micro-trader tier.) |
+| `AGENT` | Record and view cash sales and collect M-Pesa payments; view accounts and customers. (Micro-trader tier.) |
 
 For micro-traders (FR-MIC-08), show only **Owner, Cashier and Agent**. All five exist in every business; which ones the app offers is a presentation choice. Tell a micro-trader apart by `plan_tier` from [`GET /tenant`](#719-tenant): `STARTER` = micro-trader (Owner, Cashier, Agent; no custom roles), `GROWTH` / `ENTERPRISE` = all roles plus custom-role screens.
 
@@ -159,7 +160,8 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /periods/{id}/reopen` | `periods:reopen` |
 | `GET /journals…` / `POST /journals` / `POST /journals/{id}/reverse` | `journals:view` / `journals:create` / `journals:reverse` |
 | `POST /credit-sales` | `credit_sales:create` |
-| `POST /cash-sales` | `cash_sales:create` |
+| `POST /cash-sales`, `POST /sales-receipts` | `cash_sales:create` |
+| `GET /sales-receipts`, `GET /sales-receipts/{id}` | `cash_sales:view` |
 | `POST /bills` | `bills:create` |
 | `POST /cheques` | `cheques:create` |
 | `POST /cash-expenses` | `cash_expenses:create` |
@@ -998,6 +1000,8 @@ Dr Accounts Receivable   (gross = net + tax)
 ## 7.10 Cash Sales
 
 Base path: `/api/v1/cash-sales` 
+
+> **Prefer [7.25 Sales Receipts](#725-sales-receipts) for new screens.** `POST /sales-receipts` stores the sale as a numbered document (`CS-000001`) with items, quantities, per-line VAT, payment method and customer, and can be fetched again for the receipt. This endpoint only posts a journal; it keeps working unchanged for existing app versions and will be retired later.
 
 Guided endpoint for a sale paid immediately — no customer, no Accounts Receivable. Standard double-entry for a cash sale:
 
@@ -2014,3 +2018,116 @@ FR-ACC-04. What the business had and owed on the day its books in JiBUks begin, 
 ```
 
 Before any have been entered: `{ "date": null, "locked": false, "opening_balance_account_id": null, "journal": null }`.
+
+---
+
+## 7.25 Sales Receipts
+
+Base path: `/api/v1/sales-receipts`. A **cash sale as a document**: the Cash Sale screen and its receipt. Paid on the spot, so there is no draft. One `POST` numbers it (`CS-000001`, gapless per business), posts it and stores it as `PAID`:
+
+```
+Dr deposit account     (total)
+    Cr income line(s)  (net, one per line)
+    Cr output VAT      (per VAT account, if any)
+```
+
+The journal has `source: "CASHBOOK"`, `description: "Cash sale CS-000001"` and `reference: "CS-000001"`. The VAT maths is the same as invoices (`computeInvoiceTotals` in `@jibuks/domain`, so the app can show the exact totals before saving). Sales receipts never appear under `/invoices` and invoices never under `/sales-receipts`: each answers `404` for the other's ids.
+
+Replaces the older journal-only [`POST /cash-sales`](#710-cash-sales) for new screens.
+
+### `POST /sales-receipts`
+
+`cash_sales:create` (Owner, Accountant, Cashier, Agent). Accepts `Idempotency-Key`.
+
+```json
+{
+  "clientUuid": "2f1c...",
+  "date": "2025-11-25",
+  "paymentMethod": "CASH",
+  "taxMode": "INCLUSIVE",
+  "messageToCustomer": "Thank you, karibu tena!",
+  "memo": "Chair 2",
+  "lines": [
+    { "item": "Haircut", "quantity": 1, "unitPriceMinor": 30000, "incomeAccountId": "<Service income>", "taxRateBps": 1600 },
+    { "item": "Shave", "description": "Hot towel", "quantity": 1, "unitPriceMinor": 15000, "incomeAccountId": "<Service income>", "taxRateBps": 1600 }
+  ]
+}
+```
+
+| Field | Required | Screen field | Description |
+|---|---|---|---|
+| `clientUuid` | ✅ | | Reusing one is refused with `409 DUPLICATE_VALUE`, and nothing is posted. |
+| `customerId` | No | Customer | Omit for a **walk-in** customer. A named customer is recorded on the sale only; their balance and aging don't change, since nothing is owed. |
+| `date` | No | Date | Defaults to today (Africa/Nairobi). Its period must be open. |
+| `paymentMethod` | ✅ | Payment Method | `CASH`, `BANK`, `MPESA` or `OTHER`. |
+| `depositAccountId` | No | Deposit to | Where the money went. Defaults by `paymentMethod`: `CASH` → the business's `CASH` account, `BANK` → `BANK`, `MPESA` → the M-Pesa account (created if missing, as for STK push). **Required for `OTHER`.** A missing `CASH`/`BANK` account gives `422 SYSTEM_ACCOUNT_MISSING`. |
+| `taxMode` | No | VAT inclusive checkbox | `INCLUSIVE` (prices include VAT, so the box is ticked), `EXCLUSIVE` (VAT added on top) or `NONE` (default). A business that isn't VAT-registered gets `422 TAX_NOT_REGISTERED` for any rate above 0. Hide VAT for those businesses. |
+| `reference` | No | | e.g. the M-Pesa receipt code. |
+| `messageToCustomer` | No | Message to Customer | Printed on the receipt. |
+| `memo` | No | Memo | Internal note, never shown to the customer. |
+| `currency` | No | | Base currency only for now. |
+| `lines[]` | ✅ | Items | 1–200 lines, described in the next table. |
+
+Each line:
+
+| Field | Required | Screen column | Description |
+|---|---|---|---|
+| `item` | ✅ | Item | Free text for now (there is no item catalogue yet). |
+| `description` | No | Desc | |
+| `quantity` | ✅ | Qty | Up to 3 decimal places. |
+| `unitPriceMinor` | ✅ | Rate | Includes VAT under `INCLUSIVE`. |
+| `incomeAccountId` | ✅ | | The income account the sale is credited to. Pre-select the business's sales account for micro-traders. |
+| `taxRateBps` | No | VAT | `1600` = 16%, `0` = zero-rated or exempt (default). |
+| `taxAccountId` | No | | Omit for the business's `VAT_OUTPUT` account. |
+
+**Success:** `201`, the sale (see `GET /sales-receipts/{id}`). Errors: `400 VALIDATION_ERROR`, `404 ACCOUNT_NOT_FOUND` / `CUSTOMER_NOT_FOUND`, `409 DUPLICATE_VALUE` (reused `clientUuid`), `422 PERIOD_LOCKED` / `ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE` / `TAX_NOT_REGISTERED` / `SYSTEM_ACCOUNT_MISSING` / `CURRENCY_MISMATCH`.
+
+### `GET /sales-receipts/{id}`
+
+`cash_sales:view` (every built-in role). Everything the Receipt Preview needs:
+
+```json
+{
+  "id": "…",
+  "client_uuid": "…",
+  "branch_id": null,
+  "number": "CS-000042",
+  "status": "PAID",
+  "customer_id": null,
+  "customer_name": null,
+  "date": "2025-11-25",
+  "currency": "KES",
+  "payment_method": "CASH",
+  "deposit_account_id": "…",
+  "tax_mode": "INCLUSIVE",
+  "subtotal_minor": "38793",
+  "tax_minor": "6207",
+  "total_minor": "45000",
+  "reference": null,
+  "message_to_customer": "Thank you, karibu tena!",
+  "memo": "Chair 2",
+  "journal_id": "…",
+  "created_by": "…",
+  "created_at": "2025-11-25T07:15:03.120Z",
+  "lines": [
+    { "id": "…", "line_no": 1, "item": "Haircut", "description": null, "quantity": "1.000", "unit_price_minor": "30000",
+      "income_account_id": "…", "tax_rate_bps": 1600, "tax_account_id": "…", "net_minor": "25862", "tax_minor": "4138", "total_minor": "30000" },
+    { "id": "…", "line_no": 2, "item": "Shave", "description": "Hot towel", "quantity": "1.000", "unit_price_minor": "15000",
+      "income_account_id": "…", "tax_rate_bps": 1600, "tax_account_id": "…", "net_minor": "12931", "tax_minor": "2069", "total_minor": "15000" }
+  ]
+}
+```
+
+- `customer_name: null` means a walk-in customer, so show "Walk-in customer".
+- `created_at` is the time on the receipt. Show it in Africa/Nairobi time.
+- Unknown id, or the id of an invoice: `404 INVOICE_NOT_FOUND`.
+
+### `GET /sales-receipts`
+
+`cash_sales:view`. Newest first, with cursor paging as for `GET /invoices` (`limit` up to 200, default 50; `cursor` = the previous page's `next_cursor`). Filters: `customer_id`, `from` / `to` (sale `date`, inclusive). Items have the fields above **without** `lines`.
+
+### Notes for consuming clients (Sales Receipts)
+
+- **Sale No. on the form:** the number is given on save, so show it blank or "Auto" until the `201` comes back. Numbers are gapless, so the server can't reserve one in advance.
+- **Save & New / Print/Share:** after the `201`, show the Receipt Preview from the response (or `GET /sales-receipts/{id}` later). There's no receipt PDF/SMS from the server yet; share from the app.
+- **Not built yet:** voiding or refunding a sale (for now an Owner/Accountant reverses its journal with `POST /journals/{id}/reverse`, but the sale itself still shows `PAID`), an item/product catalogue with default prices, a server-rendered receipt PDF, and offline sync.

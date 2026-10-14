@@ -59,11 +59,17 @@ export interface InvoiceRow {
   readonly updated_at: string;
   readonly issued_at: string | null;
   readonly cancelled_at: string | null;
+  /** CASH_SALE only: how and into which account it was paid. */
+  readonly payment_method: InvoicePaymentMethod | null;
+  readonly deposit_account_id: string | null;
+  /** Internal note; `notes` is what the customer sees. */
+  readonly memo: string | null;
 }
 
 /** An InvoiceRow plus its customer's or supplier's name -- what lists and details show. */
 export interface InvoiceListRow extends InvoiceRow {
-  readonly party_name: string;
+  /** Null only for a walk-in cash sale. */
+  readonly party_name: string | null;
 }
 
 export interface InvoiceLineRow {
@@ -71,6 +77,8 @@ export interface InvoiceLineRow {
   readonly tenant_id: string;
   readonly invoice_id: string;
   readonly line_no: number;
+  /** What was sold (CASH_SALE lines); null on other documents. */
+  readonly item_name: string | null;
   readonly description: string;
   readonly quantity: string; // numeric
   readonly unit_price_minor: string;
@@ -108,6 +116,7 @@ export interface InvoiceDetail extends InvoiceListRow {
 }
 
 export interface LineInput {
+  readonly itemName?: string;
   readonly description: string;
   readonly quantity: number;
   readonly unitPriceMinor: number;
@@ -157,8 +166,8 @@ async function insertLines(client: TxClient, tenantId: string, invoiceId: string
     const result = await client.query<InvoiceLineRow>(
       `INSERT INTO invoice_lines
          (id, tenant_id, invoice_id, line_no, description, quantity, unit_price_minor, income_account_id,
-          tax_rate_bps, tax_account_id, net_minor, tax_minor, total_minor)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          tax_rate_bps, tax_account_id, net_minor, tax_minor, total_minor, item_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING *`,
       [
         randomUUID(),
@@ -174,6 +183,7 @@ async function insertLines(client: TxClient, tenantId: string, invoiceId: string
         line.netMinor,
         line.taxMinor,
         line.totalMinor,
+        line.itemName ?? null,
       ],
     );
     rows.push(result.rows[0]!);
@@ -227,6 +237,74 @@ export async function insertInvoice(input: InsertInvoiceInput, audit: AuditConte
     });
     return invoice;
   });
+}
+
+export interface InsertCashSaleInput {
+  /** Chosen before the transaction: it is also the journal's clientUuid. */
+  readonly id: string;
+  readonly tenantId: string;
+  readonly clientUuid: string;
+  readonly branchId?: string;
+  readonly customerId?: string;
+  readonly issueDate: string;
+  readonly currency: string;
+  readonly paymentMethod: InvoicePaymentMethod;
+  readonly depositAccountId: string;
+  readonly taxMode: TaxMode;
+  readonly subtotalMinor: number;
+  readonly taxMinor: number;
+  readonly totalMinor: number;
+  readonly reference?: string;
+  readonly notes?: string;
+  readonly memo?: string;
+  readonly number: string;
+  readonly journalId: string;
+  readonly lines: readonly LineInput[];
+}
+
+/** A cash sale, inserted already numbered, posted and PAID -- inside the transaction that posted its journal. */
+export async function insertCashSale(client: TxClient, input: InsertCashSaleInput, audit: AuditContext): Promise<InvoiceRow> {
+  const result = await client.query<InvoiceRow>(
+    `INSERT INTO invoices
+       (id, tenant_id, client_uuid, branch_id, direction, kind, status, number, customer_id, issue_date, currency,
+        payment_method, deposit_account_id, tax_mode, subtotal_minor, tax_minor, total_minor, amount_paid_minor,
+        reference, notes, memo, journal_id, created_by, issued_by, issued_at)
+     VALUES ($1, $2, $3, $4, 'AR', 'CASH_SALE', 'PAID', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14,
+             $15, $16, $17, $18, $19, $19, now())
+     RETURNING *`,
+    [
+      input.id,
+      input.tenantId,
+      input.clientUuid,
+      input.branchId ?? null,
+      input.number,
+      input.customerId ?? null,
+      input.issueDate,
+      input.currency,
+      input.paymentMethod,
+      input.depositAccountId,
+      input.taxMode,
+      input.subtotalMinor,
+      input.taxMinor,
+      input.totalMinor,
+      input.reference ?? null,
+      input.notes ?? null,
+      input.memo ?? null,
+      input.journalId,
+      audit.actorUserId,
+    ],
+  );
+  const sale = result.rows[0]!;
+  const lines = await insertLines(client, input.tenantId, sale.id, input.lines);
+  await recordAuditLog(client, {
+    tenantId: input.tenantId,
+    action: "CREATE",
+    entityType: "invoice",
+    entityId: sale.id,
+    afterState: { ...sale, lines },
+    context: audit,
+  });
+  return sale;
 }
 
 export interface UpdateDraftInput {
@@ -380,9 +458,10 @@ export async function sumDraftCreditNotes(tenantId: string, invoiceId: string): 
 
 export interface ListFilters {
   readonly direction: "AR" | "AP";
+  /** Only these kinds -- keeps cash sales out of invoice lists and the reverse. */
+  readonly kinds: readonly InvoiceKind[];
   /** A stored status, or OVERDUE (derived). */
   readonly status?: InvoiceStatus | "OVERDUE";
-  readonly kind?: InvoiceKind;
   /** The customer (AR) or supplier (AP). */
   readonly partyId?: string;
   readonly from?: string;
@@ -413,6 +492,7 @@ export async function listInvoices(tenantId: string, filters: ListFilters): Prom
     };
 
     where.push(`i.direction = ${add(filters.direction)}`);
+    where.push(`i.kind = ANY(${add(filters.kinds)}::text[])`);
     if (filters.status === "OVERDUE") {
       where.push(OVERDUE_SQL(`${add(filters.today)}::date`));
     } else if (filters.status !== undefined) {
@@ -420,9 +500,6 @@ export async function listInvoices(tenantId: string, filters: ListFilters): Prom
       if (filters.status === "ISSUED" || filters.status === "PART_PAID") {
         where.push(`NOT ${OVERDUE_SQL(`${add(filters.today)}::date`)}`);
       }
-    }
-    if (filters.kind !== undefined) {
-      where.push(`i.kind = ${add(filters.kind)}`);
     }
     if (filters.partyId !== undefined) {
       where.push(`${filters.direction === "AR" ? "i.customer_id" : "i.supplier_id"} = ${add(filters.partyId)}`);

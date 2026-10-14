@@ -1,0 +1,41 @@
+meta {
+  name: Create Sales Receipt
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/sales-receipts
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "paymentMethod": "CASH",
+    "depositAccountId": "{{cashAccountId}}",
+    "taxMode": "INCLUSIVE",
+    "messageToCustomer": "Thank you, karibu tena!",
+    "memo": "Chair 2",
+    "lines": [
+      { "item": "Haircut", "quantity": 1, "unitPriceMinor": 30000, "incomeAccountId": "{{salesAccountId}}", "taxRateBps": 1600 },
+      { "item": "Shave", "description": "Hot towel", "quantity": 1, "unitPriceMinor": 15000, "incomeAccountId": "{{salesAccountId}}", "taxRateBps": 1600 }
+    ]
+  }
+}
+
+docs {
+  Requires cash_sales:create. The Cash Sale screen: numbered CS-000001, posted and PAID in one go
+  (Dr deposit account / Cr income / Cr output VAT). Set salesReceiptId to the returned id.
+  No customerId = walk-in. date defaults to today. Leave out depositAccountId to use the business's
+  CASH / BANK / M-Pesa account by paymentMethod (OTHER needs it).
+  lines[].taxAccountId is left out, so the business's VAT_OUTPUT account is used (422
+  SYSTEM_ACCOUNT_MISSING if it has none). Not VAT-registered? Use "taxMode": "NONE" and taxRateBps 0.
+}

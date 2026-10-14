@@ -95,7 +95,7 @@ function toBillView(v: DocumentView): BillView {
     status: v.status,
     number: v.number,
     supplier_id: v.supplier_id!,
-    supplier_name: v.party_name,
+    supplier_name: v.party_name!,
     supplier_reference: v.supplier_reference,
     bill_date: v.issue_date,
     due_date: v.due_date,

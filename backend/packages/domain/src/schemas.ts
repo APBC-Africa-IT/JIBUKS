@@ -910,6 +910,84 @@ export const payablesAgingQuerySchema = z.object({
 });
 
 // ---------------------------------------------------------------------
+// Sales receipts -- cash sales as numbered documents (CS-000001)
+// ---------------------------------------------------------------------
+
+const salesReceiptLineSchema = z.object({
+  /** What was sold, free text for now (e.g. "Haircut") -- there is no item catalogue yet. */
+  item: z.string().trim().min(1).max(200),
+  /** Optional extra detail for the line. */
+  description: z.string().trim().max(500).optional(),
+  /** Up to three decimal places, e.g. 2.5 kg. */
+  quantity: z
+    .number()
+    .positive()
+    .max(99_999_999_999)
+    .refine((q) => Math.abs(Math.round(q * 1000) - q * 1000) < 1e-6, "Quantity has at most three decimal places"),
+  /** Before tax under EXCLUSIVE, tax included under INCLUSIVE. */
+  unitPriceMinor: minorUnitsSchema,
+  incomeAccountId: uuidSchema,
+  /** Basis points: 1600 = 16% (Kenyan VAT). 0 = zero-rated / exempt line. */
+  taxRateBps: z.number().int().min(0).max(10000).default(0),
+  /** Output VAT account. Omit for the business's VAT_OUTPUT account. */
+  taxAccountId: uuidSchema.optional(),
+});
+
+/**
+ * POST /sales-receipts -- a cash sale, posted and PAID on creation:
+ *   Dr deposit account (total) / Cr income lines (net) / Cr output VAT.
+ * Without depositAccountId the money goes to the business's CASH, BANK or
+ * M-Pesa account, by paymentMethod; OTHER has no default.
+ */
+export const createSalesReceiptSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    branchId: uuidSchema.optional(),
+    /** Omit for a walk-in customer. */
+    customerId: uuidSchema.optional(),
+    /** Omit for today (Africa/Nairobi). */
+    date: accountingDateSchema.optional(),
+    paymentMethod: z.enum(INVOICE_PAYMENT_METHODS),
+    depositAccountId: uuidSchema.optional(),
+    /** Omit for the tenant's base currency -- the only one supported in Phase 1. */
+    currency: currencySchema.optional(),
+    taxMode: z.enum(TAX_MODES).default("NONE"),
+    /** e.g. an M-Pesa receipt code. */
+    reference: z.string().max(100).optional(),
+    /** Printed on the receipt. */
+    messageToCustomer: z.string().max(2000).optional(),
+    /** Internal note, never shown to the customer. */
+    memo: z.string().max(2000).optional(),
+    lines: z.array(salesReceiptLineSchema).min(1, "A sale needs at least one line").max(200),
+  })
+  .superRefine((body, ctx) => {
+    body.lines.forEach((line, i) => {
+      if (body.taxMode === "NONE" && line.taxRateBps > 0) {
+        ctx.addIssue({ code: "custom", path: ["lines", i, "taxRateBps"], message: "taxMode NONE allows no tax rate" });
+      }
+    });
+    if (body.paymentMethod === "OTHER" && body.depositAccountId === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["depositAccountId"],
+        message: "Required when paymentMethod is OTHER -- there is no default account for it",
+      });
+    }
+  });
+
+export type CreateSalesReceiptDto = z.infer<typeof createSalesReceiptSchema>;
+
+/** GET /sales-receipts -- newest first, cursor pagination (Section 9.1). */
+export const listSalesReceiptsQuerySchema = paginationSchema.extend({
+  customer_id: uuidSchema.optional(),
+  /** Sale date range, inclusive. */
+  from: accountingDateSchema.optional(),
+  to: accountingDateSchema.optional(),
+});
+
+export type ListSalesReceiptsQueryDto = z.infer<typeof listSalesReceiptsQuerySchema>;
+
+// ---------------------------------------------------------------------
 // Opening balances -- FR-ACC-04
 // ---------------------------------------------------------------------
 

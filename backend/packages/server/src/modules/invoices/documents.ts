@@ -48,20 +48,26 @@ import type { AllocationRow, InvoiceLineRow, InvoiceListRow, InvoicePageRow, Inv
 // Sides
 // ---------------------------------------------------------------------
 
-export interface Side {
+/** Which rows a public face can see: one direction, and only its own kinds. */
+export interface DocumentScope {
   readonly direction: "AR" | "AP";
+  readonly kinds: readonly InvoiceKind[];
+  /** "invoice" / "bill" / "cash sale" -- used in messages. */
+  readonly noun: string;
+}
+
+export interface Side extends DocumentScope {
   /** The document that is owed: INVOICE or BILL. */
   readonly main: "INVOICE" | "BILL";
   /** The document that reduces it: CREDIT_NOTE or DEBIT_NOTE. */
   readonly reduction: "CREDIT_NOTE" | "DEBIT_NOTE";
   readonly journalSource: JournalSource;
-  /** "invoice" / "bill" -- used in messages. */
-  readonly noun: string;
   readonly taxNarrative: string;
 }
 
 export const AR: Side = {
   direction: "AR",
+  kinds: ["INVOICE", "CREDIT_NOTE", "PROFORMA"],
   main: "INVOICE",
   reduction: "CREDIT_NOTE",
   journalSource: "SALE",
@@ -71,11 +77,19 @@ export const AR: Side = {
 
 export const AP: Side = {
   direction: "AP",
+  kinds: ["BILL", "DEBIT_NOTE"],
   main: "BILL",
   reduction: "DEBIT_NOTE",
   journalSource: "BILL",
   noun: "bill",
   taxNarrative: "Input tax",
+};
+
+/** Cash sales (/sales-receipts): created posted and paid, so they never go through the draft/issue/pay paths of a Side. */
+export const CASH_SALES: DocumentScope = {
+  direction: "AR",
+  kinds: ["CASH_SALE"],
+  noun: "cash sale",
 };
 
 export const DOC_NAMES: Readonly<Record<InvoiceKind, string>> = {
@@ -84,6 +98,7 @@ export const DOC_NAMES: Readonly<Record<InvoiceKind, string>> = {
   PROFORMA: "Pro-forma",
   BILL: "Bill",
   DEBIT_NOTE: "Debit note",
+  CASH_SALE: "Cash sale",
 };
 
 function partyIdOf(side: Side, row: InvoiceRow): string {
@@ -139,22 +154,22 @@ function toView(row: InvoiceListRow, today: string): DocumentView {
   };
 }
 
-function notFound(side: Side, id: string): DomainError {
-  return new DomainError("INVOICE_NOT_FOUND", `${side.noun === "bill" ? "Bill" : "Invoice"} ${id} not found`);
+function notFound(side: DocumentScope, id: string): DomainError {
+  return new DomainError("INVOICE_NOT_FOUND", `${side.noun[0]!.toUpperCase()}${side.noun.slice(1)} ${id} not found`);
 }
 
-/** The row, if it exists AND belongs to this side -- a bill is never found through /invoices. */
-export async function getRow(side: Side, tenantId: string, id: string): Promise<InvoiceRow> {
+/** The row, if it exists AND belongs to this side -- a bill or a cash sale is never found through /invoices. */
+export async function getRow(side: DocumentScope, tenantId: string, id: string): Promise<InvoiceRow> {
   const row = isUuid(id) ? await repository.getInvoice(tenantId, id) : null;
-  if (!row || row.direction !== side.direction) {
+  if (!row || row.direction !== side.direction || !side.kinds.includes(row.kind)) {
     throw notFound(side, id);
   }
   return row;
 }
 
-export async function getDetail(side: Side, tenantId: string, id: string): Promise<DocumentDetail> {
+export async function getDetail(side: DocumentScope, tenantId: string, id: string): Promise<DocumentDetail> {
   const detail = isUuid(id) ? await repository.getInvoiceDetail(tenantId, id) : null;
-  if (!detail || detail.direction !== side.direction) {
+  if (!detail || detail.direction !== side.direction || !side.kinds.includes(detail.kind)) {
     throw notFound(side, id);
   }
   const { lines, allocations, ...row } = detail;
@@ -197,12 +212,12 @@ function decodeCursor(cursor: string): { createdAt: string; id: string } {
   throw new ZodError([{ code: "custom", path: ["cursor"], message: "Not a cursor returned by this endpoint" }]);
 }
 
-export async function list(side: Side, tenantId: string, request: ListRequest): Promise<Page<DocumentView>> {
+export async function list(side: DocumentScope, tenantId: string, request: ListRequest): Promise<Page<DocumentView>> {
   const today = todayInNairobi();
   const rows = await repository.listInvoices(tenantId, {
     direction: side.direction,
+    kinds: request.kind !== undefined ? side.kinds.filter((k) => k === request.kind) : side.kinds,
     ...(request.status !== undefined ? { status: request.status } : {}),
-    ...(request.kind !== undefined ? { kind: request.kind } : {}),
     ...(request.partyId !== undefined ? { partyId: request.partyId } : {}),
     ...(request.from !== undefined ? { from: request.from } : {}),
     ...(request.to !== undefined ? { to: request.to } : {}),
@@ -224,6 +239,8 @@ export async function list(side: Side, tenantId: string, request: ListRequest): 
 // ---------------------------------------------------------------------
 
 export interface LineRequest {
+  /** What was sold -- cash sale lines only. */
+  readonly itemName?: string;
   readonly description: string;
   readonly quantity: number;
   readonly unitPriceMinor: number;
@@ -239,7 +256,7 @@ export function addDays(date: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function assertPostableAccount(tenantId: string, accountId: string): Promise<void> {
+export async function assertPostableAccount(tenantId: string, accountId: string): Promise<void> {
   const account = await accountsService.getAccount(tenantId, accountId);
   if (!account.is_active) {
     throw new DomainError("ACCOUNT_INACTIVE", `Account ${accountId} is inactive`);
@@ -253,8 +270,8 @@ async function assertPostableAccount(tenantId: string, accountId: string): Promi
  * Validates a draft's lines and accounts and computes its amounts. Documents
  * are in the tenant's base currency only (multi-currency is Phase 2).
  */
-async function buildLines(
-  side: Side,
+export async function buildLines(
+  side: DocumentScope,
   tenantId: string,
   taxMode: TaxMode,
   lines: readonly LineRequest[],
@@ -266,7 +283,7 @@ async function buildLines(
       throw new DomainError(
         "TAX_NOT_REGISTERED",
         side.direction === "AR"
-          ? "This business isn't registered for VAT, so its invoices can't charge tax"
+          ? `This business isn't registered for VAT, so its ${side.noun}s can't charge tax`
           : "This business isn't registered for VAT, so it can't claim input VAT; enter the bill with taxMode NONE",
       );
     }
@@ -299,6 +316,7 @@ async function buildLines(
   }
   return {
     lines: lines.map((line, i) => ({
+      ...(line.itemName !== undefined ? { itemName: line.itemName } : {}),
       description: line.description,
       quantity: line.quantity,
       unitPriceMinor: line.unitPriceMinor,

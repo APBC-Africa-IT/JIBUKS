@@ -1,0 +1,20 @@
+meta {
+  name: Get Sales Receipt
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/sales-receipts/{{salesReceiptId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires cash_sales:view. Everything the Receipt Preview shows: lines (item, qty x price), totals,
+  customer_name (null = walk-in), payment_method, created_at (receipt time), number.
+}

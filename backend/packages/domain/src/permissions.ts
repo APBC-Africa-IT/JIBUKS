@@ -44,6 +44,7 @@ export const PERMISSIONS = [
   "journals:reverse",
   "journals:approve",
   "credit_sales:create",
+  "cash_sales:view",
   "cash_sales:create",
   "bills:create",
   "cheques:create",
@@ -118,6 +119,7 @@ export const SYSTEM_ROLES: Readonly<Record<SystemRoleKey, SystemRole>> = {
       "accounts:view",
       "customers:view",
       "suppliers:view",
+      "cash_sales:view",
       "cash_sales:create",
       "cash_expenses:create",
       "payments:view",
@@ -136,7 +138,14 @@ export const SYSTEM_ROLES: Readonly<Record<SystemRoleKey, SystemRole>> = {
     key: "AGENT",
     name: "Agent",
     description: "Records cash sales and collects M-Pesa payments (micro-trader tier).",
-    permissions: ["accounts:view", "customers:view", "cash_sales:create", "payments:view", "payments:create"],
+    permissions: [
+      "accounts:view",
+      "customers:view",
+      "cash_sales:view",
+      "cash_sales:create",
+      "payments:view",
+      "payments:create",
+    ],
   },
 };
 
