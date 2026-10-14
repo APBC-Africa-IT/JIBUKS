@@ -56,6 +56,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.23 Payables Aging](#723-payables-aging)
 - [7.24 Opening Balances](#724-opening-balances)
 - [7.25 Sales Receipts](#725-sales-receipts)
+- [7.26 Items](#726-items)
 
 ---
 
@@ -124,9 +125,9 @@ FR-RBAC-01/02, FR-MIC-08. Each user has one or more **roles**, and each role gra
 |---|---|
 | `OWNER` | Everything, including managing users, roles and invites, and the business's own details (`PATCH /tenant`). |
 | `ACCOUNTANT` | All bookkeeping, period close/reopen, journal reversal, invoices (including credit-limit override), supplier bills, reports. Can view users/roles but not change them. |
-| `CASHIER` | Record and view cash sales, record cash expenses, collect M-Pesa payments, take payments against invoices; view accounts, customers, suppliers and invoices. Can't raise, issue or cancel invoices. |
+| `CASHIER` | View items; record and view cash sales, record cash expenses, collect M-Pesa payments, take payments against invoices; view accounts, customers, suppliers and invoices. Can't raise, issue or cancel invoices. |
 | `VIEWER` | Read-only: every `:view` permission, including reports. |
-| `AGENT` | Record and view cash sales and collect M-Pesa payments; view accounts and customers. (Micro-trader tier.) |
+| `AGENT` | Record and view cash sales and collect M-Pesa payments; view accounts, customers and items. (Micro-trader tier.) |
 
 For micro-traders (FR-MIC-08), show only **Owner, Cashier and Agent**. All five exist in every business; which ones the app offers is a presentation choice. Tell a micro-trader apart by `plan_tier` from [`GET /tenant`](#719-tenant): `STARTER` = micro-trader (Owner, Cashier, Agent; no custom roles), `GROWTH` / `ENTERPRISE` = all roles plus custom-role screens.
 
@@ -162,6 +163,7 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /credit-sales` | `credit_sales:create` |
 | `POST /cash-sales`, `POST /sales-receipts` | `cash_sales:create` |
 | `GET /sales-receipts`, `GET /sales-receipts/{id}` | `cash_sales:view` |
+| `GET /items…` / `POST /items` / `PATCH /items/{id}`, `POST /items/{id}/deactivate` / `reactivate` | `items:view` (every built-in role) / `items:create` / `items:edit` (Owner, Accountant) |
 | `POST /bills` | `bills:create` |
 | `POST /cheques` | `cheques:create` |
 | `POST /cash-expenses` | `cash_expenses:create` |
@@ -2131,3 +2133,90 @@ Each line:
 - **Sale No. on the form:** the number is given on save, so show it blank or "Auto" until the `201` comes back. Numbers are gapless, so the server can't reserve one in advance.
 - **Save & New / Print/Share:** after the `201`, show the Receipt Preview from the response (or `GET /sales-receipts/{id}` later). There's no receipt PDF/SMS from the server yet; share from the app.
 - **Not built yet:** voiding or refunding a sale (for now an Owner/Accountant reverses its journal with `POST /journals/{id}/reverse`, but the sale itself still shows `PAID`), an item/product catalogue with default prices, a server-rendered receipt PDF, and offline sync.
+
+---
+
+## 7.26 Items
+
+Base path: `/api/v1/items`. The product and service catalogue: the **Add Item** screen and the **Item** dropdowns on sales and purchase screens. An item holds the defaults a line uses when the item is picked: price, unit, and the accounts it posts to.
+
+| `type` | What it is | Accounts |
+|---|---|---|
+| `SERVICE` | Work you sell, e.g. a haircut | `incomeAccountId` (sold), `expenseAccountId` (bought, if ever) |
+| `NON_INVENTORY` | Goods you buy or sell without counting stock | same |
+| `INVENTORY` | Stocked goods | `incomeAccountId` (sold), `inventoryAccountId` (an ASSET, debited when bought) |
+
+**Track Stock** (`trackStock`) is allowed on `INVENTORY` items only. It is **stored but has no effect yet**: quantity on hand and cost of goods sold come in a later release, with no change to this API.
+
+Items are never deleted, only deactivated, so old sales and bills that name them still read correctly.
+
+### `POST /items`
+
+`items:create` (Owner, Accountant). Accepts `Idempotency-Key`.
+
+```json
+{
+  "type": "SERVICE",
+  "name": "Haircut",
+  "unitOfMeasure": "session",
+  "rateMinor": 30000,
+  "incomeAccountId": "<Service income>",
+  "description": "Standard cut"
+}
+```
+
+| Field | Required | Screen field | Description |
+|---|---|---|---|
+| `type` | ✅ | Item Type | `SERVICE`, `NON_INVENTORY` or `INVENTORY`. |
+| `trackStock` | No | Track Stock | Default `false`. Only `INVENTORY` items can set it (`400` otherwise). Turning the toggle on should switch the type to `INVENTORY`. |
+| `name` | ✅ | Item Name | Unique among items with the same parent, ignoring case (`409 DUPLICATE_VALUE`). |
+| `parentItemId` | No | Subitem of | Makes this a sub-item. Shown as `full_name` "Haircut: Kids". |
+| `unitOfMeasure` | No | Unit of Measure | Free text, e.g. `pcs`, `kg`, `hour`, `session`. |
+| `isActive` | No | Item is Inactive (inverted) | Default `true`. Send `false` when the box is ticked. |
+| `rateMinor` | No | Rate | Default selling price in minor units. |
+| `incomeAccountId` | No | Income Account | Must be an INCOME account. Needed before the item can be sold. |
+| `expenseAccountId` | No | | EXPENSE or ASSET account debited when a service or non-inventory item is bought. |
+| `inventoryAccountId` | No | | `INVENTORY` only. The ASSET account debited when it's bought (e.g. "Inventory"). |
+| `description` | No | Description | Default line description on sales. |
+
+**Success:** `201`, the item. Errors: `400 VALIDATION_ERROR`, `404 ITEM_NOT_FOUND` (parent) / `ACCOUNT_NOT_FOUND`, `409 DUPLICATE_VALUE`, `422 ACCOUNT_WRONG_TYPE`.
+
+```json
+{
+  "id": "…",
+  "type": "SERVICE",
+  "name": "Kids",
+  "full_name": "Haircut: Kids",
+  "parent_item_id": "…",
+  "unit_of_measure": "session",
+  "rate_minor": "20000",
+  "income_account_id": "…",
+  "expense_account_id": null,
+  "inventory_account_id": null,
+  "track_stock": false,
+  "description": null,
+  "is_active": true,
+  "created_at": "…",
+  "updated_at": "…"
+}
+```
+
+### `GET /items` / `GET /items/{id}`
+
+`items:view` (every built-in role, so cashiers can pick items on a cash sale). `GET /items` returns `{ "data": [...] }` sorted by `full_name`, so sub-items sit under their parent. Filters:
+- `active=true` for pickers;
+- `type`;
+- `q`, a case-insensitive search on `full_name`;
+- `parent_item_id`.
+
+### `PATCH /items/{id}`
+
+`items:edit`. Any create field except `isActive`. Omitted fields are unchanged and `null` clears. The rules are checked on the result: a non-`INVENTORY` item can't keep `trackStock` or `inventoryAccountId` (`422 ITEM_INVALID`), and an item can't be moved under itself or its own sub-item (`422 ITEM_INVALID`).
+
+### `POST /items/{id}/deactivate` / `POST /items/{id}/reactivate`
+
+`items:edit`. No body; returns the item.
+
+### Notes for consuming clients (Items)
+
+- Picking an item on an invoice, bill or cash sale line doesn't fill anything in from the server yet; the next release adds `itemId` on lines. Until then, copy `rate_minor`, `description` and `income_account_id` into the line yourself.

@@ -1,0 +1,35 @@
+meta {
+  name: Create Item
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/items
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "type": "SERVICE",
+    "name": "Haircut",
+    "unitOfMeasure": "session",
+    "rateMinor": 30000,
+    "incomeAccountId": "{{salesAccountId}}",
+    "description": "Standard cut"
+  }
+}
+
+docs {
+  Requires items:create (Owner, Accountant). The Add Item screen. Set itemId to the returned id.
+  type: SERVICE, NON_INVENTORY or INVENTORY. trackStock (INVENTORY only) is stored, no effect yet.
+  parentItemId makes a sub-item. isActive: false = "Item is inactive" ticked.
+  Name unique among siblings ignoring case (409). Wrong account type -> 422 ACCOUNT_WRONG_TYPE.
+}

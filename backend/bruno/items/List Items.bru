@@ -1,0 +1,19 @@
+meta {
+  name: List Items
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/items?active=true
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires items:view. Sorted by full_name ("Haircut: Kids"). Filters: active, type, q (search), parent_item_id.
+}

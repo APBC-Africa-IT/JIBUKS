@@ -66,6 +66,10 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   CREDIT_LIMIT_EXCEEDED: 422,
   TAX_NOT_REGISTERED: 422,
   SYSTEM_ACCOUNT_MISSING: 422,
+  // item catalogue
+  ITEM_NOT_FOUND: 404,
+  ITEM_INVALID: 422,
+  ACCOUNT_WRONG_TYPE: 422,
   // opening balances
   OPENING_BALANCES_LOCKED: 422,
   // idempotency -- status codes follow the IETF Idempotency-Key header
