@@ -4,6 +4,7 @@
 
 import type { Request, Response } from "express";
 import {
+  DomainError,
   cancelInvoiceSchema,
   convertProformaSchema,
   createCreditNoteSchema,
@@ -37,9 +38,19 @@ function lines(body: { lines: ReadonlyArray<object> }) {
 }
 
 export async function create(req: Request, res: Response): Promise<void> {
-  const body = createInvoiceSchema.parse(req.body);
-  const invoice = await service.createInvoice(
-    { ...defined(body), lines: lines(body), tenantId: req.tenantId! },
+  const { issue, overrideCreditLimit, ...body } = createInvoiceSchema.parse(req.body);
+  const request = { ...defined(body), lines: lines(body), tenantId: req.tenantId! };
+  if (!issue) {
+    res.status(201).json(await service.createInvoice(request, auditContextFrom(req)));
+    return;
+  }
+  const permissions = await loadPermissions(req);
+  if (!permissions.has("invoices:issue")) {
+    throw new DomainError("FORBIDDEN", 'issue: true requires the "invoices:issue" permission');
+  }
+  const invoice = await service.createAndIssueInvoice(
+    request,
+    { overrideCreditLimit, mayOverrideCreditLimit: permissions.has("invoices:override_credit_limit") },
     auditContextFrom(req),
   );
   res.status(201).json(invoice);

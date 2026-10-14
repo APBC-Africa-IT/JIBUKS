@@ -34,7 +34,6 @@ export interface InvoiceView
     | "customer_id"
     | "payment_method"
     | "deposit_account_id"
-    | "memo"
   > {
   readonly customer_id: string;
   readonly customer_name: string;
@@ -48,8 +47,7 @@ export interface InvoiceDetailView extends InvoiceView {
 }
 
 function toInvoiceView(view: DocumentView): InvoiceView {
-  const { party_name, supplier_id, supplier_reference, customer_id, payment_method, deposit_account_id, memo, ...rest } =
-    view;
+  const { party_name, supplier_id, supplier_reference, customer_id, payment_method, deposit_account_id, ...rest } = view;
   return { ...rest, customer_id: customer_id!, customer_name: party_name! };
 }
 
@@ -117,6 +115,11 @@ export interface CreateInvoiceRequest {
   readonly taxMode: TaxMode;
   readonly reference?: string;
   readonly notes?: string;
+  readonly memo?: string;
+  readonly poNumber?: string;
+  readonly shipTo?: string;
+  readonly shippingDate?: string;
+  readonly paymentTermsDays?: number;
   readonly lines: readonly InvoiceLineRequest[];
   /** Set by convertProforma. */
   readonly proformaId?: string;
@@ -146,6 +149,11 @@ export interface UpdateInvoiceRequest {
   readonly taxMode?: TaxMode;
   readonly reference?: string | null;
   readonly notes?: string | null;
+  readonly memo?: string | null;
+  readonly poNumber?: string | null;
+  readonly shipTo?: string | null;
+  readonly shippingDate?: string | null;
+  readonly paymentTermsDays?: number | null;
   readonly lines?: readonly InvoiceLineRequest[];
 }
 
@@ -189,6 +197,26 @@ export async function issueInvoice(
   audit: AuditContext,
 ): Promise<InvoiceDetailView> {
   return toInvoiceDetail(await documents.issue(AR, tenantId, invoiceId, request, audit));
+}
+
+/**
+ * Create and issue in one call (the Save button). If issuing is refused --
+ * credit limit, closed period, ... -- the draft is deleted again, so the
+ * call either fully succeeds or leaves nothing behind, and the same
+ * clientUuid can be retried.
+ */
+export async function createAndIssueInvoice(
+  request: CreateInvoiceRequest,
+  issue: IssueInvoiceRequest,
+  audit: AuditContext,
+): Promise<InvoiceDetailView> {
+  const draft = await createInvoice(request, audit);
+  try {
+    return await issueInvoice(request.tenantId, draft.id, issue, audit);
+  } catch (error) {
+    await documents.remove(AR, request.tenantId, draft.id, audit);
+    throw error;
+  }
 }
 
 export async function cancelInvoice(
@@ -314,6 +342,11 @@ export async function convertProforma(request: ConvertProformaRequest, audit: Au
         taxMode: proforma.tax_mode,
         ...(proforma.reference ? { reference: proforma.reference } : {}),
         ...(proforma.notes ? { notes: proforma.notes } : {}),
+        ...(proforma.memo ? { memo: proforma.memo } : {}),
+        ...(proforma.po_number ? { poNumber: proforma.po_number } : {}),
+        ...(proforma.ship_to ? { shipTo: proforma.ship_to } : {}),
+        ...(proforma.shipping_date ? { shippingDate: proforma.shipping_date } : {}),
+        ...(proforma.payment_terms_days !== null ? { paymentTermsDays: proforma.payment_terms_days } : {}),
         lines,
         proformaId: proforma.id,
       },

@@ -64,6 +64,11 @@ export interface InvoiceRow {
   readonly deposit_account_id: string | null;
   /** Internal note; `notes` is what the customer sees. */
   readonly memo: string | null;
+  readonly po_number: string | null;
+  readonly ship_to: string | null;
+  readonly shipping_date: string | null;
+  /** The terms due_date was worked out from; null on notes and on rows from before terms were stored. */
+  readonly payment_terms_days: number | null;
 }
 
 /** An InvoiceRow plus its customer's or supplier's name -- what lists and details show. */
@@ -154,6 +159,11 @@ export interface InsertInvoiceInput {
   readonly notes?: string;
   readonly creditedInvoiceId?: string;
   readonly proformaId?: string;
+  readonly memo?: string;
+  readonly poNumber?: string;
+  readonly shipTo?: string;
+  readonly shippingDate?: string;
+  readonly paymentTermsDays: number | null;
   readonly lines: readonly LineInput[];
 }
 
@@ -201,8 +211,10 @@ export async function insertInvoice(input: InsertInvoiceInput, audit: AuditConte
       `INSERT INTO invoices
          (id, tenant_id, client_uuid, branch_id, kind, customer_id, issue_date, due_date, currency,
           receivable_account_id, tax_mode, subtotal_minor, tax_minor, total_minor, reference, notes,
-          credited_invoice_id, proforma_id, created_by, direction, supplier_id, supplier_reference)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+          credited_invoice_id, proforma_id, created_by, direction, supplier_id, supplier_reference,
+          memo, po_number, ship_to, shipping_date, payment_terms_days)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+               $23, $24, $25, $26, $27)
        RETURNING *`,
       [
         randomUUID(),
@@ -227,6 +239,11 @@ export async function insertInvoice(input: InsertInvoiceInput, audit: AuditConte
         input.direction,
         input.supplierId ?? null,
         input.supplierReference ?? null,
+        input.memo ?? null,
+        input.poNumber ?? null,
+        input.shipTo ?? null,
+        input.shippingDate ?? null,
+        input.paymentTermsDays,
       ],
     );
     const invoice = result.rows[0]!;
@@ -324,6 +341,11 @@ export interface UpdateDraftInput {
   readonly totalMinor: number;
   readonly reference: string | null;
   readonly notes: string | null;
+  readonly memo: string | null;
+  readonly poNumber: string | null;
+  readonly shipTo: string | null;
+  readonly shippingDate: string | null;
+  readonly paymentTermsDays: number | null;
   /** Replaces every line. */
   readonly lines: readonly LineInput[];
 }
@@ -348,7 +370,8 @@ export async function updateDraft(
       `UPDATE invoices
           SET customer_id = $2, receivable_account_id = $3, issue_date = $4, due_date = $5, tax_mode = $6,
               subtotal_minor = $7, tax_minor = $8, total_minor = $9, reference = $10, notes = $11,
-              supplier_id = $12, supplier_reference = $13, updated_at = now()
+              supplier_id = $12, supplier_reference = $13, memo = $14, po_number = $15, ship_to = $16,
+              shipping_date = $17, payment_terms_days = $18, updated_at = now()
         WHERE id = $1
        RETURNING *`,
       [
@@ -365,6 +388,11 @@ export async function updateDraft(
         input.notes,
         input.supplierId,
         input.supplierReference,
+        input.memo,
+        input.poNumber,
+        input.shipTo,
+        input.shippingDate,
+        input.paymentTermsDays,
       ],
     );
     await client.query(`DELETE FROM invoice_lines WHERE invoice_id = $1`, [invoiceId]);

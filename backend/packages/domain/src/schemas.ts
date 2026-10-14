@@ -663,7 +663,20 @@ function checkInvoiceTax(
   });
 }
 
-/** POST /invoices -- a DRAFT invoice or pro-forma. */
+/** Create Invoice screen fields beyond the basics. */
+const invoiceExtraFields = {
+  /** The customer's purchase order number ("Po No"). */
+  poNumber: z.string().trim().min(1).max(100),
+  /** Delivery address ("Ship To"). */
+  shipTo: z.string().trim().min(1).max(500),
+  shippingDate: accountingDateSchema,
+  /** The invoice's own terms; omit for the customer's. The due date follows unless dueDate is sent. */
+  paymentTermsDays: paymentTermsDaysSchema,
+  /** Internal note, never printed; `notes` is the message to the customer. */
+  memo: z.string().max(2000),
+};
+
+/** POST /invoices -- a DRAFT invoice or pro-forma, or with issue: true, issued at once. */
 export const createInvoiceSchema = z
   .object({
     clientUuid: uuidSchema,
@@ -680,7 +693,16 @@ export const createInvoiceSchema = z
     taxMode: z.enum(TAX_MODES).default("NONE"),
     reference: z.string().max(100).optional(),
     notes: z.string().max(2000).optional(),
+    poNumber: invoiceExtraFields.poNumber.optional(),
+    shipTo: invoiceExtraFields.shipTo.optional(),
+    shippingDate: invoiceExtraFields.shippingDate.optional(),
+    paymentTermsDays: invoiceExtraFields.paymentTermsDays.optional(),
+    memo: invoiceExtraFields.memo.optional(),
     lines: invoiceLinesSchema,
+    /** Issue straight away (the Save button): number it and post it. Needs invoices:issue. */
+    issue: z.boolean().default(false),
+    /** With issue: true -- as for POST /invoices/{id}/issue. */
+    overrideCreditLimit: z.boolean().default(false),
   })
   .superRefine((body, ctx) => {
     checkInvoiceTax(body, ctx);
@@ -702,6 +724,12 @@ export const updateInvoiceSchema = z
     taxMode: z.enum(TAX_MODES).optional(),
     reference: z.string().max(100).nullable().optional(),
     notes: z.string().max(2000).nullable().optional(),
+    poNumber: invoiceExtraFields.poNumber.nullable().optional(),
+    shipTo: invoiceExtraFields.shipTo.nullable().optional(),
+    shippingDate: invoiceExtraFields.shippingDate.nullable().optional(),
+    /** null goes back to the customer's terms. Recomputes the due date unless dueDate is sent too. */
+    paymentTermsDays: invoiceExtraFields.paymentTermsDays.nullable().optional(),
+    memo: invoiceExtraFields.memo.nullable().optional(),
     lines: invoiceLinesSchema.optional(),
   })
   .refine(atLeastOneField, "Provide at least one field to update");

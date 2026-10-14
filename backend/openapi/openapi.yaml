@@ -602,11 +602,13 @@ paths:
   /invoices:
     post:
       tags: [Invoices]
-      summary: Create a draft invoice or pro-forma
+      summary: Create a draft invoice or pro-forma (or issue it at once)
       description: >
         Requires `invoices:create`. The server computes every amount from
         the lines and taxMode (half-up per line). Nothing is posted until
-        the invoice is issued.
+        the invoice is issued -- with `issue: true` that happens in this
+        call (also needs `invoices:issue`; 422s from issuing leave nothing
+        behind).
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -3718,16 +3720,28 @@ components:
         customerId: { type: string, format: uuid }
         receivableAccountId: { type: string, format: uuid, description: "Omit for the business's RECEIVABLE account (422 SYSTEM_ACCOUNT_MISSING if none). A pro-forma gets one when converted." }
         issueDate: { type: string, format: date }
-        dueDate: { type: string, format: date, description: "Defaults to issueDate + the customer's paymentTermsDays." }
+        dueDate: { type: string, format: date, description: "Defaults to issueDate + paymentTermsDays." }
+        paymentTermsDays: { type: integer, minimum: 0, maximum: 365, description: "Terms; omit for the customer's (0 if none)." }
         currency: { type: string, description: Must be the base currency (the default). }
         taxMode: { $ref: '#/components/schemas/TaxMode' }
         reference: { type: string, maxLength: 100 }
-        notes: { type: string, maxLength: 2000 }
+        notes: { type: string, maxLength: 2000, description: Message to the customer; printed. }
+        memo: { type: string, maxLength: 2000, description: Internal note; never printed. }
+        poNumber: { type: string, maxLength: 100, description: The customer's purchase order number. }
+        shipTo: { type: string, maxLength: 500, description: Delivery address. }
+        shippingDate: { type: string, format: date }
         lines:
           type: array
           minItems: 1
           maxItems: 200
           items: { $ref: '#/components/schemas/InvoiceLineInput' }
+        issue:
+          type: boolean
+          default: false
+          description: >
+            Create and issue in one call. Needs invoices:issue too. If issuing
+            is refused nothing is kept, so the same clientUuid can be retried.
+        overrideCreditLimit: { type: boolean, default: false, description: "With issue true -- as for POST /invoices/{id}/issue." }
     UpdateInvoiceRequest:
       type: object
       minProperties: 1
@@ -3736,9 +3750,14 @@ components:
         receivableAccountId: { type: string, format: uuid }
         issueDate: { type: string, format: date }
         dueDate: { type: string, format: date, nullable: true, description: null recomputes it from payment terms. }
+        paymentTermsDays: { type: integer, minimum: 0, maximum: 365, nullable: true, description: "null = the customer's terms. Recomputes dueDate unless it is sent too." }
         taxMode: { $ref: '#/components/schemas/TaxMode' }
         reference: { type: string, maxLength: 100, nullable: true }
         notes: { type: string, maxLength: 2000, nullable: true }
+        memo: { type: string, maxLength: 2000, nullable: true }
+        poNumber: { type: string, maxLength: 100, nullable: true }
+        shipTo: { type: string, maxLength: 500, nullable: true }
+        shippingDate: { type: string, format: date, nullable: true }
         lines:
           type: array
           minItems: 1
@@ -3784,6 +3803,11 @@ components:
         customer_name: { type: string }
         issue_date: { type: string, format: date }
         due_date: { type: string, format: date, nullable: true }
+        payment_terms_days: { type: integer, nullable: true, description: The terms due_date was worked out from. Null on credit notes and older invoices. }
+        po_number: { type: string, nullable: true }
+        ship_to: { type: string, nullable: true }
+        shipping_date: { type: string, format: date, nullable: true }
+        memo: { type: string, nullable: true }
         currency: { type: string }
         receivable_account_id: { type: string, format: uuid, nullable: true }
         tax_mode: { $ref: '#/components/schemas/TaxMode' }

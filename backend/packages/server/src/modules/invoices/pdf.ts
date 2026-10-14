@@ -38,6 +38,8 @@ export interface InvoicePdfModel {
   readonly stamp: string | null;
   readonly business: string[];
   readonly billTo: string[];
+  /** The delivery address, printed beside Bill to; null when there is none. */
+  readonly shipTo: string | null;
   /** [label, value] pairs under the title. */
   readonly meta: Array<[string, string]>;
   readonly amountHeader: string;
@@ -120,6 +122,15 @@ export function buildInvoicePdfModel(input: InvoicePdfInput): InvoicePdfModel {
   if (invoice.due_date) {
     meta.push([invoice.kind === "PROFORMA" ? "Valid until" : "Due date", formatDate(invoice.due_date)]);
   }
+  if (invoice.kind === "INVOICE" && invoice.payment_terms_days !== null) {
+    meta.push(["Terms", invoice.payment_terms_days === 0 ? "Due on receipt" : `Net ${invoice.payment_terms_days} days`]);
+  }
+  if (invoice.po_number) {
+    meta.push(["PO number", invoice.po_number]);
+  }
+  if (invoice.shipping_date) {
+    meta.push(["Shipping date", formatDate(invoice.shipping_date)]);
+  }
   if (invoice.kind === "CREDIT_NOTE" && input.creditedInvoiceNumber) {
     meta.push(["Credits invoice", input.creditedInvoiceNumber]);
   }
@@ -155,6 +166,7 @@ export function buildInvoicePdfModel(input: InvoicePdfInput): InvoicePdfModel {
     stamp,
     business: partyLines(input.business),
     billTo: partyLines(input.customer),
+    shipTo: invoice.ship_to,
     meta,
     amountHeader: inclusive ? "Amount (incl. VAT)" : "Amount",
     lines: invoice.lines.map((line) => {
@@ -252,6 +264,13 @@ export function renderInvoicePdf(model: InvoicePdfModel): Promise<Buffer> {
   doc.font("Helvetica").fontSize(9).fillColor(INK);
   for (const line of model.billTo.slice(1)) {
     doc.text(line);
+  }
+  const billToBottom = doc.y;
+  if (model.shipTo) {
+    const shipX = PAGE_MARGIN + usable / 2;
+    doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text("SHIP TO", shipX, y, { width: usable / 2 });
+    doc.font("Helvetica").fontSize(9).fillColor(INK).text(model.shipTo, shipX, doc.y + 2, { width: usable / 2 });
+    doc.y = Math.max(doc.y, billToBottom);
   }
 
   // Line table.

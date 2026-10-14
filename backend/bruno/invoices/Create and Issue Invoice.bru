@@ -1,0 +1,42 @@
+meta {
+  name: Create and Issue Invoice
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/api/v1/invoices
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "customerId": "{{customerId}}",
+    "issueDate": "2026-10-14",
+    "paymentTermsDays": 14,
+    "poNumber": "PO-778",
+    "shipTo": "Stall 12, Gikomba Market, Nairobi",
+    "shippingDate": "2026-10-16",
+    "notes": "Thank you for your business",
+    "memo": "Customer called ahead",
+    "lines": [
+      { "description": "Maize flour 2kg", "quantity": 10, "unitPriceMinor": 25000, "incomeAccountId": "{{salesAccountId}}" }
+    ],
+    "issue": true
+  }
+}
+
+docs {
+  Requires invoices:create + invoices:issue. The Create Invoice screen's Save button: creates and issues in one
+  call (INV- number, journal posted). Due date = issueDate + paymentTermsDays (omit for the customer's terms).
+  If issuing is refused (CREDIT_LIMIT_EXCEEDED, PERIOD_LOCKED, ...) nothing is kept -- retry with the same clientUuid
+  (add "overrideCreditLimit": true if allowed). Set invoiceId to the returned id for Download PDF.
+}

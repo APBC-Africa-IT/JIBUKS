@@ -1609,7 +1609,7 @@ Base path: `/api/v1/invoices`. Sales invoices, credit notes and pro-formas (FR-A
 
 ### `POST /invoices`
 
-`invoices:create`. Creates a **draft** invoice or pro-forma. Accepts `Idempotency-Key`.
+`invoices:create`. Creates a **draft** invoice or pro-forma, or with `"issue": true` issues it in the same call (the screen's **Save** button). Accepts `Idempotency-Key`.
 
 ```json
 {
@@ -1640,10 +1640,17 @@ Base path: `/api/v1/invoices`. Sales invoices, credit notes and pro-formas (FR-A
 | `customerId` | uuid | ✅ Yes | |
 | `receivableAccountId` | uuid | No | Accounts Receivable. Omit for the business's `RECEIVABLE` account (a pro-forma gets it when converted). |
 | `issueDate` | date | ✅ Yes | The invoice date, and the date its journal posts on. Its period must be open when you issue (the current month opens automatically). |
-| `dueDate` | date | No | Defaults to `issueDate` + the customer's `paymentTermsDays` (0 = due on issue). Pro-formas have none unless given. |
+| `dueDate` | date | No | Defaults to `issueDate` + the invoice's terms (`paymentTermsDays`). Pro-formas have none unless given. |
+| `paymentTermsDays` | integer | No | **Terms**, 0–365 days. Omit for the customer's `paymentTermsDays` (0 if none). Stored on the invoice as `payment_terms_days` and printed as "Net 30 days" / "Due on receipt". |
 | `currency` | string | No | Defaults to the base currency; anything else is `400`. |
 | `taxMode` | string | No | `EXCLUSIVE` (prices before VAT; VAT added on top), `INCLUSIVE` (prices include VAT; VAT extracted), `NONE` (default; no VAT on any line). |
-| `reference`, `notes` | string | No | Printed on the invoice. |
+| `reference`, `notes` | string | No | Printed on the invoice. `notes` is the screen's **Message to Customer**. |
+| `memo` | string | No | **Memo**, an internal note, never printed. |
+| `poNumber` | string | No | **Po No**, the customer's purchase order number. Printed as "PO number". |
+| `shipTo` | string | No | **Ship To**, the delivery address (may have line breaks). Printed beside Bill To. |
+| `shippingDate` | date | No | **Shipping Date**. Printed. |
+| `issue` | boolean | No | Default `false`. `true` = create **and issue** in one call; the response is the issued invoice with its `INV-` number. Needs `invoices:issue` as well (`403` otherwise). If issuing is refused (e.g. `422 CREDIT_LIMIT_EXCEEDED`, `PERIOD_LOCKED`), **nothing is kept**, so fix it and retry with the same `clientUuid`. |
+| `overrideCreditLimit` | boolean | No | With `issue: true`, as for [`POST /invoices/{id}/issue`](#post-invoicesidissue). |
 | `lines[].itemId` | uuid | No | A catalogue item ([7.26](#726-items)). Whatever the line leaves out of `description`, `unitPriceMinor` and `incomeAccountId` comes from the item. |
 | `lines[].description` | string | ✅ unless `itemId` | Defaults to the item's description, else its `full_name`. |
 | `lines[].quantity` | number | ✅ Yes | > 0, up to 3 decimal places (`2.5`). |
@@ -1725,7 +1732,7 @@ List rows are the invoice header plus `customer_name`; fetch one invoice for its
 
 ### `PATCH /invoices/{id}` / `DELETE /invoices/{id}`
 
-`invoices:create`. **Drafts only** — anything else is `422 INVOICE_INVALID_STATE`. `PATCH` takes any of `customerId`, `receivableAccountId`, `issueDate`, `dueDate`, `taxMode`, `reference`, `notes`, `lines`; `lines` **replaces all lines**. Amounts are recalculated. `dueDate: null` recalculates it from the customer's terms; changing `issueDate` or `customerId` without `dueDate` also recalculates it. A credit note's customer and receivable account can't be changed. `DELETE` → `204`.
+`invoices:create`. **Drafts only** — anything else is `422 INVOICE_INVALID_STATE`. `PATCH` takes any of `customerId`, `receivableAccountId`, `issueDate`, `dueDate`, `paymentTermsDays`, `taxMode`, `reference`, `notes`, `memo`, `poNumber`, `shipTo`, `shippingDate`, `lines`; `lines` **replaces all lines** and `null` clears an optional field. Amounts are recalculated. `dueDate: null` recalculates it from the terms. Changing `issueDate`, `customerId` or `paymentTermsDays` without `dueDate` also recalculates it. `paymentTermsDays: null`, or a new customer, goes back to the customer's own terms. A credit note's customer and receivable account can't be changed. `DELETE` → `204`.
 
 ### `GET /invoices/{id}/pdf`
 
@@ -1798,6 +1805,20 @@ Customer, currency and receivable account come from the invoice; `taxMode` defau
 ### Notes for consuming clients (Invoices)
 
 - Typical flow: create draft → review → issue → collect (STK push with `invoiceId`, or `POST /invoices/{id}/payments`) → status follows automatically.
+- **Create Invoice screen buttons:**
+  - **Save:** `POST /invoices` with `"issue": true`.
+  - **Save & New:** the same call, then clear the form.
+  - **Print/Share:** `GET /invoices/{id}/pdf` after saving.
+  - To keep a draft, leave out `issue`.
+  - **INVOICE#** is given on issue, so show it blank or "Auto" until then.
+- **Screen field → API field:**
+  - Terms → `paymentTermsDays`
+  - Po No → `poNumber`
+  - Ship To → `shipTo`
+  - Shipping Date → `shippingDate`
+  - Message to Customer → `notes`
+  - Memo → `memo`
+  - "Add Section" only reveals Ship To and Shipping Date on screen; there's nothing to send for it.
 - Drafts can be created offline with their `clientUuid`; issuing needs the server (it assigns the number).
 - Don't reverse an invoice's journal through `POST /journals/{id}/reverse` — cancel the invoice or raise a credit note, so the invoice and ledger stay in step.
 - Not built yet: SMS/email sending and a public share link (later), a business logo and custom templates (FR-TEN-03), recurring invoices (Phase 2), refunds of overpayments, un-recording a payment.
