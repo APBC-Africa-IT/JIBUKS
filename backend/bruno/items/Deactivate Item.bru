@@ -1,0 +1,19 @@
+meta {
+  name: Deactivate Item
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/items/{{itemId}}/deactivate
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires items:edit.
+}

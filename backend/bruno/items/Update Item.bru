@@ -1,0 +1,29 @@
+meta {
+  name: Update Item
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/items/{{itemId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "rateMinor": 35000,
+    "unitOfMeasure": null
+  }
+}
+
+docs {
+  Requires items:edit. Omitted fields unchanged; null clears. 422 ITEM_INVALID if the result breaks a rule
+  (e.g. a SERVICE still tracking stock, or a parent loop).
+}

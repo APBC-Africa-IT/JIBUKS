@@ -97,6 +97,16 @@ describe("requirePermission enforcement", () => {
     }
   });
 
+  it("lets every built-in role see items, and only OWNER and ACCOUNTANT manage them", async () => {
+    for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
+      const user = await seedUser([key]);
+      expect((await guarded(user, "items:view")).status, key).toBe(200);
+      const manages = key === "OWNER" || key === "ACCOUNTANT";
+      expect((await guarded(user, "items:create")).status, key).toBe(manages ? 200 : 403);
+      expect((await guarded(user, "items:edit")).status, key).toBe(manages ? 200 : 403);
+    }
+  });
+
   it("forbids period reopen for everyone but OWNER and ACCOUNTANT", async () => {
     for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
       const user = await seedUser([key]);

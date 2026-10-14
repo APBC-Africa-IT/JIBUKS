@@ -13,6 +13,7 @@ import { JOURNAL_SOURCES } from "./journal.js";
 import { PERMISSIONS, SYSTEM_ROLE_KEYS } from "./permissions.js";
 import { ASSIGNABLE_SYSTEM_ACCOUNT_KEYS, CHART_TEMPLATE_KEYS } from "./chartTemplates.js";
 import { BILL_KINDS, INVOICE_PAYMENT_METHODS, INVOICE_VIEW_STATUSES, SALES_KINDS, TAX_MODES } from "./invoices.js";
+import { ITEM_TYPES } from "./items.js";
 
 export const uuidSchema = z.string().uuid();
 
@@ -1018,3 +1019,82 @@ export const rejectJournalSchema = z.object({
 export const listJournalsQuerySchema = z.object({
   status: z.enum(["PENDING_APPROVAL", "POSTED", "REJECTED"]).optional(),
 });
+
+// ---------------------------------------------------------------------
+// Items -- the product/service catalogue
+// ---------------------------------------------------------------------
+
+const itemFields = {
+  name: z.string().trim().min(1).max(200),
+  /** Makes this a sub-item, e.g. "Haircut: Kids". */
+  parentItemId: uuidSchema,
+  /** Free text, e.g. "pcs", "kg", "hour". */
+  unitOfMeasure: z.string().trim().min(1).max(30),
+  /** Default selling price (before VAT, or VAT-inclusive -- whatever the sale's taxMode says). */
+  rateMinor: minorUnitsSchema,
+  /** Credited when the item is sold. Must be an INCOME account. */
+  incomeAccountId: uuidSchema,
+  /** Debited when a SERVICE / NON_INVENTORY item is bought. EXPENSE or ASSET. */
+  expenseAccountId: uuidSchema,
+  /** INVENTORY only: debited when the item is bought. Must be an ASSET account. */
+  inventoryAccountId: uuidSchema,
+  description: z.string().trim().max(2000),
+};
+
+/** POST /items */
+export const createItemSchema = z
+  .object({
+    type: z.enum(ITEM_TYPES),
+    name: itemFields.name,
+    parentItemId: itemFields.parentItemId.optional(),
+    unitOfMeasure: itemFields.unitOfMeasure.optional(),
+    rateMinor: itemFields.rateMinor.optional(),
+    incomeAccountId: itemFields.incomeAccountId.optional(),
+    expenseAccountId: itemFields.expenseAccountId.optional(),
+    inventoryAccountId: itemFields.inventoryAccountId.optional(),
+    /** INVENTORY only. Stored now; stock quantities come in a later release. */
+    trackStock: z.boolean().default(false),
+    description: itemFields.description.optional(),
+    /** The "Item is inactive" box -- false creates it already inactive. */
+    isActive: z.boolean().default(true),
+  })
+  .superRefine((body, ctx) => {
+    if (body.trackStock && body.type !== "INVENTORY") {
+      ctx.addIssue({ code: "custom", path: ["trackStock"], message: "Only INVENTORY items can track stock" });
+    }
+    if (body.inventoryAccountId !== undefined && body.type !== "INVENTORY") {
+      ctx.addIssue({ code: "custom", path: ["inventoryAccountId"], message: "Only INVENTORY items have an inventory account" });
+    }
+  });
+
+export type CreateItemDto = z.infer<typeof createItemSchema>;
+
+/** PATCH /items/{id}. Omitted fields are unchanged; null clears. Use deactivate/reactivate for isActive. */
+export const updateItemSchema = z
+  .object({
+    type: z.enum(ITEM_TYPES).optional(),
+    name: itemFields.name.optional(),
+    parentItemId: itemFields.parentItemId.nullable().optional(),
+    unitOfMeasure: itemFields.unitOfMeasure.nullable().optional(),
+    rateMinor: itemFields.rateMinor.nullable().optional(),
+    incomeAccountId: itemFields.incomeAccountId.nullable().optional(),
+    expenseAccountId: itemFields.expenseAccountId.nullable().optional(),
+    inventoryAccountId: itemFields.inventoryAccountId.nullable().optional(),
+    trackStock: z.boolean().optional(),
+    description: itemFields.description.nullable().optional(),
+  })
+  .refine(atLeastOneField, "Provide at least one field to update");
+
+export type UpdateItemDto = z.infer<typeof updateItemSchema>;
+
+/** GET /items */
+export const listItemsQuerySchema = z.object({
+  type: z.enum(ITEM_TYPES).optional(),
+  /** Omit for all; "true" for the pickers on sales/purchase screens. */
+  active: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
+  /** Case-insensitive match on the name. */
+  q: z.string().trim().min(1).max(100).optional(),
+  parent_item_id: uuidSchema.optional(),
+});
+
+export type ListItemsQueryDto = z.infer<typeof listItemsQuerySchema>;

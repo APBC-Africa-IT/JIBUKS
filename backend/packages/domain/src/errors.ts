@@ -58,6 +58,10 @@ export type DomainErrorCode =
   | "CREDIT_NOTE_EXCEEDS_BALANCE"
   | "CREDIT_LIMIT_EXCEEDED"
   | "TAX_NOT_REGISTERED"
+  // item catalogue
+  | "ITEM_NOT_FOUND"
+  | "ITEM_INVALID"
+  | "ACCOUNT_WRONG_TYPE"
   // opening balances -- FR-ACC-04
   | "OPENING_BALANCES_LOCKED"
   // idempotency -- Section 9.1, C-08

@@ -156,6 +156,12 @@ tags:
       bookkeeping) — payment received immediately, no customer/AR involved.
       Posts with source CASHBOOK. Keeps no record of the sale itself;
       prefer Sales Receipts for new screens.
+  - name: Items
+    description: >
+      The product/service catalogue (SERVICE, NON_INVENTORY, INVENTORY)
+      with default price, unit and accounts. Sub-items via parentItemId.
+      Never deleted, only deactivated. trackStock is stored; stock
+      quantities come later.
   - name: Sales Receipts
     description: >
       Cash sales as numbered documents (CS-000001): items, quantities,
@@ -1159,6 +1165,132 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/DuplicateValue' }
         '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /items:
+    post:
+      tags: [Items]
+      summary: Add an item
+      description: >
+        Requires `items:create`. Names are unique among siblings, ignoring
+        case (409). Accounts are type-checked (422 ACCOUNT_WRONG_TYPE).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateItemRequest' }
+      responses:
+        '201':
+          description: The item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+    get:
+      tags: [Items]
+      summary: List items, sorted by full name
+      description: Requires `items:view`.
+      parameters:
+        - { name: type, in: query, schema: { type: string, enum: [SERVICE, NON_INVENTORY, INVENTORY] } }
+        - { name: active, in: query, schema: { type: string, enum: ["true", "false"] } }
+        - { name: q, in: query, description: Case-insensitive search on full_name, schema: { type: string } }
+        - { name: parent_item_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Item' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /items/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Items]
+      summary: Get an item
+      description: Requires `items:view`.
+      responses:
+        '200':
+          description: The item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Items]
+      summary: Edit an item
+      description: >
+        Requires `items:edit`. Omitted fields unchanged; null clears. Rules
+        are checked on the result (422 ITEM_INVALID).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateItemRequest' }
+      responses:
+        '200':
+          description: The item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /items/{id}/deactivate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Items]
+      summary: Deactivate an item
+      description: Requires `items:edit`.
+      responses:
+        '200':
+          description: The item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /items/{id}/reactivate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Items]
+      summary: Reactivate an item
+      description: Requires `items:edit`.
+      responses:
+        '200':
+          description: The item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /sales-receipts:
     post:
@@ -3292,6 +3424,9 @@ components:
         - "suppliers:view"
         - "suppliers:create"
         - "suppliers:edit"
+        - "items:view"
+        - "items:create"
+        - "items:edit"
         - "periods:view"
         - "periods:create"
         - "periods:close"
@@ -4418,6 +4553,53 @@ components:
           minimum: 0
           default: 0
           description: Total tax across the sale, e.g. Kenyan VAT at 16% of the net total.
+    CreateItemRequest:
+      type: object
+      required: [type, name]
+      properties:
+        type: { type: string, enum: [SERVICE, NON_INVENTORY, INVENTORY] }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        parentItemId: { type: string, format: uuid, description: Makes this a sub-item. }
+        unitOfMeasure: { type: string, maxLength: 30 }
+        rateMinor: { type: integer, minimum: 0, description: Default selling price. }
+        incomeAccountId: { type: string, format: uuid, description: An INCOME account. }
+        expenseAccountId: { type: string, format: uuid, description: EXPENSE or ASSET; debited when a non-stock item is bought. }
+        inventoryAccountId: { type: string, format: uuid, description: INVENTORY only; an ASSET account. }
+        trackStock: { type: boolean, default: false, description: INVENTORY only. Stored; no effect yet. }
+        description: { type: string, maxLength: 2000 }
+        isActive: { type: boolean, default: true }
+    UpdateItemRequest:
+      type: object
+      minProperties: 1
+      properties:
+        type: { type: string, enum: [SERVICE, NON_INVENTORY, INVENTORY] }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        parentItemId: { type: string, format: uuid, nullable: true }
+        unitOfMeasure: { type: string, maxLength: 30, nullable: true }
+        rateMinor: { type: integer, minimum: 0, nullable: true }
+        incomeAccountId: { type: string, format: uuid, nullable: true }
+        expenseAccountId: { type: string, format: uuid, nullable: true }
+        inventoryAccountId: { type: string, format: uuid, nullable: true }
+        trackStock: { type: boolean }
+        description: { type: string, maxLength: 2000, nullable: true }
+    Item:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [SERVICE, NON_INVENTORY, INVENTORY] }
+        name: { type: string }
+        full_name: { type: string, example: "Haircut: Kids", description: The name with its parents'. }
+        parent_item_id: { type: string, format: uuid, nullable: true }
+        unit_of_measure: { type: string, nullable: true }
+        rate_minor: { type: string, nullable: true, description: 64-bit-safe integer string. }
+        income_account_id: { type: string, format: uuid, nullable: true }
+        expense_account_id: { type: string, format: uuid, nullable: true }
+        inventory_account_id: { type: string, format: uuid, nullable: true }
+        track_stock: { type: boolean }
+        description: { type: string, nullable: true }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     SalesReceiptLineInput:
       type: object
       required: [item, quantity, unitPriceMinor, incomeAccountId]
