@@ -1161,3 +1161,83 @@ export const listItemsQuerySchema = z.object({
 });
 
 export type ListItemsQueryDto = z.infer<typeof listItemsQuerySchema>;
+
+// ---------------------------------------------------------------------
+// Cheque payments -- cheques as numbered documents (CHQ-000001)
+// ---------------------------------------------------------------------
+
+const chequeLineSchema = z
+  .object({
+    /** A catalogue item (the Stock Purchase tab): fills in account, price and description when left out. */
+    itemId: uuidSchema.optional(),
+    /** What the money is for: an expense (Expense tab), stock (Stock Purchase) or any account (Other). */
+    accountId: uuidSchema.optional(),
+    /** The line's memo. */
+    description: z.string().trim().max(500).optional(),
+    /** Defaults to 1 -- the Expense tab has no quantity. */
+    quantity: z
+      .number()
+      .positive()
+      .max(99_999_999_999)
+      .refine((q) => Math.abs(Math.round(q * 1000) - q * 1000) < 1e-6, "Quantity has at most three decimal places")
+      .default(1),
+    /** The line's total (the Amount column): before VAT under EXCLUSIVE, including it under INCLUSIVE. */
+    amountMinor: minorUnitsSchema.optional(),
+    /** Instead of amountMinor, a price per unit. */
+    unitPriceMinor: minorUnitsSchema.optional(),
+    /** Basis points: 1600 = 16% input VAT. */
+    taxRateBps: z.number().int().min(0).max(10000).default(0),
+    /** Input VAT account. Omit for the business's VAT_INPUT account. */
+    taxAccountId: uuidSchema.optional(),
+  })
+  .superRefine(requireUnlessItem(["accountId"]))
+  .superRefine((line, ctx) => {
+    if (line.unitPriceMinor !== undefined && line.amountMinor !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["amountMinor"], message: "Send unitPriceMinor or amountMinor, not both" });
+    } else if (line.itemId === undefined && line.unitPriceMinor === undefined && line.amountMinor === undefined) {
+      ctx.addIssue({ code: "custom", path: ["amountMinor"], message: "Required unless itemId is given" });
+    }
+  });
+
+/**
+ * POST /cheque-payments -- the Write Cheque screen. Posted and PAID on creation:
+ *   Dr line accounts (net) / Dr input VAT / Cr bank (total).
+ */
+export const createChequePaymentSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    branchId: uuidSchema.optional(),
+    /** The bank account the cheque is drawn on ("Account"). Omit for the business's BANK account. */
+    bankAccountId: uuidSchema.optional(),
+    /** The number on the cheque leaf. Can't repeat on the same bank account. */
+    chequeNumber: z.string().trim().min(1).max(50).optional(),
+    /** The payee, if a supplier. */
+    supplierId: uuidSchema.optional(),
+    /** Omit for today (Africa/Nairobi). */
+    date: accountingDateSchema.optional(),
+    currency: currencySchema.optional(),
+    taxMode: z.enum(TAX_MODES).default("NONE"),
+    reference: z.string().max(100).optional(),
+    /** Internal note for the whole cheque. */
+    memo: z.string().max(2000).optional(),
+    lines: z.array(chequeLineSchema).min(1, "A cheque needs at least one line").max(200),
+  })
+  .superRefine((body, ctx) => {
+    body.lines.forEach((line, i) => {
+      if (body.taxMode === "NONE" && line.taxRateBps > 0) {
+        ctx.addIssue({ code: "custom", path: ["lines", i, "taxRateBps"], message: "taxMode NONE allows no tax rate" });
+      }
+    });
+  });
+
+export type CreateChequePaymentDto = z.infer<typeof createChequePaymentSchema>;
+
+/** GET /cheque-payments -- newest first, cursor pagination. */
+export const listChequePaymentsQuerySchema = paginationSchema.extend({
+  supplier_id: uuidSchema.optional(),
+  /** Cheque date range, inclusive. */
+  from: accountingDateSchema.optional(),
+  to: accountingDateSchema.optional(),
+});
+
+export type ListChequePaymentsQueryDto = z.infer<typeof listChequePaymentsQuerySchema>;

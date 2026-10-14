@@ -1,0 +1,19 @@
+meta {
+  name: Get Cheque
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/cheque-payments/{{chequePaymentId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires cheques:view. Everything for Print/Share: number, cheque_number, payee, bank, lines, totals.
+}

@@ -107,6 +107,15 @@ describe("requirePermission enforcement", () => {
     }
   });
 
+  it("lets only OWNER and ACCOUNTANT write cheques, and every :view role see them", async () => {
+    for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
+      const user = await seedUser([key]);
+      const books = key === "OWNER" || key === "ACCOUNTANT";
+      expect((await guarded(user, "cheques:create")).status, key).toBe(books ? 200 : 403);
+      expect((await guarded(user, "cheques:view")).status, key).toBe(books || key === "VIEWER" ? 200 : 403);
+    }
+  });
+
   it("forbids period reopen for everyone but OWNER and ACCOUNTANT", async () => {
     for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
       const user = await seedUser([key]);

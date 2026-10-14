@@ -57,6 +57,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.24 Opening Balances](#724-opening-balances)
 - [7.25 Sales Receipts](#725-sales-receipts)
 - [7.26 Items](#726-items)
+- [7.27 Cheque Payments](#727-cheque-payments)
 
 ---
 
@@ -165,7 +166,8 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `GET /sales-receipts`, `GET /sales-receipts/{id}` | `cash_sales:view` |
 | `GET /items…` / `POST /items` / `PATCH /items/{id}`, `POST /items/{id}/deactivate` / `reactivate` | `items:view` (every built-in role) / `items:create` / `items:edit` (Owner, Accountant) |
 | `POST /bills` | `bills:create` |
-| `POST /cheques` | `cheques:create` |
+| `POST /cheques`, `POST /cheque-payments` | `cheques:create` (Owner, Accountant) |
+| `GET /cheque-payments`, `GET /cheque-payments/{id}` | `cheques:view` (Owner, Accountant, Viewer) |
 | `POST /cash-expenses` | `cash_expenses:create` |
 | `POST /payments/mpesa/stk-push` | `payments:create` |
 | `GET /payments`, `GET /payments/{id}` | `payments:view` |
@@ -1096,6 +1098,8 @@ Note the tax direction flips relative to a sale: VAT paid on a purchase is money
 ## 7.12 Cheques
 
 Base path: `/api/v1/cheques` 
+
+> **Prefer [7.27 Cheque Payments](#727-cheque-payments) for new screens.** `POST /cheque-payments` stores the cheque as a numbered document (`CHQ-000001`) with cheque number, payee, input VAT and line amounts, and can be fetched again for Print/Share. This endpoint only posts a journal; it keeps working unchanged for existing app versions and will be retired later.
 
 Guided endpoint for a payment **out** — the Cash Payments Book entry of manual bookkeeping. Unlike Credit Sale/Cash Sale/Write Bill, there is no single well-known "other side": a cheque might clear part of a supplier's outstanding bill, pay an expense directly, or both in the same cheque. Every line is simply a debit against whatever the payment is for:
 
@@ -2251,3 +2255,109 @@ Items are never deleted, only deactivated, so old sales and bills that name them
 - **Picking an item on a line:** send `itemId` on an invoice, credit note, pro-forma, bill, debit note or cash sale line. Leave out what the item supplies, or send it to override (e.g. a discounted price). Every line in a response has `item_id` (`null` if typed in). The line keeps its own copy of price, account and description, so editing the item later never changes an existing document.
 - **Show the defaults in the form:** prefill the line from the item (`rate_minor` etc.) so the user sees the price and the totals preview stays right. The server applies the same defaults if you leave them out.
 - An item with no rate or no suitable account, and none on the line, gives `422 ITEM_INVALID`. An inactive item can't go on a new line (`422 ITEM_INVALID`), but drafts that already hold it can still be edited, and pro-formas converted.
+
+---
+
+## 7.27 Cheque Payments
+
+Base path: `/api/v1/cheque-payments`. A **cheque as a document**: the **Write Cheque** screen. Settled when written, so there is no draft. One `POST` numbers it (`CHQ-000001`, gapless per business, separate from the number on the cheque leaf), posts it and stores it as `PAID`:
+
+```
+Dr line account(s)   (net: an expense, stock, or any other account)
+Dr input VAT         (per VAT account, if any)
+    Cr bank account  (total)
+```
+
+The journal has `source: "PAYMENT"`, `description: "Cheque CHQ-000001 (cheque no. 004512)"`, and `reference` = the cheque number (else the CHQ- number). The VAT maths is the same as bills. Cheques never appear under `/supplier-bills` and bills never under `/cheque-payments`.
+
+**Paying a supplier's bill is not this.** Use [`POST /supplier-bills/{id}/payments`](#post-supplier-billsidpayments) with `method: "BANK"`. A cheque payment is for things that were never entered as a bill (rent, a one-off purchase). The payee is recorded on the cheque only; their balance and aging don't change.
+
+Replaces the older journal-only [`POST /cheques`](#712-cheques) for new screens.
+
+### `POST /cheque-payments`
+
+`cheques:create` (Owner, Accountant). Accepts `Idempotency-Key`.
+
+```json
+{
+  "clientUuid": "6d1c...",
+  "bankAccountId": "<Bank 1010>",
+  "chequeNumber": "004512",
+  "supplierId": "<Landlord>",
+  "taxMode": "EXCLUSIVE",
+  "lines": [
+    { "accountId": "<Rent expense>", "amountMinor": 3000000, "description": "October rent", "taxRateBps": 1600 }
+  ]
+}
+```
+
+| Field | Required | Screen field | Description |
+|---|---|---|---|
+| `clientUuid` | ✅ | | Reusing one is refused with `409 DUPLICATE_VALUE`, and nothing is posted. |
+| `bankAccountId` | No | Account | The bank the cheque is drawn on. Omit for the business's `BANK` account (`422 SYSTEM_ACCOUNT_MISSING` if none). |
+| `chequeNumber` | No | Cheque No | The number on the cheque leaf. **Can't repeat on the same bank account** (`409 DUPLICATE_VALUE`). |
+| `supplierId` | No | Payee | The supplier being paid, if any. |
+| `date` | No | Date | Defaults to today (Africa/Nairobi). Its period must be open. |
+| `taxMode` | No | VAT inclusive checkbox | `INCLUSIVE` (ticked), `EXCLUSIVE` or `NONE` (default). This is **input** VAT, so a business that isn't VAT-registered gets `422 TAX_NOT_REGISTERED`. |
+| `reference`, `memo` | No | | `memo` is an internal note for the whole cheque. |
+| `currency` | No | | Base currency only. |
+| `lines[]` | ✅ | lines | 1–200 lines, described in the next table. |
+
+Each line:
+
+| Field | Required | Screen column | Description |
+|---|---|---|---|
+| `accountId` | ✅ unless `itemId` | Expense / Stock / Other | **Expense tab:** an expense account. **Other tab:** any account. **Stock Purchase tab:** send `itemId` instead. |
+| `itemId` | No | Stock (Stock Purchase tab) | A catalogue item. Fills in what's left out: the account (its inventory account for an `INVENTORY` item, else its expense account), the price and the description. |
+| `amountMinor` | ✅ unless `itemId` or `unitPriceMinor` | Amount | The line total, kept exact. It's before VAT under `EXCLUSIVE` and includes VAT under `INCLUSIVE`. |
+| `unitPriceMinor` | No | | A price per unit instead of `amountMinor` (not both). |
+| `quantity` | No | Qty | Defaults to 1. |
+| `description` | No | Memo | The line's memo. |
+| `taxRateBps` | No | VAT | `1600` = 16%. Default 0. |
+| `taxAccountId` | No | | Omit for the business's `VAT_INPUT` account. |
+
+**Success:** `201`, the cheque (see `GET` below). Errors: `400 VALIDATION_ERROR`, `404 ACCOUNT_NOT_FOUND` / `SUPPLIER_NOT_FOUND` / `ITEM_NOT_FOUND`, `409 DUPLICATE_VALUE`, `422 PERIOD_LOCKED` / `ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE` / `TAX_NOT_REGISTERED` / `SYSTEM_ACCOUNT_MISSING` / `ITEM_INVALID`.
+
+### `GET /cheque-payments/{id}`
+
+`cheques:view`. Everything needed to show or share the cheque:
+
+```json
+{
+  "id": "…",
+  "number": "CHQ-000007",
+  "cheque_number": "004512",
+  "status": "PAID",
+  "supplier_id": "…",
+  "supplier_name": "Mwangi Properties",
+  "date": "2026-10-14",
+  "currency": "KES",
+  "bank_account_id": "…",
+  "tax_mode": "EXCLUSIVE",
+  "subtotal_minor": "3000000",
+  "tax_minor": "480000",
+  "total_minor": "3480000",
+  "reference": null,
+  "memo": null,
+  "journal_id": "…",
+  "created_by": "…",
+  "created_at": "…",
+  "lines": [
+    { "id": "…", "line_no": 1, "item_id": null, "account_id": "…", "description": "October rent", "quantity": "1.000",
+      "unit_price_minor": "3000000", "amount_minor": "3000000", "tax_rate_bps": 1600, "tax_account_id": "…",
+      "net_minor": "3000000", "tax_minor": "480000", "total_minor": "3480000" }
+  ]
+}
+```
+
+Unknown id, or the id of a bill: `404 INVOICE_NOT_FOUND`.
+
+### `GET /cheque-payments`
+
+`cheques:view`. Newest first, with cursor paging as for `GET /invoices`. Filters: `supplier_id`, `from` / `to` (cheque `date`). Items have no `lines`.
+
+### Notes for consuming clients (Cheque Payments)
+
+- **The three tabs** only change which accounts the line picker lists. **Expense:** accounts of type `EXPENSE`. **Stock Purchase:** `INVENTORY` items (send `itemId`). **Other:** any account.
+- **Save & New / Print/Share:** after the `201`, show or share the cheque from the response. There's no server PDF yet.
+- **Not built yet:** cancelling or voiding a cheque. For now an Owner or Accountant can reverse its journal with `POST /journals/{id}/reverse`, but the cheque itself still shows `PAID`. Also not built: free-text payees who aren't suppliers, and a server-rendered PDF.

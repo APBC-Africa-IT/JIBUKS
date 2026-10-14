@@ -34,6 +34,7 @@ export interface InvoiceView
     | "customer_id"
     | "payment_method"
     | "deposit_account_id"
+    | "cheque_number"
   > {
   readonly customer_id: string;
   readonly customer_name: string;
@@ -47,7 +48,8 @@ export interface InvoiceDetailView extends InvoiceView {
 }
 
 function toInvoiceView(view: DocumentView): InvoiceView {
-  const { party_name, supplier_id, supplier_reference, customer_id, payment_method, deposit_account_id, ...rest } = view;
+  const { party_name, supplier_id, supplier_reference, customer_id, payment_method, deposit_account_id, cheque_number, ...rest } =
+    view;
   return { ...rest, customer_id: customer_id!, customer_name: party_name! };
 }
 
