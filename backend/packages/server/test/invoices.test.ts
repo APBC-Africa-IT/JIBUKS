@@ -327,14 +327,25 @@ describe("issuing an invoice", () => {
     expect([again.status, patch.status, del.status]).toEqual([422, 422, 422]);
   });
 
-  it("gives consecutive numbers", async () => {
+  it("gives gapless, increasing numbers", async () => {
+    // Other test files issue invoices in the same tenant at the same time,
+    // so the next number is only known to be higher, not +1. Gapless means
+    // every number taken belongs to a stored invoice.
     const f = await makeFixture();
 
     const first = await issuedInvoice(f);
     const second = await issuedInvoice(f);
 
     const seq = (n: string) => Number(n.slice(4));
-    expect(seq(second.number)).toBe(seq(first.number) + 1);
+    expect(seq(second.number)).toBeGreaterThan(seq(first.number));
+    const counts = await withTenant(TEST_TENANT_ID, async (client) => {
+      const result = await client.query<{ issued: number; stored: number }>(
+        `SELECT (SELECT last_value FROM invoice_number_sequences WHERE kind = 'INVOICE')::int AS issued,
+                (SELECT count(*) FROM invoices WHERE kind = 'INVOICE' AND number IS NOT NULL)::int AS stored`,
+      );
+      return result.rows[0]!;
+    });
+    expect(counts.issued).toBe(counts.stored);
   });
 
   it("blocks an invoice past the customer's credit limit unless overridden", async () => {

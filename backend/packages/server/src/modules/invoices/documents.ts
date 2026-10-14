@@ -440,6 +440,12 @@ export interface CreateRequest {
   readonly supplierReference?: string;
   readonly reference?: string;
   readonly notes?: string;
+  readonly memo?: string;
+  readonly poNumber?: string;
+  readonly shipTo?: string;
+  readonly shippingDate?: string;
+  /** Omit for the party's own terms. */
+  readonly paymentTermsDays?: number;
   readonly lines: readonly LineDraft[];
   readonly proformaId?: string;
 }
@@ -466,9 +472,8 @@ export async function create(side: Side, request: CreateRequest, audit: AuditCon
   // A converted pro-forma copies its lines as they are, items deactivated since included.
   const lines = await resolveLines(side, request.tenantId, request.lines, { allowInactive: request.proformaId !== undefined });
   const built = await buildLines(side, request.tenantId, request.taxMode, lines, request.controlAccountId ?? null);
-  const dueDate =
-    request.dueDate ??
-    (request.kind === side.main ? addDays(request.issueDate, party.payment_terms_days ?? 0) : null);
+  const paymentTermsDays = request.paymentTermsDays ?? party.payment_terms_days ?? 0;
+  const dueDate = request.dueDate ?? (request.kind === side.main ? addDays(request.issueDate, paymentTermsDays) : null);
 
   const row = await repository.insertInvoice(
     {
@@ -487,6 +492,11 @@ export async function create(side: Side, request: CreateRequest, audit: AuditCon
       ...built,
       ...(request.reference !== undefined ? { reference: request.reference } : {}),
       ...(request.notes !== undefined ? { notes: request.notes } : {}),
+      ...(request.memo !== undefined ? { memo: request.memo } : {}),
+      ...(request.poNumber !== undefined ? { poNumber: request.poNumber } : {}),
+      ...(request.shipTo !== undefined ? { shipTo: request.shipTo } : {}),
+      ...(request.shippingDate !== undefined ? { shippingDate: request.shippingDate } : {}),
+      paymentTermsDays,
       ...(request.proformaId !== undefined ? { proformaId: request.proformaId } : {}),
     },
     audit,
@@ -503,6 +513,12 @@ export interface UpdateRequest {
   readonly supplierReference?: string | null;
   readonly reference?: string | null;
   readonly notes?: string | null;
+  readonly memo?: string | null;
+  readonly poNumber?: string | null;
+  readonly shipTo?: string | null;
+  readonly shippingDate?: string | null;
+  /** null goes back to the party's own terms. */
+  readonly paymentTermsDays?: number | null;
   readonly lines?: readonly LineDraft[];
 }
 
@@ -553,14 +569,32 @@ export async function update(
     : linesFromRows(await repository.getLines(tenantId, id));
   const built = await buildLines(side, tenantId, taxMode, lines, controlAccountId);
 
+  // The document's own terms; a new party or null brings back the party's terms.
+  const partyChanged = patch.partyId !== undefined && patch.partyId !== partyIdOf(side, current);
+  let paymentTermsDays: number | null;
+  if (current.kind === side.reduction) {
+    paymentTermsDays = null;
+  } else if (patch.paymentTermsDays !== undefined) {
+    paymentTermsDays = patch.paymentTermsDays ?? party.payment_terms_days ?? 0;
+  } else if (partyChanged || current.payment_terms_days === null) {
+    paymentTermsDays = party.payment_terms_days ?? 0;
+  } else {
+    paymentTermsDays = current.payment_terms_days;
+  }
+
   let dueDate: string | null;
   if (current.kind === side.reduction) {
     dueDate = null;
   } else if (patch.dueDate !== undefined && patch.dueDate !== null) {
     dueDate = patch.dueDate;
-  } else if (patch.dueDate === null || patch.issueDate !== undefined || patch.partyId !== undefined) {
+  } else if (
+    patch.dueDate === null ||
+    patch.issueDate !== undefined ||
+    patch.partyId !== undefined ||
+    patch.paymentTermsDays !== undefined
+  ) {
     // Recompute from terms when asked to, or when what it depends on changed.
-    dueDate = current.kind === side.main ? addDays(issueDate, party.payment_terms_days ?? 0) : null;
+    dueDate = current.kind === side.main ? addDays(issueDate, paymentTermsDays ?? 0) : null;
   } else {
     dueDate = current.due_date;
   }
@@ -587,6 +621,11 @@ export async function update(
       ...built,
       reference: patch.reference !== undefined ? patch.reference : current.reference,
       notes: patch.notes !== undefined ? patch.notes : current.notes,
+      memo: patch.memo !== undefined ? patch.memo : current.memo,
+      poNumber: patch.poNumber !== undefined ? patch.poNumber : current.po_number,
+      shipTo: patch.shipTo !== undefined ? patch.shipTo : current.ship_to,
+      shippingDate: patch.shippingDate !== undefined ? patch.shippingDate : current.shipping_date,
+      paymentTermsDays,
     },
     audit,
   );
@@ -997,6 +1036,7 @@ export async function createReduction(side: Side, request: ReductionRequest, aud
       ...built,
       ...(request.reference !== undefined ? { reference: request.reference } : {}),
       ...(request.notes !== undefined ? { notes: request.notes } : {}),
+      paymentTermsDays: null,
       creditedInvoiceId: original.id,
     },
     audit,
