@@ -24,26 +24,38 @@ import type { AllocationRow, InvoiceLineRow } from "./repository.js";
 // Views
 // ---------------------------------------------------------------------
 
-/** What API clients see for a sales document. */
+/** What API clients see for a sales document. The cash-sale-only columns are left out. */
 export interface InvoiceView
-  extends Omit<DocumentView, "party_name" | "supplier_id" | "supplier_reference" | "customer_id"> {
+  extends Omit<
+    DocumentView,
+    | "party_name"
+    | "supplier_id"
+    | "supplier_reference"
+    | "customer_id"
+    | "payment_method"
+    | "deposit_account_id"
+    | "memo"
+  > {
   readonly customer_id: string;
   readonly customer_name: string;
 }
 
+export type InvoiceLineView = Omit<InvoiceLineRow, "item_name">;
+
 export interface InvoiceDetailView extends InvoiceView {
-  readonly lines: InvoiceLineRow[];
+  readonly lines: InvoiceLineView[];
   readonly allocations: AllocationRow[];
 }
 
 function toInvoiceView(view: DocumentView): InvoiceView {
-  const { party_name, supplier_id, supplier_reference, customer_id, ...rest } = view;
-  return { ...rest, customer_id: customer_id!, customer_name: party_name };
+  const { party_name, supplier_id, supplier_reference, customer_id, payment_method, deposit_account_id, memo, ...rest } =
+    view;
+  return { ...rest, customer_id: customer_id!, customer_name: party_name! };
 }
 
 function toInvoiceDetail(detail: DocumentDetail): InvoiceDetailView {
   const { lines, allocations, ...view } = detail;
-  return { ...toInvoiceView(view), lines, allocations };
+  return { ...toInvoiceView(view), lines: lines.map(({ item_name, ...line }) => line), allocations };
 }
 
 export async function getInvoice(tenantId: string, invoiceId: string): Promise<InvoiceDetailView> {

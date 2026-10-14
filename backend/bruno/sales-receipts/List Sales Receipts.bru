@@ -1,0 +1,19 @@
+meta {
+  name: List Sales Receipts
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/sales-receipts?limit=20
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires cash_sales:view. Newest first, no lines. Filters: customer_id, from, to (sale date). Paging: cursor = next_cursor.
+}

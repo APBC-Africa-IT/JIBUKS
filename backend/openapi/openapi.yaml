@@ -154,7 +154,14 @@ tags:
     description: >
       Guided cash-sale endpoint (the Cash Receipts Book entry of manual
       bookkeeping) — payment received immediately, no customer/AR involved.
-      Posts with source CASHBOOK.
+      Posts with source CASHBOOK. Keeps no record of the sale itself;
+      prefer Sales Receipts for new screens.
+  - name: Sales Receipts
+    description: >
+      Cash sales as numbered documents (CS-000001): items, quantities,
+      per-line VAT, payment method and an optional customer. Created
+      already posted (Dr deposit account / Cr income / Cr output VAT,
+      source CASHBOOK) and PAID; fetch one again for the receipt.
   - name: Bills
     description: >
       Guided Write Bill endpoint (the Purchases Day Book entry of manual
@@ -1152,6 +1159,91 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/DuplicateValue' }
         '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /sales-receipts:
+    post:
+      tags: [Sales Receipts]
+      summary: Record a cash sale (numbered, posted and paid)
+      description: >
+        Requires `cash_sales:create`. Numbers the sale CS-000001 (gapless),
+        posts Dr deposit account (total) / Cr income lines (net) / Cr output
+        VAT, and stores it PAID, all in one transaction. Amounts are
+        computed by the server, with the same maths as invoices. Without
+        depositAccountId the money goes to the business's CASH, BANK or
+        M-Pesa account by paymentMethod (OTHER requires depositAccountId).
+        A customer is optional; a named customer's balance is unchanged.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSalesReceiptRequest' }
+            example:
+              clientUuid: "2f1c6a8e-3b7d-4c1a-9e2f-5a6b7c8d9e01"
+              date: "2025-11-25"
+              paymentMethod: CASH
+              taxMode: INCLUSIVE
+              messageToCustomer: "Thank you, karibu tena!"
+              memo: "Chair 2"
+              lines:
+                - { item: Haircut, quantity: 1, unitPriceMinor: 30000, incomeAccountId: "e5f2cf8a-4f7d-4a10-a807-66deb74ac350", taxRateBps: 1600 }
+                - { item: Shave, description: Hot towel, quantity: 1, unitPriceMinor: 15000, incomeAccountId: "e5f2cf8a-4f7d-4a10-a807-66deb74ac350", taxRateBps: 1600 }
+      responses:
+        '201':
+          description: The sale, as GET /sales-receipts/{id} returns it
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SalesReceiptDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+    get:
+      tags: [Sales Receipts]
+      summary: List cash sales (cursor-paginated)
+      description: Requires `cash_sales:view`. Newest first; items have no `lines`.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: customer_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, description: Sale date from (inclusive), schema: { type: string, format: date } }
+        - { name: to, in: query, description: Sale date to (inclusive), schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: A page of cash sales
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SalesReceipt' }
+                  next_cursor: { type: string, nullable: true }
+                  has_more: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /sales-receipts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    get:
+      tags: [Sales Receipts]
+      summary: Get a cash sale with its lines (the receipt)
+      description: Requires `cash_sales:view`. 404 for an invoice id.
+      responses:
+        '200':
+          description: The sale
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SalesReceiptDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /payables-aging:
     get:
@@ -3209,6 +3301,7 @@ components:
         - "journals:reverse"
         - "journals:approve"
         - "credit_sales:create"
+        - "cash_sales:view"
         - "cash_sales:create"
         - "bills:create"
         - "cheques:create"
@@ -4325,6 +4418,90 @@ components:
           minimum: 0
           default: 0
           description: Total tax across the sale, e.g. Kenyan VAT at 16% of the net total.
+    SalesReceiptLineInput:
+      type: object
+      required: [item, quantity, unitPriceMinor, incomeAccountId]
+      properties:
+        item: { type: string, minLength: 1, maxLength: 200, description: What was sold -- free text until an item catalogue exists. }
+        description: { type: string, maxLength: 500 }
+        quantity: { type: number, exclusiveMinimum: 0, description: Up to 3 decimal places. }
+        unitPriceMinor: { type: integer, minimum: 0, description: Includes VAT under INCLUSIVE. }
+        incomeAccountId: { type: string, format: uuid }
+        taxRateBps: { type: integer, minimum: 0, maximum: 10000, default: 0, description: 1600 = 16% VAT. }
+        taxAccountId: { type: string, format: uuid, description: "Output VAT; omit for the business's VAT_OUTPUT account." }
+    CreateSalesReceiptRequest:
+      type: object
+      required: [clientUuid, paymentMethod, lines]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        branchId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid, description: Omit for a walk-in customer. }
+        date: { type: string, format: date, description: Defaults to today (Africa/Nairobi). }
+        paymentMethod: { type: string, enum: [CASH, BANK, MPESA, OTHER] }
+        depositAccountId:
+          type: string
+          format: uuid
+          description: >
+            Where the money went. Defaults by paymentMethod -- CASH: the CASH
+            account, BANK: the BANK account, MPESA: the M-Pesa account
+            (created if missing). Required for OTHER.
+        currency: { type: string, description: Base currency only. }
+        taxMode: { $ref: '#/components/schemas/TaxMode' }
+        reference: { type: string, maxLength: 100, description: e.g. an M-Pesa receipt code. }
+        messageToCustomer: { type: string, maxLength: 2000, description: Printed on the receipt. }
+        memo: { type: string, maxLength: 2000, description: Internal note. }
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/SalesReceiptLineInput' }
+    SalesReceipt:
+      type: object
+      description: Money fields are 64-bit-safe integer strings.
+      properties:
+        id: { type: string, format: uuid }
+        client_uuid: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid, nullable: true }
+        number: { type: string, example: CS-000042 }
+        status: { type: string, enum: [PAID] }
+        customer_id: { type: string, format: uuid, nullable: true, description: Null for a walk-in customer. }
+        customer_name: { type: string, nullable: true }
+        date: { type: string, format: date }
+        currency: { type: string }
+        payment_method: { type: string, enum: [CASH, BANK, MPESA, OTHER] }
+        deposit_account_id: { type: string, format: uuid }
+        tax_mode: { $ref: '#/components/schemas/TaxMode' }
+        subtotal_minor: { type: string }
+        tax_minor: { type: string }
+        total_minor: { type: string }
+        reference: { type: string, nullable: true }
+        message_to_customer: { type: string, nullable: true }
+        memo: { type: string, nullable: true }
+        journal_id: { type: string, format: uuid }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time, description: When it was recorded -- the receipt time. }
+    SalesReceiptDetail:
+      allOf:
+        - $ref: '#/components/schemas/SalesReceipt'
+        - type: object
+          properties:
+            lines:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  line_no: { type: integer }
+                  item: { type: string }
+                  description: { type: string, nullable: true }
+                  quantity: { type: string }
+                  unit_price_minor: { type: string }
+                  income_account_id: { type: string, format: uuid }
+                  tax_rate_bps: { type: integer }
+                  tax_account_id: { type: string, format: uuid, nullable: true }
+                  net_minor: { type: string }
+                  tax_minor: { type: string }
+                  total_minor: { type: string }
     CreateCashSaleRequest:
       type: object
       required: [clientUuid, receivedAccountId, date, currency, lines]

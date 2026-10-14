@@ -8,8 +8,12 @@
 
 import { DomainError } from "./errors.js";
 
-/** Sales side (AR): INVOICE, CREDIT_NOTE, PROFORMA. Supplier side (AP): BILL, DEBIT_NOTE. */
-export const INVOICE_KINDS = ["INVOICE", "CREDIT_NOTE", "PROFORMA", "BILL", "DEBIT_NOTE"] as const;
+/**
+ * Sales side (AR): INVOICE, CREDIT_NOTE, PROFORMA, plus CASH_SALE -- a sale
+ * paid on the spot (POST /sales-receipts), posted and PAID the moment it is
+ * created. Supplier side (AP): BILL, DEBIT_NOTE.
+ */
+export const INVOICE_KINDS = ["INVOICE", "CREDIT_NOTE", "PROFORMA", "BILL", "DEBIT_NOTE", "CASH_SALE"] as const;
 export type InvoiceKind = (typeof INVOICE_KINDS)[number];
 
 export const SALES_KINDS = ["INVOICE", "CREDIT_NOTE", "PROFORMA"] as const;
@@ -40,6 +44,7 @@ export const INVOICE_NUMBER_PREFIXES: Readonly<Record<InvoiceKind, string>> = {
   PROFORMA: "PF",
   BILL: "BILL",
   DEBIT_NOTE: "DN",
+  CASH_SALE: "CS",
 };
 
 /** INV-000042 -- zero-padded to six digits, growing past that if needed. */

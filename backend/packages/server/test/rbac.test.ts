@@ -89,6 +89,14 @@ describe("requirePermission enforcement", () => {
     expect(denied.body.detail).toContain("journals:create");
   });
 
+  it("lets every built-in role see cash sales, and all but VIEWER record them", async () => {
+    for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
+      const user = await seedUser([key]);
+      expect((await guarded(user, "cash_sales:view")).status, key).toBe(200);
+      expect((await guarded(user, "cash_sales:create")).status, key).toBe(key === "VIEWER" ? 403 : 200);
+    }
+  });
+
   it("forbids period reopen for everyone but OWNER and ACCOUNTANT", async () => {
     for (const key of Object.keys(SYSTEM_ROLES) as (keyof typeof SYSTEM_ROLES)[]) {
       const user = await seedUser([key]);

@@ -56,6 +56,7 @@ const TITLES: Readonly<Record<InvoiceKind, string>> = {
   PROFORMA: "PRO-FORMA INVOICE",
   BILL: "BILL",
   DEBIT_NOTE: "DEBIT NOTE",
+  CASH_SALE: "CASH SALE RECEIPT",
 };
 
 const STATUS_LABELS: Readonly<Record<InvoiceViewStatus, string>> = {
