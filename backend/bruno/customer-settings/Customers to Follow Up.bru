@@ -1,0 +1,20 @@
+meta {
+  name: Customers to Follow Up
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/reports/customers-to-follow-up
+  body: none
+  auth: none
+}
+
+params:query {
+  ~as_of: 2026-10-20
+  ~min_days_overdue: 30
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}

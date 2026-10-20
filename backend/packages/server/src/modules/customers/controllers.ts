@@ -4,7 +4,7 @@
  */
 
 import type { Request, Response } from "express";
-import { createCustomerSchema, updateCustomerSchema } from "@jibuks/domain";
+import { createCustomerSchema, updateCustomerSchema, updateCustomerSettingsSchema } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as service from "./service.js";
 
@@ -32,6 +32,9 @@ export async function create(req: Request, res: Response): Promise<void> {
       ...(body.paymentTermsDays !== undefined ? { paymentTermsDays: body.paymentTermsDays } : {}),
       ...(body.currency !== undefined ? { currency: body.currency } : {}),
       ...(body.creditLimitMinor !== undefined ? { creditLimitMinor: body.creditLimitMinor } : {}),
+      ...(body.preferredChannel !== undefined ? { preferredChannel: body.preferredChannel } : {}),
+      ...(body.sendStatements !== undefined ? { sendStatements: body.sendStatements } : {}),
+      ...(body.paymentReminders !== undefined ? { paymentReminders: body.paymentReminders } : {}),
     },
     auditContextFrom(req),
   );
@@ -52,4 +55,13 @@ export async function deactivate(req: Request, res: Response): Promise<void> {
 export async function reactivate(req: Request, res: Response): Promise<void> {
   const customer = await service.reactivateCustomer(req.tenantId!, req.params["id"]!, auditContextFrom(req));
   res.json(customer);
+}
+
+export async function getSettings(req: Request, res: Response): Promise<void> {
+  res.json(await service.getCustomerSettings(req.tenantId!));
+}
+
+export async function updateSettings(req: Request, res: Response): Promise<void> {
+  const body = updateCustomerSettingsSchema.parse(req.body);
+  res.json(await service.updateCustomerSettings(req.tenantId!, body, auditContextFrom(req)));
 }

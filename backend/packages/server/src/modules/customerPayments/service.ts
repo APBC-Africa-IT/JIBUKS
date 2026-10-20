@@ -370,3 +370,12 @@ export const lockPayment = repository.lockPayment;
 
 /** Moves some of a locked payment's credit to applied or refunded. */
 export const useCredit = repository.useCredit;
+
+/** Each customer's latest payment dated on or before `asOf`, by customer id. */
+export async function latestPaymentByCustomer(
+  tenantId: string,
+  asOf: string,
+): Promise<Map<string, { date: string; amount_minor: string; number: string }>> {
+  const rows = await repository.listLatestByCustomer(tenantId, asOf);
+  return new Map(rows.map(({ customer_id, ...payment }) => [customer_id, payment]));
+}

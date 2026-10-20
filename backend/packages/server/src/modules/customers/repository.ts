@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { DomainError } from "@jibuks/domain";
+import { DomainError, type CustomerChannel } from "@jibuks/domain";
 import { recordAuditLog, withTenant, readAsTenant, type AuditContext } from "@jibuks/db";
 
 export interface CustomerRow {
@@ -29,6 +29,10 @@ export interface CustomerRow {
   readonly currency: string | null;
   /** Integer minor units in the customer's currency, as a string (bigint); null = no limit. */
   readonly credit_limit_minor: string | null;
+  /** SMS, WHATSAPP, EMAIL or NONE; null = not set. */
+  readonly preferred_channel: CustomerChannel | null;
+  readonly send_statements: boolean;
+  readonly payment_reminders: boolean;
   readonly created_at: string;
 }
 
@@ -74,14 +78,18 @@ export interface CreateCustomerInput {
   readonly paymentTermsDays?: number;
   readonly currency?: string;
   readonly creditLimitMinor?: number;
+  readonly preferredChannel?: CustomerChannel;
+  readonly sendStatements?: boolean;
+  readonly paymentReminders?: boolean;
 }
 
 export async function createCustomer(input: CreateCustomerInput, audit: AuditContext): Promise<CustomerRow> {
   return withTenant(input.tenantId, async (client) => {
     const id = randomUUID();
     const result = await client.query<CustomerRow>(
-      `INSERT INTO customers (id, tenant_id, name, phone, email, address, tags, tax_identifier, payment_terms_days, currency, credit_limit_minor)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO customers (id, tenant_id, name, phone, email, address, tags, tax_identifier, payment_terms_days, currency,
+                              credit_limit_minor, preferred_channel, send_statements, payment_reminders)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING *`,
       [
         id,
@@ -95,6 +103,9 @@ export async function createCustomer(input: CreateCustomerInput, audit: AuditCon
         input.paymentTermsDays ?? null,
         input.currency ?? null,
         input.creditLimitMinor ?? null,
+        input.preferredChannel ?? null,
+        input.sendStatements ?? false,
+        input.paymentReminders ?? false,
       ],
     );
 
@@ -338,6 +349,9 @@ export interface UpdateCustomerInput {
   readonly paymentTermsDays?: number | null | undefined;
   readonly currency?: string | null | undefined;
   readonly creditLimitMinor?: number | null | undefined;
+  readonly preferredChannel?: CustomerChannel | null | undefined;
+  readonly sendStatements?: boolean | undefined;
+  readonly paymentReminders?: boolean | undefined;
 }
 
 const UPDATABLE_COLUMNS: Readonly<Record<keyof UpdateCustomerInput, string>> = {
@@ -350,6 +364,9 @@ const UPDATABLE_COLUMNS: Readonly<Record<keyof UpdateCustomerInput, string>> = {
   paymentTermsDays: "payment_terms_days",
   currency: "currency",
   creditLimitMinor: "credit_limit_minor",
+  preferredChannel: "preferred_channel",
+  sendStatements: "send_statements",
+  paymentReminders: "payment_reminders",
 };
 
 /**
@@ -401,5 +418,87 @@ export async function updateCustomer(
     });
 
     return customer;
+  });
+}
+
+// ---------------------------------------------------------------------
+// Customer defaults (customer_settings) -- one row per business.
+// ---------------------------------------------------------------------
+
+export interface CustomerSettingsRow {
+  readonly payment_terms_days: number | null;
+  readonly credit_limit_minor: string | null;
+  readonly preferred_channel: CustomerChannel | null;
+  readonly send_statements: boolean;
+  readonly payment_reminders: boolean;
+  readonly updated_by: string | null;
+  readonly updated_at: string | null;
+}
+
+/** A business that never saved its defaults has none: all null / false. */
+const NO_SETTINGS: CustomerSettingsRow = {
+  payment_terms_days: null,
+  credit_limit_minor: null,
+  preferred_channel: null,
+  send_statements: false,
+  payment_reminders: false,
+  updated_by: null,
+  updated_at: null,
+};
+
+const SETTINGS_COLUMNS =
+  "payment_terms_days, credit_limit_minor, preferred_channel, send_statements, payment_reminders, updated_by, updated_at";
+
+export async function getSettings(tenantId: string): Promise<CustomerSettingsRow> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<CustomerSettingsRow>(`SELECT ${SETTINGS_COLUMNS} FROM customer_settings`);
+    return result.rows[0] ?? NO_SETTINGS;
+  });
+}
+
+export interface UpdateSettingsInput {
+  readonly paymentTermsDays?: number | null | undefined;
+  readonly creditLimitMinor?: number | null | undefined;
+  readonly preferredChannel?: CustomerChannel | null | undefined;
+  readonly sendStatements?: boolean | undefined;
+  readonly paymentReminders?: boolean | undefined;
+}
+
+/** Applies only the fields present (null clears a default), creating the row on first save. */
+export async function updateSettings(tenantId: string, input: UpdateSettingsInput, audit: AuditContext): Promise<CustomerSettingsRow> {
+  return withTenant(tenantId, async (client) => {
+    const before = (await client.query<CustomerSettingsRow>(`SELECT ${SETTINGS_COLUMNS} FROM customer_settings FOR UPDATE`)).rows[0];
+    const current = before ?? NO_SETTINGS;
+    const pick = <T>(value: T | undefined, existing: T): T => (value !== undefined ? value : existing);
+    const result = await client.query<CustomerSettingsRow>(
+      `INSERT INTO customer_settings
+         (tenant_id, payment_terms_days, credit_limit_minor, preferred_channel, send_statements, payment_reminders, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+       ON CONFLICT (tenant_id) DO UPDATE SET
+         payment_terms_days = EXCLUDED.payment_terms_days, credit_limit_minor = EXCLUDED.credit_limit_minor,
+         preferred_channel = EXCLUDED.preferred_channel, send_statements = EXCLUDED.send_statements,
+         payment_reminders = EXCLUDED.payment_reminders, updated_by = EXCLUDED.updated_by, updated_at = now()
+       RETURNING ${SETTINGS_COLUMNS}`,
+      [
+        tenantId,
+        pick(input.paymentTermsDays, current.payment_terms_days),
+        pick(input.creditLimitMinor, current.credit_limit_minor === null ? null : Number(current.credit_limit_minor)),
+        pick(input.preferredChannel, current.preferred_channel),
+        pick(input.sendStatements, current.send_statements),
+        pick(input.paymentReminders, current.payment_reminders),
+        audit.actorUserId,
+      ],
+    );
+    const settings = result.rows[0]!;
+    await recordAuditLog(client, {
+      tenantId,
+      action: before ? "UPDATE" : "CREATE",
+      entityType: "customer_settings",
+      entityId: tenantId,
+      ...(before ? { beforeState: before } : {}),
+      afterState: settings,
+      context: audit,
+    });
+    return settings;
   });
 }

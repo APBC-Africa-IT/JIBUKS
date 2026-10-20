@@ -183,10 +183,22 @@ const partyFields = {
 
 export const createSupplierSchema = z.object(partyFields);
 
+/** How a customer wants to be contacted. NONE = don't. */
+export const CUSTOMER_CHANNELS = ["SMS", "WHATSAPP", "EMAIL", "NONE"] as const;
+export type CustomerChannel = (typeof CUSTOMER_CHANNELS)[number];
+
+/** Omitted on POST /customers: the business's customer defaults (GET /customer-settings) fill them in. */
+const customerPreferenceFields = {
+  preferredChannel: z.enum(CUSTOMER_CHANNELS).optional(),
+  sendStatements: z.boolean().optional(),
+  paymentReminders: z.boolean().optional(),
+};
+
 export const createCustomerSchema = z.object({
   ...partyFields,
-  /** In the customer's currency, integer minor units. Omit for no limit. */
+  /** In the customer's currency, integer minor units. Omit for no limit (or the business default). */
   creditLimitMinor: minorUnitsSchema.optional(),
+  ...customerPreferenceFields,
 });
 
 export type CreateCustomerDto = z.infer<typeof createCustomerSchema>;
@@ -211,7 +223,13 @@ export const updateSupplierSchema = z
   .refine(atLeastOneField, "Provide at least one field to update");
 
 export const updateCustomerSchema = z
-  .object({ ...updatePartyFields, creditLimitMinor: minorUnitsSchema.nullable().optional() })
+  .object({
+    ...updatePartyFields,
+    creditLimitMinor: minorUnitsSchema.nullable().optional(),
+    preferredChannel: z.enum(CUSTOMER_CHANNELS).nullable().optional(),
+    sendStatements: z.boolean().optional(),
+    paymentReminders: z.boolean().optional(),
+  })
   .refine(atLeastOneField, "Provide at least one field to update");
 
 export type UpdateCustomerDto = z.infer<typeof updateCustomerSchema>;
@@ -1494,3 +1512,30 @@ export const listRefundsQuerySchema = paginationSchema
   });
 
 export type ListRefundsQueryDto = z.infer<typeof listRefundsQuerySchema>;
+
+// ---------------------------------------------------------------------
+// Customer defaults and the follow-up report
+// ---------------------------------------------------------------------
+
+/** PATCH /customer-settings -- what a new customer starts with. null clears a default. */
+export const updateCustomerSettingsSchema = z
+  .object({
+    paymentTermsDays: paymentTermsDaysSchema.nullable().optional(),
+    creditLimitMinor: minorUnitsSchema.nullable().optional(),
+    preferredChannel: z.enum(CUSTOMER_CHANNELS).nullable().optional(),
+    sendStatements: z.boolean().optional(),
+    paymentReminders: z.boolean().optional(),
+  })
+  .refine(atLeastOneField, "Provide at least one field to update");
+
+export type UpdateCustomerSettingsDto = z.infer<typeof updateCustomerSettingsSchema>;
+
+/** GET /reports/customers-to-follow-up */
+export const followUpQuerySchema = z.object({
+  /** Omit for today (Africa/Nairobi). */
+  as_of: accountingDateSchema.optional(),
+  /** Only customers with an invoice at least this many days past due. Default 1. */
+  min_days_overdue: z.coerce.number().int().min(1).max(3650).default(1),
+});
+
+export type FollowUpQueryDto = z.infer<typeof followUpQuerySchema>;

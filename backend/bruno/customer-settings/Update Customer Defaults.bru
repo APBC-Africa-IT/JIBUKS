@@ -1,0 +1,32 @@
+meta {
+  name: Update Customer Defaults
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/customer-settings
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "paymentTermsDays": 30,
+    "creditLimitMinor": 5000000,
+    "preferredChannel": "WHATSAPP",
+    "sendStatements": true,
+    "paymentReminders": true
+  }
+}
+
+docs {
+  What a NEW customer starts with when POST /customers leaves these out. null clears a default.
+  Existing customers are never changed.
+}
