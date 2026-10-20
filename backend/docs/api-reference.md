@@ -177,7 +177,7 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /payments/mpesa/stk-push` | `payments:create` |
 | `GET /payments`, `GET /payments/{id}` | `payments:view` |
 | `GET /invoices`, `GET /invoices/{id}` | `invoices:view` |
-| `POST /invoices`, `PATCH`/`DELETE /invoices/{id}`, `POST /invoices/{id}/credit-notes`, `POST /invoices/{id}/convert` | `invoices:create` |
+| `POST /invoices`, `PATCH`/`DELETE /invoices/{id}`, `POST /invoices/{id}/credit-notes`, `POST /invoices/{id}/convert`, `POST /invoices/{id}/accept` / `decline` | `invoices:create` |
 | `POST /invoices/{id}/issue` | `invoices:issue` (+ `invoices:override_credit_limit` to pass `overrideCreditLimit: true`) |
 | `POST /invoices/{id}/cancel` | `invoices:cancel` |
 | `POST /invoices/{id}/payments` | `payments:create` |
@@ -1790,8 +1790,10 @@ Base path: `/api/v1/invoices`. Sales invoices, credit notes and pro-formas (FR-A
 | `cursor` | `next_cursor` from the previous page. |
 | `status` | Any of the six statuses. `OVERDUE` matches past-due unpaid invoices; `ISSUED` / `PART_PAID` then exclude overdue ones. |
 | `kind` | `INVOICE`, `CREDIT_NOTE`, `PROFORMA`. |
+| `estimate_status` | Estimates only (implies `kind=PROFORMA`): `DRAFT`, `PENDING`, `ACCEPTED`, `DECLINED`, `EXPIRED`, `CONVERTED`, `CANCELLED`. See [Estimates](#estimates). |
 | `customer_id` | One customer's documents. |
 | `from`, `to` | `issue_date` range, inclusive. |
+| `q` | The search box: customer name, number or reference, case-insensitive. |
 
 ```json
 {
@@ -1923,7 +1925,28 @@ Every invoice-shaped response now has `credit_remaining_minor`: on an issued cre
 
 ### `POST /invoices/{id}/convert`
 
-`invoices:create`. Turns a draft or issued pro-forma into a new **draft invoice** with the same customer, lines and tax mode. `{ "clientUuid": "...", "issueDate": "2026-10-07", "receivableAccountId": "..." }` — `issueDate` defaults to today; `receivableAccountId` defaults to the pro-forma's own, then the business's `RECEIVABLE` account. `201` with the new invoice (`proforma_id` points back). Once only: a second convert is `409 DUPLICATE_VALUE`.
+`invoices:create`. Turns a draft or issued pro-forma into a new **draft invoice** with the same customer, lines and tax mode. `{ "clientUuid": "...", "issueDate": "2026-10-07", "receivableAccountId": "..." }` — `issueDate` defaults to today; `receivableAccountId` defaults to the pro-forma's own, then the business's `RECEIVABLE` account. `201` with the new invoice (`proforma_id` points back). Once only: a second convert is `409 DUPLICATE_VALUE`. A **declined** estimate can't be converted (`422 INVOICE_INVALID_STATE`) until it's marked accepted.
+
+#### Estimates
+
+The **Estimates** screen is pro-formas: `GET /invoices?kind=PROFORMA` (add `q` for the search box). Each one has an **`estimate_status`** (`null` on other documents), worked out when it's read, in this order:
+
+| `estimate_status` | When |
+|---|---|
+| `CANCELLED` | Cancelled. |
+| `CONVERTED` | An invoice was made from it (`converted_invoice_id`). |
+| `DRAFT` | Not issued yet. |
+| `ACCEPTED` / `DECLINED` | The customer's answer, recorded with accept/decline below. Stays even after the valid-until date. |
+| `EXPIRED` | Issued, no answer, and its `due_date` (the "valid until" date on the PDF) has passed. |
+| `PENDING` | Issued, no answer yet, still valid. |
+
+Pro-formas also carry `estimate_response`, `estimate_responded_at`, `estimate_responded_by`, `estimate_response_note` and `converted_invoice_id`.
+
+### `POST /invoices/{id}/accept` / `POST /invoices/{id}/decline`
+
+`invoices:create`. Records the customer's answer to an **issued** estimate that hasn't been converted. Body optional: `{ "note": "Accepted by phone" }` (up to 500 characters). Answering again replaces the earlier answer (the audit log keeps both). Returns the estimate (`200`).
+
+**Errors:** `404 INVOICE_NOT_FOUND` (not an estimate), `422 INVOICE_INVALID_STATE` (a draft, cancelled or converted estimate), `400` (note too long).
 
 ### Notes for consuming clients (Invoices)
 

@@ -9,7 +9,15 @@
  * conversion, the PDF and collection by M-Pesa.
  */
 
-import { DomainError, type InvoiceKind, type InvoicePaymentMethod, type InvoiceViewStatus, type TaxMode } from "@jibuks/domain";
+import {
+  DomainError,
+  estimateStatus,
+  type EstimateResponse,
+  type EstimateStatus,
+  type InvoiceKind,
+  type InvoiceViewStatus,
+  type TaxMode,
+} from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as customersService from "../customers/service.js";
 import { todayInNairobi } from "../periods/service.js";
@@ -40,6 +48,8 @@ export interface InvoiceView
   readonly customer_name: string;
   /** Credit notes: what is left to apply to invoices or refund ("0" on other documents and drafts). */
   readonly credit_remaining_minor: string;
+  /** Pro-formas: the Estimates screen's status; null on other documents. */
+  readonly estimate_status: EstimateStatus | null;
 }
 
 export type InvoiceLineView = Omit<InvoiceLineRow, "item_name" | "amount_minor">;
@@ -53,7 +63,17 @@ function toInvoiceView(view: DocumentView): InvoiceView {
   const { party_name, supplier_id, supplier_reference, customer_id, payment_method, deposit_account_id, cheque_number, ...rest } =
     view;
   const creditRemaining = rest.kind === "CREDIT_NOTE" && rest.status !== "DRAFT" ? Number(rest.total_minor) - Number(rest.amount_paid_minor) : 0;
-  return { ...rest, customer_id: customer_id!, customer_name: party_name!, credit_remaining_minor: String(creditRemaining) };
+  const estimate =
+    rest.kind === "PROFORMA"
+      ? estimateStatus(rest.status, rest.estimate_response, rest.due_date, rest.converted_invoice_id !== null, todayInNairobi())
+      : null;
+  return {
+    ...rest,
+    customer_id: customer_id!,
+    customer_name: party_name!,
+    credit_remaining_minor: String(creditRemaining),
+    estimate_status: estimate,
+  };
 }
 
 function toInvoiceDetail(detail: DocumentDetail): InvoiceDetailView {
@@ -72,6 +92,8 @@ export async function getInvoice(tenantId: string, invoiceId: string): Promise<I
 export interface ListInvoicesRequest {
   readonly status?: InvoiceViewStatus;
   readonly kind?: InvoiceKind;
+  readonly estimateStatus?: EstimateStatus;
+  readonly q?: string;
   readonly customerId?: string;
   readonly from?: string;
   readonly to?: string;
@@ -320,6 +342,29 @@ export async function createCreditNote(request: CreateCreditNoteRequest, audit: 
   );
 }
 
+/** Records the customer's answer to an issued estimate (pro-forma) that hasn't been converted. */
+export async function respondToEstimate(
+  tenantId: string,
+  estimateId: string,
+  response: EstimateResponse,
+  note: string | undefined,
+  audit: AuditContext,
+): Promise<InvoiceDetailView> {
+  const outcome = await repository.respondToEstimate(tenantId, estimateId, response, note ?? null, audit);
+  if (outcome === "NOT_FOUND") {
+    throw new DomainError("INVOICE_NOT_FOUND", `Estimate ${estimateId} not found`);
+  }
+  if (outcome !== "OK") {
+    throw new DomainError(
+      "INVOICE_INVALID_STATE",
+      outcome === "CONVERTED"
+        ? "This estimate has already been converted to an invoice"
+        : "Only an issued estimate can be accepted or declined; issue the draft first",
+    );
+  }
+  return getInvoice(tenantId, estimateId);
+}
+
 export interface ConvertProformaRequest {
   readonly tenantId: string;
   readonly proformaId: string;
@@ -333,6 +378,9 @@ export async function convertProforma(request: ConvertProformaRequest, audit: Au
   const proforma = await documents.getRow(AR, request.tenantId, request.proformaId);
   if (proforma.kind !== "PROFORMA" || proforma.status === "CANCELLED") {
     throw new DomainError("INVOICE_INVALID_STATE", "Only a draft or issued pro-forma can be converted to an invoice");
+  }
+  if (proforma.estimate_response === "DECLINED") {
+    throw new DomainError("INVOICE_INVALID_STATE", `${proforma.number} was declined; mark it accepted before converting it`);
   }
   const receivableAccountId =
     request.receivableAccountId ?? proforma.receivable_account_id ?? (await documents.defaultControlAccountId(AR, request.tenantId));

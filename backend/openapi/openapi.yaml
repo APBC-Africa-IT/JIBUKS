@@ -676,6 +676,14 @@ paths:
           description: OVERDUE = issued or part-paid and past due; ISSUED/PART_PAID then exclude overdue ones.
           schema: { $ref: '#/components/schemas/InvoiceStatus' }
         - { name: kind, in: query, schema: { type: string, enum: [INVOICE, CREDIT_NOTE, PROFORMA] } }
+        - name: estimate_status
+          in: query
+          description: Estimates only (implies kind PROFORMA).
+          schema: { type: string, enum: [DRAFT, PENDING, ACCEPTED, DECLINED, EXPIRED, CONVERTED, CANCELLED] }
+        - name: q
+          in: query
+          description: Customer name, number or reference; case-insensitive.
+          schema: { type: string, minLength: 1, maxLength: 100 }
         - { name: customer_id, in: query, schema: { type: string, format: uuid } }
         - { name: from, in: query, description: issue_date from (inclusive), schema: { type: string, format: date } }
         - { name: to, in: query, description: issue_date to (inclusive), schema: { type: string, format: date } }
@@ -838,6 +846,80 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /invoices/{id}/accept:
+    post:
+      tags: [Invoices]
+      summary: Record that the customer accepted an estimate
+      description: >
+        Requires `invoices:create`. For an issued, unconverted pro-forma.
+        Replaces any earlier answer.
+      parameters:
+        - $ref: '#/components/parameters/InvoiceIdPath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EstimateResponseRequest'
+      responses:
+        '200':
+          description: The estimate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: INVOICE_INVALID_STATE -- a draft, cancelled or converted estimate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /invoices/{id}/decline:
+    post:
+      tags: [Invoices]
+      summary: Record that the customer declined an estimate
+      description: >
+        Requires `invoices:create`. As accept. A declined estimate can't be
+        converted until it is accepted.
+      parameters:
+        - $ref: '#/components/parameters/InvoiceIdPath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EstimateResponseRequest'
+      responses:
+        '200':
+          description: The estimate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: INVOICE_INVALID_STATE -- a draft, cancelled or converted estimate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
   /invoices/{id}/apply-credit:
     post:
@@ -4451,6 +4533,23 @@ components:
         credit_remaining_minor:
           type: string
           description: Issued credit notes -- what is left to apply or refund; "0" on everything else.
+        estimate_status:
+          type: string
+          nullable: true
+          enum: [DRAFT, PENDING, ACCEPTED, DECLINED, EXPIRED, CONVERTED, CANCELLED, null]
+          description: >
+            Pro-formas (estimates) only, derived: CANCELLED, else CONVERTED
+            (an invoice was made from it), else DRAFT, else the customer's
+            answer, else EXPIRED past due_date, else PENDING.
+        estimate_response: { type: string, nullable: true, enum: [ACCEPTED, DECLINED, null] }
+        estimate_responded_at: { type: string, format: date-time, nullable: true }
+        estimate_responded_by: { type: string, format: uuid, nullable: true }
+        estimate_response_note: { type: string, nullable: true }
+        converted_invoice_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Pro-formas -- the invoice converted from it.
         reference: { type: string, nullable: true }
         notes: { type: string, nullable: true }
         journal_id: { type: string, format: uuid, nullable: true }
@@ -5040,6 +5139,11 @@ components:
                   invoice_number: { type: string }
                   amount_minor: { type: string }
                   date: { type: string, format: date }
+
+    EstimateResponseRequest:
+      type: object
+      properties:
+        note: { type: string, minLength: 1, maxLength: 500, example: "Accepted by phone" }
 
     CreditSourceRequest:
       type: object

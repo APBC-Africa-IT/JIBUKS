@@ -14,7 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 import { recordAuditLog, withTenant, readAsTenant, type AuditContext } from "@jibuks/db";
-import type { InvoiceKind, InvoicePaymentMethod, InvoiceStatus, TaxMode } from "@jibuks/domain";
+import type { EstimateResponse, EstimateStatus, InvoiceKind, InvoicePaymentMethod, InvoiceStatus, TaxMode } from "@jibuks/domain";
 
 /** A transaction-scoped client, as handed out by withTenant. */
 export type TxClient = Parameters<Parameters<typeof withTenant>[1]>[0];
@@ -72,12 +72,19 @@ export interface InvoiceRow {
   readonly shipping_date: string | null;
   /** The terms due_date was worked out from; null on notes and on rows from before terms were stored. */
   readonly payment_terms_days: number | null;
+  /** PROFORMA only: the customer's answer, when and by whom it was recorded, and a note. */
+  readonly estimate_response: EstimateResponse | null;
+  readonly estimate_responded_at: string | null;
+  readonly estimate_responded_by: string | null;
+  readonly estimate_response_note: string | null;
 }
 
 /** An InvoiceRow plus its customer's or supplier's name -- what lists and details show. */
 export interface InvoiceListRow extends InvoiceRow {
   /** Null only for a walk-in cash sale. */
   readonly party_name: string | null;
+  /** PROFORMA only: the invoice made from it, if any. */
+  readonly converted_invoice_id: string | null;
 }
 
 export interface InvoiceLineRow {
@@ -175,8 +182,11 @@ export interface InsertInvoiceInput {
   readonly lines: readonly LineInput[];
 }
 
+/** The invoice converted from a pro-forma (unique per pro-forma). */
+const CONVERTED_INVOICE_ID = `(SELECT v.id FROM invoices v WHERE v.proforma_id = i.id) AS converted_invoice_id`;
+
 const SELECT_WITH_PARTY = `
-  SELECT i.*, COALESCE(c.name, s.name) AS party_name
+  SELECT i.*, COALESCE(c.name, s.name) AS party_name, ${CONVERTED_INVOICE_ID}
     FROM invoices i
     LEFT JOIN customers c ON c.id = i.customer_id
     LEFT JOIN suppliers s ON s.id = i.supplier_id`;
@@ -521,7 +531,11 @@ export interface ListFilters {
   readonly partyId?: string;
   readonly from?: string;
   readonly to?: string;
-  /** Today in Africa/Nairobi -- the cutoff for OVERDUE. */
+  /** Pro-formas by estimate status (estimateStatus in @jibuks/domain, in SQL). */
+  readonly estimateStatus?: EstimateStatus;
+  /** Case-insensitive match on the party's name, the number or the reference. */
+  readonly q?: string;
+  /** Today in Africa/Nairobi -- the cutoff for OVERDUE and EXPIRED. */
   readonly today: string;
   readonly limit: number;
   /** Position after which to continue: the last row of the previous page. */
@@ -537,6 +551,27 @@ export interface InvoicePageRow extends InvoiceListRow {
 }
 
 /** Newest first. Fetches limit + 1 rows so the caller can tell whether more exist. */
+/** The SQL for one estimate status -- mirrors estimateStatus() in @jibuks/domain. */
+function estimateStatusSql(status: EstimateStatus, today: () => string): string {
+  const converted = "EXISTS (SELECT 1 FROM invoices v WHERE v.proforma_id = i.id)";
+  const pending = `i.status = 'ISSUED' AND NOT ${converted} AND i.estimate_response IS NULL`;
+  switch (status) {
+    case "CANCELLED":
+      return "i.status = 'CANCELLED'";
+    case "CONVERTED":
+      return `i.status <> 'CANCELLED' AND ${converted}`;
+    case "DRAFT":
+      return `i.status = 'DRAFT' AND NOT ${converted}`;
+    case "ACCEPTED":
+    case "DECLINED":
+      return `i.status = 'ISSUED' AND NOT ${converted} AND i.estimate_response = '${status}'`;
+    case "EXPIRED":
+      return `${pending} AND i.due_date < ${today()}::date`;
+    case "PENDING":
+      return `${pending} AND (i.due_date IS NULL OR i.due_date >= ${today()}::date)`;
+  }
+}
+
 export async function listInvoices(tenantId: string, filters: ListFilters): Promise<InvoicePageRow[]> {
   return readAsTenant(tenantId, async (client) => {
     const params: unknown[] = [];
@@ -565,12 +600,20 @@ export async function listInvoices(tenantId: string, filters: ListFilters): Prom
     if (filters.to !== undefined) {
       where.push(`i.issue_date <= ${add(filters.to)}`);
     }
+    if (filters.estimateStatus !== undefined) {
+      where.push(`i.kind = 'PROFORMA'`, estimateStatusSql(filters.estimateStatus, () => add(filters.today)));
+    }
+    if (filters.q !== undefined) {
+      // Escape LIKE wildcards so "50%" searches for the text.
+      const p = add(`%${filters.q.replace(/[\\%_]/g, "\\$&")}%`);
+      where.push(`(COALESCE(c.name, s.name) ILIKE ${p} OR i.number ILIKE ${p} OR i.reference ILIKE ${p})`);
+    }
     if (filters.after !== undefined) {
       where.push(`(i.created_at, i.id) < (${add(filters.after.createdAt)}::timestamptz, ${add(filters.after.id)}::uuid)`);
     }
 
     const result = await client.query<InvoicePageRow>(
-      `SELECT i.*, COALESCE(c.name, s.name) AS party_name, i.created_at::text AS sort_key
+      `SELECT i.*, COALESCE(c.name, s.name) AS party_name, ${CONVERTED_INVOICE_ID}, i.created_at::text AS sort_key
          FROM invoices i
          LEFT JOIN customers c ON c.id = i.customer_id
          LEFT JOIN suppliers s ON s.id = i.supplier_id
@@ -888,5 +931,49 @@ export async function listOpenInvoicesAsOf(
       params,
     );
     return result.rows;
+  });
+}
+
+/**
+ * Records the customer's answer to an issued, unconverted estimate, under a
+ * lock. Answering again replaces the earlier answer (the audit log keeps it).
+ */
+export async function respondToEstimate(
+  tenantId: string,
+  id: string,
+  response: EstimateResponse,
+  note: string | null,
+  audit: AuditContext,
+): Promise<"OK" | "NOT_FOUND" | "NOT_ISSUED" | "CONVERTED"> {
+  return withTenant(tenantId, async (client) => {
+    const before = await lockInvoice(client, id);
+    if (!before || before.direction !== "AR" || before.kind !== "PROFORMA") {
+      return "NOT_FOUND";
+    }
+    if (before.status !== "ISSUED") {
+      return "NOT_ISSUED";
+    }
+    const converted = await client.query(`SELECT 1 FROM invoices WHERE proforma_id = $1`, [id]);
+    if (converted.rows.length > 0) {
+      return "CONVERTED";
+    }
+    const result = await client.query<InvoiceRow>(
+      `UPDATE invoices
+          SET estimate_response = $2, estimate_responded_at = now(), estimate_responded_by = $3,
+              estimate_response_note = $4, updated_at = now()
+        WHERE id = $1
+       RETURNING *`,
+      [id, response, audit.actorUserId, note],
+    );
+    await recordAuditLog(client, {
+      tenantId,
+      action: "UPDATE",
+      entityType: "invoice",
+      entityId: id,
+      beforeState: before,
+      afterState: result.rows[0],
+      context: audit,
+    });
+    return "OK";
   });
 }

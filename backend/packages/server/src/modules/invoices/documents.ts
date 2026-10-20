@@ -33,6 +33,7 @@ import {
   type InvoiceViewStatus,
   type JournalSource,
   type TaxMode,
+  type EstimateStatus,
 } from "@jibuks/domain";
 import { withTenant, type AuditContext } from "@jibuks/db";
 import * as accountsService from "../accounts/service.js";
@@ -196,6 +197,8 @@ export async function getDetail(side: DocumentScope, tenantId: string, id: strin
 export interface ListRequest {
   readonly status?: InvoiceViewStatus;
   readonly kind?: InvoiceKind;
+  readonly estimateStatus?: EstimateStatus;
+  readonly q?: string;
   readonly partyId?: string;
   readonly from?: string;
   readonly to?: string;
@@ -234,6 +237,8 @@ export async function list(side: DocumentScope, tenantId: string, request: ListR
     ...(request.partyId !== undefined ? { partyId: request.partyId } : {}),
     ...(request.from !== undefined ? { from: request.from } : {}),
     ...(request.to !== undefined ? { to: request.to } : {}),
+    ...(request.estimateStatus !== undefined ? { estimateStatus: request.estimateStatus } : {}),
+    ...(request.q !== undefined ? { q: request.q } : {}),
     ...(request.cursor !== undefined ? { after: decodeCursor(request.cursor) } : {}),
     today,
     limit: request.limit,
