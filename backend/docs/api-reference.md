@@ -58,6 +58,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.25 Sales Receipts](#725-sales-receipts)
 - [7.26 Items](#726-items)
 - [7.27 Cheque Payments](#727-cheque-payments)
+- [7.28 Customer Statements](#728-customer-statements)
 
 ---
 
@@ -168,6 +169,8 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /bills` | `bills:create` |
 | `POST /cheques`, `POST /cheque-payments` | `cheques:create` (Owner, Accountant) |
 | `GET /cheque-payments`, `GET /cheque-payments/{id}` | `cheques:view` (Owner, Accountant, Viewer) |
+| `POST /customer-statements`, `POST /customer-statements/{id}/mark-sent` | `statements:create` (Owner, Accountant) |
+| `GET /customer-statements`, `GET /customer-statements/{id}`, `GET /customer-statements/{id}/pdf` | `statements:view` (Owner, Accountant, Viewer) |
 | `POST /cash-expenses` | `cash_expenses:create` |
 | `POST /payments/mpesa/stk-push` | `payments:create` |
 | `GET /payments`, `GET /payments/{id}` | `payments:view` |
@@ -2458,3 +2461,100 @@ Unknown id, or the id of a bill: `404 INVOICE_NOT_FOUND`.
 - **The three tabs** only change which accounts the line picker lists. **Expense:** accounts of type `EXPENSE`. **Stock Purchase:** `INVENTORY` items (send `itemId`). **Other:** any account.
 - **Save & New / Print/Share:** after the `201`, show or share the cheque from the response. There's no server PDF yet.
 - **Not built yet:** cancelling or voiding a cheque. For now an Owner or Accountant can reverse its journal with `POST /journals/{id}/reverse`, but the cheque itself still shows `PAID`. Also not built: free-text payees who aren't suppliers, and a server-rendered PDF.
+
+---
+
+## 7.28 Customer Statements
+
+Base path: `/api/v1/customer-statements`. The **Statements** screen. A statement is a **snapshot**: issuing one copies the customer's [transaction history](#get-customersidtransactions) for a period, and their aging at the statement date, and numbers it `ST-000001` (gapless per business). It posts nothing. Later payments or backdated entries don't change a statement already issued; issue a new one.
+
+The server **doesn't send** statements. The app downloads the PDF, shares it (WhatsApp, email…), then calls `mark-sent`. That's the screen's Sent / Not Sent.
+
+### `POST /customer-statements`
+
+`statements:create`. The **Issue Statement** button.
+
+```json
+{
+  "clientUuid": "4b0c7c4e-8f8e-4c64-9d0c-3a7d3f6b1a01",
+  "customerId": "6c1a2f3e-2b4a-4c1a-9c1a-2b4a4c1a9c1a",
+  "from": "2026-09-01",
+  "to": "2026-09-30",
+  "message": "Kindly settle by 5 October. M-Pesa Paybill 123456."
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `clientUuid` | uuid | Yes | Client-generated. Sending the same one again: `409 DUPLICATE_VALUE`. |
+| `customerId` | uuid | Yes | |
+| `from` | date | No | First day covered. Default: the 1st of the month `to` is in. |
+| `to` | date | No | The statement date, last day covered. Default: today (Nairobi). |
+| `message` | string | No | Up to 1,000 characters, printed on the statement. |
+
+**Success Response:** `201 Created`
+```json
+{
+  "id": "…",
+  "number": "ST-000007",
+  "customer_id": "…",
+  "customer_name": "Jane Traders",
+  "period_from": "2026-09-01",
+  "period_to": "2026-09-30",
+  "currency": null,
+  "opening_balance_minor": "3000000",
+  "total_debit_minor": "9000000",
+  "total_credit_minor": "4700000",
+  "closing_balance_minor": "7300000",
+  "aging": {
+    "current_minor": "4500000",
+    "days_1_30_minor": "2000000",
+    "days_31_60_minor": "800000",
+    "days_61_90_minor": "0",
+    "days_over_90_minor": "0",
+    "not_invoiced_minor": "0",
+    "balance_minor": "7300000"
+  },
+  "message": "Kindly settle by 5 October. M-Pesa Paybill 123456.",
+  "status": "NOT_SENT",
+  "sent_at": null,
+  "sent_by": null,
+  "created_by": "…",
+  "created_at": "2026-10-01T08:00:00.000Z",
+  "transactions": [ /* rows exactly as GET /customers/{id}/transactions returned them */ ]
+}
+```
+
+- `closing_balance_minor` is the amount the list shows: what the customer owed on `period_to`. **Negative = the customer is in credit.**
+- `aging` uses the same fields as [`GET /receivables-aging`](#721-receivables-aging), at `period_to`. The buckets plus `not_invoiced_minor` (credit sales, payments not matched to an invoice and so on) add up to `balance_minor`, which equals `closing_balance_minor`.
+- `currency`: `null` = the business's base currency.
+
+**Error Response:** `400 VALIDATION_ERROR` (bad date, `from` after `to`, or a `from` in the future with `to` omitted), `404 CUSTOMER_NOT_FOUND`, `409 DUPLICATE_VALUE`.
+
+### `GET /customer-statements`
+
+`statements:view`. Newest first, with cursor paging as for `GET /invoices` (`limit`, `cursor` → `data`, `next_cursor`, `has_more`). Items have no `transactions`.
+
+| Filter | Description |
+|---|---|
+| `customer_id` | One customer's statements. |
+| `sent` | `true` = marked sent, `false` = not yet. |
+| `q` | The search box: case-insensitive match on the customer's name or the statement number. |
+
+### `GET /customer-statements/{id}`
+
+`statements:view`. One statement with its `transactions`. `404 STATEMENT_NOT_FOUND`.
+
+### `GET /customer-statements/{id}/pdf`
+
+`statements:view`. `application/pdf`, `Content-Disposition: inline; filename="ST-000007.pdf"`. A4, with the business and customer details, a balance brought forward row, every transaction with charges, payments and running balance, the totals, **Amount due** (or **Credit balance**), the amount due by age, and the message. Amounts come from the snapshot; names, phone numbers and PINs are the current ones. `404 STATEMENT_NOT_FOUND`.
+
+### `POST /customer-statements/{id}/mark-sent`
+
+`statements:create`. No body. Sets `status: "SENT"`, `sent_at`, `sent_by`, and returns the statement. Marking one already sent changes nothing, so the first `sent_at` stays. `404 STATEMENT_NOT_FOUND`.
+
+### Notes for consuming clients (Customer Statements)
+
+- **Statements screen:** list `GET /customer-statements` (`q` for the search box). Each card shows `customer_name`, `closing_balance_minor`, the month of `period_to` and `status`.
+- **Issue Statement:** pick a customer and period, `POST`, then offer the PDF to share. Call `mark-sent` once it's shared.
+- **Not built yet:** sending by SMS/email from the server, issuing statements for all customers at once, and the business logo on the PDF.

@@ -1,0 +1,19 @@
+meta {
+  name: Download Statement PDF
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/customer-statements/{{statementId}}/pdf
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  statementId: 00000000-0000-4000-8000-000000000000
+}

@@ -1,0 +1,22 @@
+meta {
+  name: List Statements
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/customer-statements
+  body: none
+  auth: none
+}
+
+params:query {
+  ~customer_id: 00000000-0000-4000-8000-000000000000
+  ~sent: false
+  ~q: jane
+  ~limit: 50
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}

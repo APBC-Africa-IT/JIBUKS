@@ -1263,3 +1263,37 @@ export const listChequePaymentsQuerySchema = paginationSchema.extend({
 });
 
 export type ListChequePaymentsQueryDto = z.infer<typeof listChequePaymentsQuerySchema>;
+
+// ---------------------------------------------------------------------
+// Customer statements
+// ---------------------------------------------------------------------
+
+/** POST /customer-statements -- issue a statement for one customer and period. */
+export const createStatementSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    customerId: uuidSchema,
+    /** First day covered. Omit for the first of the month `to` falls in. */
+    from: accountingDateSchema.optional(),
+    /** Statement date, the last day covered. Omit for today (Africa/Nairobi). */
+    to: accountingDateSchema.optional(),
+    /** Printed on the statement. */
+    message: z.string().trim().min(1).max(1000).optional(),
+  })
+  .refine((r) => r.from === undefined || r.to === undefined || r.from <= r.to, {
+    message: "from must be on or before to",
+    path: ["to"],
+  });
+
+export type CreateStatementDto = z.infer<typeof createStatementSchema>;
+
+/** GET /customer-statements -- newest first, cursor pagination. */
+export const listStatementsQuerySchema = paginationSchema.extend({
+  customer_id: uuidSchema.optional(),
+  /** "true" for statements marked sent, "false" for the rest. */
+  sent: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
+  /** Case-insensitive match on the customer's name or the statement number. */
+  q: z.string().trim().min(1).max(100).optional(),
+});
+
+export type ListStatementsQueryDto = z.infer<typeof listStatementsQuerySchema>;
