@@ -113,21 +113,63 @@ export async function createCustomer(input: CreateCustomerInput, audit: AuditCon
   });
 }
 
-export async function listCustomers(tenantId: string, asOf?: string): Promise<CustomerWithBalanceRow[]> {
+/** The customer's most recent POSTED journal -- what the list's "last
+ * activity" line is built from (customerLedger names it). Same as-of cutoff
+ * as the balance. */
+function lastActivityJoin(asOfParamIndex: number | null): string {
+  const asOfClause = asOfParamIndex !== null ? ` AND j.date <= $${asOfParamIndex}` : "";
+  return `
+    LEFT JOIN LATERAL (
+      SELECT j.id AS last_activity_journal_id, j.date::text AS last_activity_date, j.source AS last_activity_source
+      FROM journal_lines jl
+      JOIN journals j ON j.id = jl.journal_id AND j.status = 'POSTED'${asOfClause}
+      WHERE jl.customer_id = base.id
+      ORDER BY j.date DESC, j.created_at DESC, j.id DESC
+      LIMIT 1
+    ) la ON true
+  `;
+}
+
+/** A CustomerWithBalanceRow plus the id, date and source of its latest posted journal (all null if none). */
+export interface CustomerWithActivityRow extends CustomerWithBalanceRow {
+  readonly last_activity_journal_id: string | null;
+  readonly last_activity_date: string | null;
+  readonly last_activity_source: string | null;
+}
+
+export interface ListCustomersFilters {
+  readonly asOf?: string | undefined;
+  /** Case-insensitive match on name, phone or email. */
+  readonly q?: string | undefined;
+}
+
+export async function listCustomers(tenantId: string, filters: ListCustomersFilters = {}): Promise<CustomerWithActivityRow[]> {
   return readAsTenant(tenantId, async (client) => {
     const params: unknown[] = [];
     let asOfParamIndex: number | null = null;
-    if (asOf) {
-      params.push(asOf);
+    if (filters.asOf) {
+      params.push(filters.asOf);
       asOfParamIndex = params.length;
     }
+    let where = "";
+    if (filters.q) {
+      // Escape LIKE wildcards so "50%" searches for the text.
+      params.push(`%${filters.q.replace(/[\\%_]/g, "\\$&")}%`);
+      const p = `$${params.length}`;
+      where = `WHERE c.name ILIKE ${p} OR c.phone ILIKE ${p} OR c.email ILIKE ${p}`;
+    }
 
-    const result = await client.query<CustomerWithBalanceRow>(
-      `SELECT c.*, ${BALANCE_EXPR}
-       FROM customers c
-       ${balanceJoin(asOfParamIndex)}
-       GROUP BY c.id
-       ORDER BY c.name ASC`,
+    const result = await client.query<CustomerWithActivityRow>(
+      `SELECT base.*, la.*
+       FROM (
+         SELECT c.*, ${BALANCE_EXPR}
+         FROM customers c
+         ${balanceJoin(asOfParamIndex)}
+         ${where}
+         GROUP BY c.id
+       ) base
+       ${lastActivityJoin(asOfParamIndex)}
+       ORDER BY base.name ASC`,
       params,
     );
     return result.rows;
@@ -138,7 +180,7 @@ export async function getCustomerById(
   tenantId: string,
   customerId: string,
   asOf?: string,
-): Promise<CustomerWithBalanceRow | null> {
+): Promise<CustomerWithActivityRow | null> {
   return readAsTenant(tenantId, async (client) => {
     const params: unknown[] = [customerId];
     let asOfParamIndex: number | null = null;
@@ -147,15 +189,78 @@ export async function getCustomerById(
       asOfParamIndex = params.length;
     }
 
-    const result = await client.query<CustomerWithBalanceRow>(
-      `SELECT c.*, ${BALANCE_EXPR}
-       FROM customers c
-       ${balanceJoin(asOfParamIndex)}
-       WHERE c.id = $1
-       GROUP BY c.id`,
+    const result = await client.query<CustomerWithActivityRow>(
+      `SELECT base.*, la.*
+       FROM (
+         SELECT c.*, ${BALANCE_EXPR}
+         FROM customers c
+         ${balanceJoin(asOfParamIndex)}
+         WHERE c.id = $1
+         GROUP BY c.id
+       ) base
+       ${lastActivityJoin(asOfParamIndex)}`,
       params,
     );
     return result.rows[0] ?? null;
+  });
+}
+
+/** One POSTED journal's net effect on a customer -- a row of their ledger. */
+export interface CustomerLedgerJournalRow {
+  readonly journal_id: string;
+  readonly date: string;
+  readonly journal_number: string | null;
+  readonly reference: string | null;
+  readonly description: string;
+  readonly source: string;
+  readonly debit_minor: string; // bigint
+  readonly credit_minor: string;
+}
+
+/** Every POSTED journal tagged with this customer in [from, to], oldest
+ * first, its customer-tagged lines summed (a journal normally has one). */
+export async function listLedgerJournals(
+  tenantId: string,
+  customerId: string,
+  from?: string,
+  to?: string,
+): Promise<CustomerLedgerJournalRow[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const params: unknown[] = [customerId];
+    const where = ["jl.customer_id = $1"];
+    if (from) {
+      params.push(from);
+      where.push(`j.date >= $${params.length}`);
+    }
+    if (to) {
+      params.push(to);
+      where.push(`j.date <= $${params.length}`);
+    }
+    const result = await client.query<CustomerLedgerJournalRow>(
+      `SELECT j.id AS journal_id, j.date::text AS date, j.number AS journal_number, j.reference, j.description, j.source,
+              SUM(jl.debit_minor)::text AS debit_minor, SUM(jl.credit_minor)::text AS credit_minor
+       FROM journal_lines jl
+       JOIN journals j ON j.id = jl.journal_id AND j.status = 'POSTED'
+       WHERE ${where.join(" AND ")}
+       GROUP BY j.id
+       ORDER BY j.date, j.created_at, j.id`,
+      params,
+    );
+    return result.rows;
+  });
+}
+
+/** The customer's balance from POSTED journals dated before `date`. */
+export async function balanceBefore(tenantId: string, customerId: string, date: string): Promise<number> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<{ balance_minor: string }>(
+      `SELECT COALESCE(SUM(jl.debit_minor - jl.credit_minor), 0)::text AS balance_minor
+       FROM journal_lines jl
+       JOIN journals j ON j.id = jl.journal_id AND j.status = 'POSTED'
+       WHERE jl.customer_id = $1 AND j.date < $2`,
+      [customerId, date],
+    );
+    return Number(result.rows[0]!.balance_minor);
   });
 }
 

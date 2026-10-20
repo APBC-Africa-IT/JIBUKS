@@ -55,7 +55,7 @@ interface Party {
 }
 
 function listParties(side: Side, tenantId: string, asOf: string): Promise<Party[]> {
-  return side.direction === "AR" ? customersService.listCustomers(tenantId, asOf) : suppliersService.listSuppliers(tenantId, asOf);
+  return side.direction === "AR" ? customersService.listCustomers(tenantId, { asOf }) : suppliersService.listSuppliers(tenantId, asOf);
 }
 
 function getParty(side: Side, tenantId: string, partyId: string, asOf: string): Promise<Party> {

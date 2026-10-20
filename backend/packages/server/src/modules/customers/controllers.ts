@@ -4,7 +4,7 @@
  */
 
 import type { Request, Response } from "express";
-import { createCustomerSchema, partyBalanceQuerySchema, updateCustomerSchema } from "@jibuks/domain";
+import { createCustomerSchema, updateCustomerSchema } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as service from "./service.js";
 
@@ -36,18 +36,6 @@ export async function create(req: Request, res: Response): Promise<void> {
     auditContextFrom(req),
   );
   res.status(201).json(customer);
-}
-
-export async function list(req: Request, res: Response): Promise<void> {
-  const { as_of } = partyBalanceQuerySchema.parse(req.query);
-  const customers = await service.listCustomers(req.tenantId!, as_of);
-  res.json({ data: customers });
-}
-
-export async function getOne(req: Request, res: Response): Promise<void> {
-  const { as_of } = partyBalanceQuerySchema.parse(req.query);
-  const customer = await service.getCustomer(req.tenantId!, req.params["id"]!, as_of);
-  res.json(customer);
 }
 
 export async function update(req: Request, res: Response): Promise<void> {

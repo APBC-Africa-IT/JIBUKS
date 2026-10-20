@@ -46,6 +46,28 @@ export const partyBalanceQuerySchema = z.object({
 
 export type PartyBalanceQueryDto = z.infer<typeof partyBalanceQuerySchema>;
 
+/** GET /customers -- the balance cutoff plus a search box. */
+export const listCustomersQuerySchema = partyBalanceQuerySchema.extend({
+  /** Case-insensitive match on name, phone or email. */
+  q: z.string().trim().min(1).max(100).optional(),
+});
+
+export type ListCustomersQueryDto = z.infer<typeof listCustomersQuerySchema>;
+
+/** GET /customers/{id}/transactions -- an optional inclusive date range;
+ * omit both for the customer's whole history. */
+export const customerTransactionsQuerySchema = z
+  .object({
+    from: accountingDateSchema.optional(),
+    to: accountingDateSchema.optional(),
+  })
+  .refine((r) => r.from === undefined || r.to === undefined || r.from <= r.to, {
+    message: "from must be on or before to",
+    path: ["to"],
+  });
+
+export type CustomerTransactionsQueryDto = z.infer<typeof customerTransactionsQuerySchema>;
+
 export const journalLineSchema = z
   .object({
     accountId: uuidSchema,

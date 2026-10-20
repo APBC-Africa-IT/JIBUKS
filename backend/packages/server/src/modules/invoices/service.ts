@@ -383,3 +383,10 @@ export async function getInvoicePdf(tenantId: string, invoiceId: string): Promis
   });
   return { filename: model.filename, pdf: await renderInvoicePdf(model) };
 }
+
+export type JournalDocumentLink = repository.JournalDocumentLinkRow;
+
+/** Which sales document each journal issued, cancelled or paid (customerLedger labels a customer's history with these). */
+export async function listJournalDocumentLinks(tenantId: string, journalIds: readonly string[]): Promise<JournalDocumentLink[]> {
+  return repository.listJournalDocumentLinks(tenantId, journalIds);
+}
