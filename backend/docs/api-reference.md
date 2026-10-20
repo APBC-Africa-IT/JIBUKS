@@ -710,13 +710,14 @@ Create a new customer for the tenant.
 
 ### `GET /customers` / `GET /customers/{id}` 
 
-List / fetch customers for the caller's tenant. Each customer includes a server-computed `balance_minor`.
+List / fetch customers for the caller's tenant. Each customer includes a server-computed `balance_minor` and `last_activity`.
 
 **Query Parameters:**
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `as_of` | string (date) | No | Point-in-time cutoff for `balance_minor` — only `POSTED` journals dated on or before this date count. Omit for the balance as of now. |
+| `as_of` | string (date) | No | Point-in-time cutoff for `balance_minor` and `last_activity` — only `POSTED` journals dated on or before this date count. Omit for the balance as of now. |
+| `q` | string | No | `GET /customers` only. Case-insensitive match on name, phone or email (1–100 characters). `%` and `_` are matched as text. |
 
 **Success Response:** `200 OK` 
 ```json
@@ -734,15 +735,98 @@ List / fetch customers for the caller's tenant. Each customer includes a server-
   "currency": "KES",
   "credit_limit_minor": "50000000",
   "created_at": "2026-07-30T10:25:50.110Z",
-  "balance_minor": "150000"
+  "balance_minor": "150000",
+  "last_activity": { "type": "INVOICE", "date": "2026-10-18", "document_number": "INV-000124" }
 }
 ```
+
+`last_activity` is the customer's latest posted transaction, or `null` if they have none. `type` is one of the transaction types listed under [`GET /customers/{id}/transactions`](#get-customersidtransactions); `document_number` is the invoice or credit note number (for a `PAYMENT`, the invoice it paid), else `null`. The Customers List screen's second line comes from this: `INVOICE` → "Invoice sent", `PAYMENT` → "Paid", and a negative `balance_minor` → "Credit available".
 
 `credit_limit_minor` comes back as a **string** (64-bit value), like `balance_minor`. `null` means no limit.
 
 `balance_minor` is the net of `POSTED` journal lines **tagged with this customer's id** (via `customerId` on a journal line — see [7.8 Journals](#78-journals)), on the debit side (AR-like: a customer owing money is a debit balance). It is not tied to any particular account — a customer can be tagged on lines against different accounts and the balance still nets correctly.
 
 **Error Response:** `400 VALIDATION_ERROR` (malformed `as_of`), `404 CUSTOMER_NOT_FOUND` — doesn't exist, or belongs to a different tenant (indistinguishable by design).
+
+---
+
+### `GET /customers/{id}/transactions`
+
+`customers:view`. The customer's history: every `POSTED` journal tagged with them, **oldest first**, one row per journal, with a running balance. This is what statements, the balance details report and customer activity are built from.
+
+**Query Parameters:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `from` | string (date) | No | First date included. Everything before it is summed into `opening_balance_minor`. |
+| `to` | string (date) | No | Last date included; must be on or after `from`. |
+
+Omit both for the whole history.
+
+**Success Response:** `200 OK`
+```json
+{
+  "customer_id": "6c1a2f3e-2b4a-4c1a-9c1a-2b4a4c1a9c1a",
+  "customer_name": "Jane Traders",
+  "currency": null,
+  "from": "2026-09-01",
+  "to": "2026-09-30",
+  "opening_balance_minor": "30000",
+  "total_debit_minor": "100000",
+  "total_credit_minor": "30000",
+  "closing_balance_minor": "100000",
+  "data": [
+    {
+      "journal_id": "…",
+      "journal_number": null,
+      "date": "2026-09-03",
+      "type": "INVOICE",
+      "document_id": "…",
+      "document_kind": "INVOICE",
+      "document_number": "INV-000124",
+      "credited_invoice_id": null,
+      "credited_invoice_number": null,
+      "payment_method": null,
+      "reference": "INV-000124",
+      "description": "Invoice INV-000124",
+      "debit_minor": "100000",
+      "credit_minor": "0",
+      "balance_minor": "130000"
+    },
+    {
+      "journal_id": "…",
+      "journal_number": null,
+      "date": "2026-09-10",
+      "type": "PAYMENT",
+      "document_id": "…",
+      "document_kind": "INVOICE",
+      "document_number": "INV-000124",
+      "credited_invoice_id": null,
+      "credited_invoice_number": null,
+      "payment_method": "MPESA",
+      "reference": "QAB12CD34E",
+      "description": "Payment for INV-000124",
+      "debit_minor": "0",
+      "credit_minor": "30000",
+      "balance_minor": "100000"
+    }
+  ]
+}
+```
+
+| `type` | Meaning | `document_*` |
+|---|---|---|
+| `OPENING_BALANCE` | From opening balances | null |
+| `INVOICE` / `CREDIT_NOTE` | Issued | The invoice / credit note; a credit note also has `credited_invoice_*` |
+| `INVOICE_CANCELLED` / `CREDIT_NOTE_CANCELLED` | The reversal posted when it was cancelled | The cancelled document |
+| `PAYMENT` | Money received | The invoice it was applied to, with `payment_method` and `reference`; null for an M-Pesa payment with no invoice |
+| `CREDIT_SALE` | A legacy `POST /credit-sales` | null |
+| `REVERSAL` | A reversed journal | null |
+| `JOURNAL` | Any other journal tagged with the customer | null |
+
+`debit_minor` is what a row added to what the customer owes, `credit_minor` what it took off; `balance_minor` is the balance after the row (positive = they owe the business). `closing_balance_minor` always equals `GET /customers/{id}?as_of=<to>`. Walk-in or named cash sales (`/sales-receipts`) don't appear: they're paid on the spot and never touch the customer's balance.
+
+**Error Response:** `400 VALIDATION_ERROR` (bad date, or `from` after `to`), `404 CUSTOMER_NOT_FOUND`.
 
 ---
 
@@ -766,7 +850,7 @@ Accepts every field from `POST /customers`. Returns the updated customer (withou
 
 ### Notes for consuming clients (Customers)
 
-- `balance_minor` is only present on `GET /customers` and `GET /customers/{id}` responses.
+- `balance_minor` and `last_activity` are only present on `GET /customers` and `GET /customers/{id}` responses.
 - For the guided invoice flow, see [7.9 Credit Sales](#79-credit-sales) — `POST /credit-sales` builds the balanced AR/revenue/tax journal for you. `POST /journals` directly with `customerId` set is still available for anything that doesn't fit that shape.
 
 ---

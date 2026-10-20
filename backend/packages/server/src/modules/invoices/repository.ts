@@ -581,6 +581,51 @@ export async function listInvoices(tenantId: string, filters: ListFilters): Prom
   });
 }
 
+/** How a journal relates to a sales document: it issued or cancelled one,
+ * or it is a payment applied to one. */
+export interface JournalDocumentLinkRow {
+  readonly journal_id: string;
+  readonly link: "ISSUE" | "CANCEL" | "PAYMENT";
+  readonly document_id: string;
+  readonly kind: InvoiceKind;
+  readonly number: string | null;
+  /** ISSUE of a credit note: the invoice it credits. */
+  readonly credited_invoice_id: string | null;
+  readonly credited_invoice_number: string | null;
+  /** PAYMENT only. */
+  readonly method: InvoicePaymentMethod | null;
+  readonly payment_reference: string | null;
+}
+
+/** The AR document links of the given journals. A credit note's issue
+ * journal also carries its allocation; only the ISSUE link is returned for it. */
+export async function listJournalDocumentLinks(tenantId: string, journalIds: readonly string[]): Promise<JournalDocumentLinkRow[]> {
+  if (journalIds.length === 0) {
+    return [];
+  }
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<JournalDocumentLinkRow>(
+      `SELECT i.journal_id, 'ISSUE' AS link, i.id AS document_id, i.kind, i.number,
+              o.id AS credited_invoice_id, o.number AS credited_invoice_number,
+              NULL AS method, NULL AS payment_reference
+         FROM invoices i
+         LEFT JOIN invoices o ON o.id = i.credited_invoice_id
+        WHERE i.direction = 'AR' AND i.journal_id = ANY($1::uuid[])
+       UNION ALL
+       SELECT i.cancel_journal_id, 'CANCEL', i.id, i.kind, i.number, NULL, NULL, NULL, NULL
+         FROM invoices i
+        WHERE i.direction = 'AR' AND i.cancel_journal_id = ANY($1::uuid[])
+       UNION ALL
+       SELECT a.journal_id, 'PAYMENT', i.id, i.kind, i.number, NULL, NULL, a.method, a.reference
+         FROM invoice_allocations a
+         JOIN invoices i ON i.id = a.invoice_id
+        WHERE i.direction = 'AR' AND a.credit_note_id IS NULL AND a.journal_id = ANY($1::uuid[])`,
+      [journalIds],
+    );
+    return result.rows;
+  });
+}
+
 // ---------------------------------------------------------------------
 // Transaction primitives -- called inside a service-opened withTenant.
 // ---------------------------------------------------------------------

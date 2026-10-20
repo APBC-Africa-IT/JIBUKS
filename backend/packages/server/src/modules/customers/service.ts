@@ -10,7 +10,13 @@
 import { DomainError } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
-import type { CustomerRow, CustomerWithBalanceRow, UpdateCustomerInput } from "./repository.js";
+import type {
+  CustomerLedgerJournalRow,
+  CustomerRow,
+  CustomerWithActivityRow,
+  ListCustomersFilters,
+  UpdateCustomerInput,
+} from "./repository.js";
 
 export interface CreateCustomerRequest {
   readonly tenantId: string;
@@ -43,11 +49,11 @@ export async function createCustomer(request: CreateCustomerRequest, audit: Audi
   );
 }
 
-export async function listCustomers(tenantId: string, asOf?: string): Promise<CustomerWithBalanceRow[]> {
-  return repository.listCustomers(tenantId, asOf);
+export async function listCustomers(tenantId: string, filters: ListCustomersFilters = {}): Promise<CustomerWithActivityRow[]> {
+  return repository.listCustomers(tenantId, filters);
 }
 
-export async function getCustomer(tenantId: string, customerId: string, asOf?: string): Promise<CustomerWithBalanceRow> {
+export async function getCustomer(tenantId: string, customerId: string, asOf?: string): Promise<CustomerWithActivityRow> {
   const customer = await repository.getCustomerById(tenantId, customerId, asOf);
   if (!customer) {
     throw new DomainError("CUSTOMER_NOT_FOUND", `Customer ${customerId} not found`);
@@ -82,4 +88,19 @@ export async function updateCustomer(
     throw new DomainError("CUSTOMER_NOT_FOUND", `Customer ${customerId} not found`);
   }
   return customer;
+}
+
+/** The customer's POSTED journals in [from, to], oldest first (customerLedger builds on this). */
+export async function listLedgerJournals(
+  tenantId: string,
+  customerId: string,
+  from?: string,
+  to?: string,
+): Promise<CustomerLedgerJournalRow[]> {
+  return repository.listLedgerJournals(tenantId, customerId, from, to);
+}
+
+/** The customer's balance from POSTED journals dated before `date`. */
+export async function balanceBefore(tenantId: string, customerId: string, date: string): Promise<number> {
+  return repository.balanceBefore(tenantId, customerId, date);
 }

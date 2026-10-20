@@ -1647,7 +1647,7 @@ paths:
           application/json:
             schema:
               type: object
-              description: Daraja's stkCallback payload ({ Body: { stkCallback: {...} } }).
+              description: "Daraja's stkCallback payload ({ Body: { stkCallback: {...} } })."
       responses:
         '200':
           description: Acknowledged
@@ -2168,9 +2168,16 @@ paths:
       summary: List customers
       description: >
         Returns every customer belonging to the caller's tenant, ordered by
-        name. Each customer includes balance_minor, computed server-side.
+        name. Each customer includes balance_minor and last_activity,
+        computed server-side.
       parameters:
         - $ref: '#/components/parameters/PartyAsOfQuery'
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive match on name, phone or email. LIKE wildcards (% and _) are matched as text.
+          schema: { type: string, minLength: 1, maxLength: 100 }
+          example: "jane"
       responses:
         '403':
           $ref: '#/components/responses/Forbidden'
@@ -2253,6 +2260,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+
+  /customers/{id}/transactions:
+    get:
+      tags: [Customers]
+      summary: A customer's transaction history
+      description: >
+        Requires `customers:view`. Every POSTED journal tagged with the
+        customer, oldest first, one row per journal, with a running balance.
+        Each row is named by the sales document behind it (invoice, credit
+        note, cancellation, payment applied to an invoice); journals without
+        one are named from their source (opening balance, credit sale,
+        reversal, manual journal). closing_balance_minor always equals
+        GET /customers/{id}?as_of=<to>. Omit from and to for the whole history.
+      parameters:
+        - $ref: '#/components/parameters/CustomerIdPath'
+        - name: from
+          in: query
+          required: false
+          description: First date included. The balance before it is opening_balance_minor.
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          description: Last date included. Must be on or after from.
+          schema: { type: string, format: date }
+      responses:
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '200':
+          description: The customer's transactions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerTransactions'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /customers/{id}/deactivate:
     post:
@@ -4392,6 +4439,108 @@ components:
             debit_minor/credit_minor. Present only on responses from
             GET /customers and GET /customers/{id}.
           example: "150000"
+        last_activity:
+          nullable: true
+          description: >
+            The customer's latest POSTED transaction (as of as_of if given);
+            null if they have none. Present only on GET /customers and
+            GET /customers/{id}.
+          allOf:
+            - $ref: '#/components/schemas/CustomerLastActivity'
+
+    CustomerTransactionType:
+      type: string
+      enum: [OPENING_BALANCE, INVOICE, CREDIT_NOTE, INVOICE_CANCELLED, CREDIT_NOTE_CANCELLED, PAYMENT, CREDIT_SALE, REVERSAL, JOURNAL]
+      description: >
+        INVOICE / CREDIT_NOTE: issued. *_CANCELLED: the cancellation of one.
+        PAYMENT: money received (against an invoice, or an M-Pesa payment with
+        none). CREDIT_SALE: a legacy POST /credit-sales. OPENING_BALANCE: from
+        opening balances. REVERSAL: a reversed journal. JOURNAL: any other
+        journal tagged with the customer.
+
+    CustomerLastActivity:
+      type: object
+      properties:
+        type: { $ref: '#/components/schemas/CustomerTransactionType' }
+        date: { type: string, format: date }
+        document_number:
+          type: string
+          nullable: true
+          description: The invoice or credit note number (for a PAYMENT, the invoice it paid).
+          example: "INV-000124"
+
+    CustomerTransaction:
+      type: object
+      properties:
+        journal_id: { type: string, format: uuid }
+        journal_number:
+          type: string
+          nullable: true
+          description: JE- number; set on manual journals only.
+        date: { type: string, format: date }
+        type: { $ref: '#/components/schemas/CustomerTransactionType' }
+        document_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The invoice or credit note issued or cancelled, or the invoice a payment was applied to.
+        document_kind:
+          type: string
+          nullable: true
+          enum: [INVOICE, CREDIT_NOTE, PROFORMA, null]
+        document_number: { type: string, nullable: true }
+        credited_invoice_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: CREDIT_NOTE rows only -- the invoice it credits.
+        credited_invoice_number: { type: string, nullable: true }
+        payment_method:
+          type: string
+          nullable: true
+          enum: [CASH, BANK, MPESA, OTHER, null]
+          description: PAYMENT rows recorded against an invoice.
+        reference:
+          type: string
+          nullable: true
+          description: PAYMENT rows -- the payment's reference (cheque number, M-Pesa code); otherwise the journal's reference.
+        description: { type: string }
+        debit_minor:
+          type: string
+          description: What the row added to the balance.
+          example: "100000"
+        credit_minor:
+          type: string
+          description: What the row took off the balance.
+          example: "0"
+        balance_minor:
+          type: string
+          description: The balance after this row; positive = the customer owes the business.
+          example: "130000"
+
+    CustomerTransactions:
+      type: object
+      properties:
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        currency:
+          type: string
+          nullable: true
+          description: Null means the tenant's base currency.
+        from: { type: string, format: date, nullable: true }
+        to: { type: string, format: date, nullable: true }
+        opening_balance_minor:
+          type: string
+          description: The balance before from; "0" when from is omitted.
+        total_debit_minor: { type: string }
+        total_credit_minor: { type: string }
+        closing_balance_minor:
+          type: string
+          description: The balance at the end of the range.
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomerTransaction'
 
     # -- Suppliers --
     UpdateSupplierRequest:
