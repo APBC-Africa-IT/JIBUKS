@@ -27,3 +27,5 @@ invoicesRouter.post("/:id/payments", requirePermission("payments:create"), async
 invoicesRouter.post("/:id/apply-credit", requirePermission("payments:create"), asyncHandler(creditControllers.applyCredit));
 invoicesRouter.post("/:id/credit-notes", requirePermission("invoices:create"), asyncHandler(controllers.createCreditNote));
 invoicesRouter.post("/:id/convert", requirePermission("invoices:create"), asyncHandler(controllers.convert));
+invoicesRouter.post("/:id/accept", requirePermission("invoices:create"), asyncHandler(controllers.accept));
+invoicesRouter.post("/:id/decline", requirePermission("invoices:create"), asyncHandler(controllers.decline));

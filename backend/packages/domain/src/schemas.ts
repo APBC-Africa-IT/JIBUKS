@@ -12,7 +12,7 @@ import { ACCOUNT_TYPES } from "./accounts.js";
 import { JOURNAL_SOURCES } from "./journal.js";
 import { PERMISSIONS, SYSTEM_ROLE_KEYS } from "./permissions.js";
 import { ASSIGNABLE_SYSTEM_ACCOUNT_KEYS, CHART_TEMPLATE_KEYS } from "./chartTemplates.js";
-import { BILL_KINDS, INVOICE_PAYMENT_METHODS, INVOICE_VIEW_STATUSES, SALES_KINDS, TAX_MODES } from "./invoices.js";
+import { BILL_KINDS, ESTIMATE_STATUSES, INVOICE_PAYMENT_METHODS, INVOICE_VIEW_STATUSES, SALES_KINDS, TAX_MODES } from "./invoices.js";
 import { ITEM_TYPES } from "./items.js";
 
 export const uuidSchema = z.string().uuid();
@@ -813,6 +813,14 @@ export const recordInvoicePaymentSchema = z.object({
 
 export type RecordInvoicePaymentDto = z.infer<typeof recordInvoicePaymentSchema>;
 
+/** POST /invoices/{id}/accept and /decline -- the customer's answer to an estimate. */
+export const estimateResponseSchema = z.object({
+  /** e.g. "Accepted by phone", "Price too high". */
+  note: z.string().trim().min(1).max(500).optional(),
+});
+
+export type EstimateResponseDto = z.infer<typeof estimateResponseSchema>;
+
 /** POST /invoices/{id}/convert -- pro-forma to a DRAFT invoice. */
 export const convertProformaSchema = z.object({
   clientUuid: uuidSchema,
@@ -826,10 +834,14 @@ export const convertProformaSchema = z.object({
 export const listInvoicesQuerySchema = paginationSchema.extend({
   status: z.enum(INVOICE_VIEW_STATUSES).optional(),
   kind: z.enum(SALES_KINDS).optional(),
+  /** Estimates only: implies kind PROFORMA. */
+  estimate_status: z.enum(ESTIMATE_STATUSES).optional(),
   customer_id: uuidSchema.optional(),
   /** issue_date range, inclusive. */
   from: accountingDateSchema.optional(),
   to: accountingDateSchema.optional(),
+  /** Case-insensitive match on the customer's name, the number or the reference. */
+  q: z.string().trim().min(1).max(100).optional(),
 });
 
 export type ListInvoicesQueryDto = z.infer<typeof listInvoicesQuerySchema>;

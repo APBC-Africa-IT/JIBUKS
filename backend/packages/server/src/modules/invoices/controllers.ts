@@ -9,6 +9,7 @@ import {
   convertProformaSchema,
   createCreditNoteSchema,
   createInvoiceSchema,
+  estimateResponseSchema,
   issueInvoiceSchema,
   listInvoicesQuerySchema,
   recordInvoicePaymentSchema,
@@ -64,6 +65,8 @@ export async function list(req: Request, res: Response): Promise<void> {
     defined({
       status: query.status,
       kind: query.kind,
+      estimateStatus: query.estimate_status,
+      q: query.q,
       customerId: query.customer_id,
       from: query.from,
       to: query.to,
@@ -163,4 +166,15 @@ export async function pdf(req: Request, res: Response): Promise<void> {
     .set("Content-Disposition", `inline; filename="${filename}"`)
     .set("Cache-Control", "private, no-store")
     .send(body);
+}
+
+/** The customer's answer to an estimate (pro-forma). */
+export async function accept(req: Request, res: Response): Promise<void> {
+  const { note } = estimateResponseSchema.parse(req.body ?? {});
+  res.json(await service.respondToEstimate(req.tenantId!, req.params["id"]!, "ACCEPTED", note, auditContextFrom(req)));
+}
+
+export async function decline(req: Request, res: Response): Promise<void> {
+  const { note } = estimateResponseSchema.parse(req.body ?? {});
+  res.json(await service.respondToEstimate(req.tenantId!, req.params["id"]!, "DECLINED", note, auditContextFrom(req)));
 }

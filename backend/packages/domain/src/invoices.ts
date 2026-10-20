@@ -29,6 +29,31 @@ export const INVOICE_VIEW_STATUSES = [...INVOICE_STATUSES, "OVERDUE"] as const;
 export type InvoiceViewStatus = (typeof INVOICE_VIEW_STATUSES)[number];
 
 /**
+ * An estimate's (pro-forma's) status on the Estimates screen, derived on
+ * read: PENDING = issued and not answered yet; EXPIRED = pending past its
+ * due date ("valid until"); CONVERTED = an invoice was made from it.
+ */
+export const ESTIMATE_STATUSES = ["DRAFT", "PENDING", "ACCEPTED", "DECLINED", "EXPIRED", "CONVERTED", "CANCELLED"] as const;
+export type EstimateStatus = (typeof ESTIMATE_STATUSES)[number];
+
+export const ESTIMATE_RESPONSES = ["ACCEPTED", "DECLINED"] as const;
+export type EstimateResponse = (typeof ESTIMATE_RESPONSES)[number];
+
+export function estimateStatus(
+  status: InvoiceViewStatus,
+  response: EstimateResponse | null,
+  dueDate: string | null,
+  converted: boolean,
+  today: string,
+): EstimateStatus {
+  if (status === "CANCELLED") return "CANCELLED";
+  if (converted) return "CONVERTED";
+  if (status === "DRAFT") return "DRAFT";
+  if (response) return response;
+  return dueDate !== null && dueDate < today ? "EXPIRED" : "PENDING";
+}
+
+/**
  * EXCLUSIVE: unit prices are before tax; tax is added on top.
  * INCLUSIVE: unit prices already include tax; tax is extracted from them.
  * NONE: no tax on any line.
