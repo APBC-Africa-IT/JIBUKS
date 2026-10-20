@@ -14,6 +14,8 @@
 import type { InvoiceKind, InvoicePaymentMethod } from "@jibuks/domain";
 import * as customersService from "../customers/service.js";
 import type { CustomerLedgerJournalRow, CustomerWithActivityRow, ListCustomersFilters } from "../customers/repository.js";
+import * as customerPaymentsService from "../customerPayments/service.js";
+import type { JournalPayment } from "../customerPayments/service.js";
 import * as invoicesService from "../invoices/service.js";
 import type { JournalDocumentLink } from "../invoices/service.js";
 
@@ -32,7 +34,10 @@ export type TransactionType = (typeof TRANSACTION_TYPES)[number];
 
 interface Label {
   readonly type: TransactionType;
+  /** The invoice or credit note the journal issued or cancelled. */
   readonly link: JournalDocumentLink | null;
+  /** The customer payment the journal posted. */
+  readonly payment: JournalPayment | null;
 }
 
 const JOURNAL_SOURCE_TYPES: Readonly<Record<string, TransactionType>> = {
@@ -42,38 +47,39 @@ const JOURNAL_SOURCE_TYPES: Readonly<Record<string, TransactionType>> = {
   REVERSAL: "REVERSAL",
 };
 
-function labelFrom(link: JournalDocumentLink | undefined, source: string): Label {
-  if (!link) {
-    return { type: JOURNAL_SOURCE_TYPES[source] ?? "JOURNAL", link: null };
+function labelFrom(link: JournalDocumentLink | undefined, payment: JournalPayment | undefined, source: string): Label {
+  if (payment) {
+    return { type: "PAYMENT", link: null, payment };
   }
-  if (link.link === "PAYMENT") {
-    return { type: "PAYMENT", link };
+  if (!link) {
+    return { type: JOURNAL_SOURCE_TYPES[source] ?? "JOURNAL", link: null, payment: null };
   }
   const credit = link.kind === "CREDIT_NOTE";
   if (link.link === "CANCEL") {
-    return { type: credit ? "CREDIT_NOTE_CANCELLED" : "INVOICE_CANCELLED", link };
+    return { type: credit ? "CREDIT_NOTE_CANCELLED" : "INVOICE_CANCELLED", link, payment: null };
   }
-  return { type: credit ? "CREDIT_NOTE" : "INVOICE", link };
+  return { type: credit ? "CREDIT_NOTE" : "INVOICE", link, payment: null };
 }
 
-/** Labels journals by id. A journal with an ISSUE or CANCEL link is named by
- * that over any PAYMENT link it also has. */
+/** Labels journals by id: by the customer payment or sales document behind each, else by its source. */
 async function labelJournals(
   tenantId: string,
   journals: readonly { readonly id: string; readonly source: string }[],
 ): Promise<Map<string, Label>> {
-  const links = await invoicesService.listJournalDocumentLinks(
-    tenantId,
-    journals.map((j) => j.id),
-  );
-  const byJournal = new Map<string, JournalDocumentLink>();
-  for (const link of links) {
-    const existing = byJournal.get(link.journal_id);
-    if (!existing || existing.link === "PAYMENT") {
-      byJournal.set(link.journal_id, link);
-    }
-  }
-  return new Map(journals.map((j) => [j.id, labelFrom(byJournal.get(j.id), j.source)]));
+  const ids = journals.map((j) => j.id);
+  const [links, payments] = await Promise.all([
+    invoicesService.listJournalDocumentLinks(tenantId, ids),
+    customerPaymentsService.listJournalPayments(tenantId, ids),
+  ]);
+  const byJournal = new Map(links.map((link) => [link.journal_id, link]));
+  return new Map(journals.map((j) => [j.id, labelFrom(byJournal.get(j.id), payments.get(j.id), j.source)]));
+}
+
+/** An invoice a payment row was applied to. */
+export interface AppliedInvoice {
+  readonly invoice_id: string;
+  readonly invoice_number: string;
+  readonly amount_minor: string;
 }
 
 export interface CustomerTransaction {
@@ -81,17 +87,21 @@ export interface CustomerTransaction {
   readonly journal_number: string | null;
   readonly date: string;
   readonly type: TransactionType;
-  /** The invoice or credit note the row issued or cancelled, or the invoice a payment was applied to. */
+  /** The invoice or credit note the row issued or cancelled, or the customer payment (CUSTOMER_PAYMENT) it recorded. */
   readonly document_id: string | null;
-  readonly document_kind: InvoiceKind | null;
+  readonly document_kind: InvoiceKind | "CUSTOMER_PAYMENT" | null;
   readonly document_number: string | null;
   /** CREDIT_NOTE rows: the invoice it credits. */
   readonly credited_invoice_id: string | null;
   readonly credited_invoice_number: string | null;
-  /** PAYMENT rows recorded against an invoice: how it was paid and its reference (cheque number, M-Pesa code). */
+  /** PAYMENT rows from a customer payment: how it was paid; `reference` is its cheque number or M-Pesa code. */
   readonly payment_method: InvoicePaymentMethod | null;
   readonly reference: string | null;
   readonly description: string;
+  /** PAYMENT rows: the invoices it was applied to so far ([] on other rows). */
+  readonly applied_invoices: AppliedInvoice[];
+  /** PAYMENT rows: what is still unapplied, i.e. customer credit (null on other rows). */
+  readonly unapplied_minor: string | null;
   /** What the row added to the balance (invoices, opening balances). */
   readonly debit_minor: string;
   /** What it took off (payments, credit notes, cancellations). */
@@ -144,21 +154,26 @@ export async function getCustomerTransactions(request: CustomerTransactionsReque
     balance += debit - credit;
     totalDebit += debit;
     totalCredit += credit;
-    const { type, link } = labels.get(journal.journal_id)!;
-    const payment = link?.link === "PAYMENT" ? link : null;
+    const { type, link, payment } = labels.get(journal.journal_id)!;
     return {
       journal_id: journal.journal_id,
       journal_number: journal.journal_number,
       date: journal.date,
       type,
-      document_id: link?.document_id ?? null,
-      document_kind: link?.kind ?? null,
-      document_number: link?.number ?? null,
+      document_id: payment?.payment.id ?? link?.document_id ?? null,
+      document_kind: payment ? "CUSTOMER_PAYMENT" : (link?.kind ?? null),
+      document_number: payment?.payment.number ?? link?.number ?? null,
       credited_invoice_id: link?.credited_invoice_id ?? null,
       credited_invoice_number: link?.credited_invoice_number ?? null,
-      payment_method: payment?.method ?? null,
-      reference: payment ? payment.payment_reference : journal.reference,
+      payment_method: payment?.payment.method ?? null,
+      reference: payment ? payment.payment.reference : journal.reference,
       description: journal.description,
+      applied_invoices: (payment?.allocations ?? []).map((a) => ({
+        invoice_id: a.invoice_id,
+        invoice_number: a.invoice_number,
+        amount_minor: a.amount_minor,
+      })),
+      unapplied_minor: payment?.payment.unapplied_minor ?? null,
       debit_minor: String(debit),
       credit_minor: String(credit),
       balance_minor: String(balance),
@@ -217,7 +232,8 @@ async function withLastActivity(tenantId: string, customers: readonly CustomerWi
       if (!label || !date) {
         return { ...customer, last_activity: null };
       }
-      return { ...customer, last_activity: { type: label.type, date, document_number: label.link?.number ?? null } };
+      const documentNumber = label.payment?.payment.number ?? label.link?.number ?? null;
+      return { ...customer, last_activity: { type: label.type, date, document_number: documentNumber } };
     },
   );
 }

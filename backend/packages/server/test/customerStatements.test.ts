@@ -128,7 +128,11 @@ describe("POST /api/v1/customer-statements", () => {
       sent_at: null,
     });
     expect(statement.transactions.map((t: { type: string }) => t.type)).toEqual(["INVOICE", "PAYMENT", "CREDIT_SALE"]);
-    expect(statement.transactions[1]).toMatchObject({ document_number: invoice.number, payment_method: "MPESA" });
+    expect(statement.transactions[1]).toMatchObject({
+      document_kind: "CUSTOMER_PAYMENT",
+      payment_method: "MPESA",
+      applied_invoices: [expect.objectContaining({ invoice_id: invoice.id, invoice_number: invoice.number })],
+    });
     // Invoice not yet due: all current; the credit sale can't be aged.
     expect(statement.aging).toEqual({
       current_minor: "70000",
@@ -290,6 +294,8 @@ describe("buildStatementPdfModel", () => {
       payment_method: null,
       reference: null,
       description: "",
+      applied_invoices: [],
+      unapplied_minor: null,
       debit_minor: "0",
       credit_minor: "0",
       balance_minor: "0",
@@ -377,6 +383,20 @@ describe("buildStatementPdfModel", () => {
     expect(describeTransaction(transaction({ type: "INVOICE_CANCELLED", document_number: "INV-000125" }))).toBe("Invoice INV-000125 cancelled");
     expect(describeTransaction(transaction({ type: "OPENING_BALANCE" }))).toBe("Opening balance");
     expect(describeTransaction(transaction({ type: "PAYMENT" }))).toBe("Payment");
+    expect(
+      describeTransaction(
+        transaction({
+          type: "PAYMENT",
+          document_kind: "CUSTOMER_PAYMENT",
+          document_number: "PMT-000003",
+          payment_method: "CASH",
+          applied_invoices: [
+            { invoice_id: randomUUID(), invoice_number: "INV-000124", amount_minor: "100" },
+            { invoice_id: randomUUID(), invoice_number: "INV-000125", amount_minor: "100" },
+          ],
+        }),
+      ),
+    ).toBe("Payment PMT-000003 (Cash) - INV-000124, INV-000125");
     expect(describeTransaction(transaction({ type: "JOURNAL", description: "Write-off" }))).toBe("Write-off");
   });
 });

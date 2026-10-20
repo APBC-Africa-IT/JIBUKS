@@ -1297,3 +1297,81 @@ export const listStatementsQuerySchema = paginationSchema.extend({
 });
 
 export type ListStatementsQueryDto = z.infer<typeof listStatementsQuerySchema>;
+
+// ---------------------------------------------------------------------
+// Customer payments (Receive Payment)
+// ---------------------------------------------------------------------
+
+/** POST /customer-payments -- money received from a customer, applied to their invoices. */
+export const createCustomerPaymentSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    customerId: uuidSchema,
+    amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+    date: accountingDateSchema,
+    method: z.enum(INVOICE_PAYMENT_METHODS).default("CASH"),
+    /** Where the money went. Omit for the business's Cash, Bank or M-Pesa account (by method); required for OTHER. */
+    receivedAccountId: uuidSchema.optional(),
+    /** e.g. a cheque number or M-Pesa receipt code. */
+    reference: z.string().trim().min(1).max(100).optional(),
+    /** Internal note. */
+    memo: z.string().trim().min(1).max(1000).optional(),
+    /**
+     * The invoices it pays and how much of each. Omit to apply it to the
+     * customer's open invoices oldest due date first; [] to keep it all as
+     * credit. Whatever isn't applied stays on the payment as credit.
+     */
+    allocations: z
+      .array(
+        z.object({
+          invoiceId: uuidSchema,
+          amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+        }),
+      )
+      .max(200)
+      .optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.method === "OTHER" && body.receivedAccountId === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["receivedAccountId"],
+        message: "Required when method is OTHER -- there is no default account for it",
+      });
+    }
+    if (body.allocations) {
+      const total = body.allocations.reduce((sum, a) => sum + a.amountMinor, 0);
+      if (total > body.amountMinor) {
+        ctx.addIssue({ code: "custom", path: ["allocations"], message: "The allocations add up to more than amountMinor" });
+      }
+      const seen = new Set<string>();
+      body.allocations.forEach((a, i) => {
+        if (seen.has(a.invoiceId)) {
+          ctx.addIssue({ code: "custom", path: ["allocations", i, "invoiceId"], message: "Each invoice may appear only once" });
+        }
+        seen.add(a.invoiceId);
+      });
+    }
+  });
+
+export type CreateCustomerPaymentDto = z.infer<typeof createCustomerPaymentSchema>;
+
+/** GET /customer-payments -- newest first, cursor pagination. */
+export const listCustomerPaymentsQuerySchema = paginationSchema
+  .extend({
+    customer_id: uuidSchema.optional(),
+    method: z.enum(INVOICE_PAYMENT_METHODS).optional(),
+    /** Payment date range, inclusive. */
+    from: accountingDateSchema.optional(),
+    to: accountingDateSchema.optional(),
+    /** "true" for payments with credit left on them. */
+    has_credit: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
+    /** Case-insensitive match on the customer's name, the payment number or its reference. */
+    q: z.string().trim().min(1).max(100).optional(),
+  })
+  .refine((r) => r.from === undefined || r.to === undefined || r.from <= r.to, {
+    message: "from must be on or before to",
+    path: ["to"],
+  });
+
+export type ListCustomerPaymentsQueryDto = z.infer<typeof listCustomerPaymentsQuerySchema>;

@@ -1,0 +1,39 @@
+meta {
+  name: Receive Payment
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/customer-payments
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "customerId": "{{customerId}}",
+    "amountMinor": 4500000,
+    "date": "2026-10-20",
+    "method": "MPESA",
+    "reference": "QAB12CD34E",
+    "memo": "Paid for September"
+  }
+}
+
+vars:pre-request {
+  customerId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  No allocations: applied to the customer's open invoices, oldest due date first.
+  Add "allocations": [{ "invoiceId": "…", "amountMinor": 2000000 }] to choose invoices,
+  or "allocations": [] to keep it all as credit. Anything not applied stays as credit.
+}

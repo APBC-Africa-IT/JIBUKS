@@ -38,6 +38,7 @@ import { hooksRouter, paymentsRouter } from "./modules/payments/routes.js";
 import { tenantRouter } from "./modules/tenants/routes.js";
 import { invoicesRouter } from "./modules/invoices/routes.js";
 import { customerStatementsRouter } from "./modules/customerStatements/routes.js";
+import { customerPaymentsRouter } from "./modules/customerPayments/routes.js";
 import { supplierBillsRouter } from "./modules/supplierBills/routes.js";
 import { openingBalancesRouter } from "./modules/openingBalances/routes.js";
 import { requireAuth0Token } from "./middleware/auth0.js";
@@ -94,6 +95,7 @@ export function createApp(): Express {
   app.use("/api/v1/payables-aging", payablesAgingRouter);
   app.use("/api/v1/invoices", invoicesRouter);
   app.use("/api/v1/customer-statements", customerStatementsRouter);
+  app.use("/api/v1/customer-payments", customerPaymentsRouter);
   app.use("/api/v1/supplier-bills", supplierBillsRouter);
   app.use("/api/v1/payments", paymentsRouter);
   // Provider callbacks (no bearer token) -- see payments/routes.ts.

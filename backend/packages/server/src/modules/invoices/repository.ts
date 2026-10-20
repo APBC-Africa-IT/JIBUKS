@@ -118,6 +118,8 @@ export interface AllocationRow {
   readonly journal_id: string;
   readonly payment_id: string | null;
   readonly credit_note_id: string | null;
+  /** The customer payment this applies (customerPayments module); null on credit notes and bill payments. */
+  readonly customer_payment_id: string | null;
   readonly created_by: string;
   readonly created_at: string;
 }
@@ -581,24 +583,20 @@ export async function listInvoices(tenantId: string, filters: ListFilters): Prom
   });
 }
 
-/** How a journal relates to a sales document: it issued or cancelled one,
- * or it is a payment applied to one. */
+/** How a journal relates to a sales document: it issued or cancelled one.
+ * (Payments are named by the customerPayments module.) */
 export interface JournalDocumentLinkRow {
   readonly journal_id: string;
-  readonly link: "ISSUE" | "CANCEL" | "PAYMENT";
+  readonly link: "ISSUE" | "CANCEL";
   readonly document_id: string;
   readonly kind: InvoiceKind;
   readonly number: string | null;
   /** ISSUE of a credit note: the invoice it credits. */
   readonly credited_invoice_id: string | null;
   readonly credited_invoice_number: string | null;
-  /** PAYMENT only. */
-  readonly method: InvoicePaymentMethod | null;
-  readonly payment_reference: string | null;
 }
 
-/** The AR document links of the given journals. A credit note's issue
- * journal also carries its allocation; only the ISSUE link is returned for it. */
+/** The AR documents the given journals issued or cancelled. */
 export async function listJournalDocumentLinks(tenantId: string, journalIds: readonly string[]): Promise<JournalDocumentLinkRow[]> {
   if (journalIds.length === 0) {
     return [];
@@ -606,20 +604,14 @@ export async function listJournalDocumentLinks(tenantId: string, journalIds: rea
   return readAsTenant(tenantId, async (client) => {
     const result = await client.query<JournalDocumentLinkRow>(
       `SELECT i.journal_id, 'ISSUE' AS link, i.id AS document_id, i.kind, i.number,
-              o.id AS credited_invoice_id, o.number AS credited_invoice_number,
-              NULL AS method, NULL AS payment_reference
+              o.id AS credited_invoice_id, o.number AS credited_invoice_number
          FROM invoices i
          LEFT JOIN invoices o ON o.id = i.credited_invoice_id
         WHERE i.direction = 'AR' AND i.journal_id = ANY($1::uuid[])
        UNION ALL
-       SELECT i.cancel_journal_id, 'CANCEL', i.id, i.kind, i.number, NULL, NULL, NULL, NULL
+       SELECT i.cancel_journal_id, 'CANCEL', i.id, i.kind, i.number, NULL, NULL
          FROM invoices i
-        WHERE i.direction = 'AR' AND i.cancel_journal_id = ANY($1::uuid[])
-       UNION ALL
-       SELECT a.journal_id, 'PAYMENT', i.id, i.kind, i.number, NULL, NULL, a.method, a.reference
-         FROM invoice_allocations a
-         JOIN invoices i ON i.id = a.invoice_id
-        WHERE i.direction = 'AR' AND a.credit_note_id IS NULL AND a.journal_id = ANY($1::uuid[])`,
+        WHERE i.direction = 'AR' AND i.cancel_journal_id = ANY($1::uuid[])`,
       [journalIds],
     );
     return result.rows;
@@ -720,6 +712,7 @@ export interface InsertAllocationInput {
   readonly journalId: string;
   readonly paymentId?: string;
   readonly creditNoteId?: string;
+  readonly customerPaymentId?: string;
 }
 
 /**
@@ -736,8 +729,8 @@ export async function applyAllocation(
   const allocationResult = await client.query<AllocationRow>(
     `INSERT INTO invoice_allocations
        (id, tenant_id, client_uuid, invoice_id, method, amount_minor, unapplied_minor, date,
-        received_account_id, reference, journal_id, payment_id, credit_note_id, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        received_account_id, reference, journal_id, payment_id, credit_note_id, customer_payment_id, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
      RETURNING *`,
     [
       randomUUID(),
@@ -753,6 +746,7 @@ export async function applyAllocation(
       input.journalId,
       input.paymentId ?? null,
       input.creditNoteId ?? null,
+      input.customerPaymentId ?? null,
       audit.actorUserId,
     ],
   );
@@ -789,6 +783,19 @@ export async function applyAllocation(
     context: audit,
   });
   return { invoice, allocation };
+}
+
+/** A customer's invoices that can take a payment now, oldest due first (issue date when there's no due date). */
+export async function listPayableInvoices(tenantId: string, customerId: string): Promise<InvoiceRow[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<InvoiceRow>(
+      `SELECT * FROM invoices
+        WHERE direction = 'AR' AND kind = 'INVOICE' AND status IN ('ISSUED', 'PART_PAID') AND customer_id = $1
+        ORDER BY COALESCE(due_date, issue_date), issue_date, created_at, id`,
+      [customerId],
+    );
+    return result.rows;
+  });
 }
 
 export interface OpenInvoiceRow {

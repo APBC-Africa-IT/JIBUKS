@@ -162,6 +162,11 @@ tags:
       with default price, unit and accounts. Sub-items via parentItemId.
       Never deleted, only deactivated. trackStock is stored; stock
       quantities come later.
+  - name: Customer Payments
+    description: >
+      Money received from a customer (PMT-000001), applied to any of their
+      invoices -- oldest due first by default -- with the rest kept as
+      credit. Every AR payment is one, however it is recorded.
   - name: Customer Statements
     description: >
       Statements as numbered snapshots (ST-000001) of a customer's
@@ -1304,6 +1309,141 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /customer-payments:
+    post:
+      tags: [Customer Payments]
+      summary: Receive a payment from a customer
+      description: >
+        Requires `payments:create`. Posts one journal (Dr money account, Cr
+        receivables tagged with the customer) and applies it to the
+        customer's invoices: the allocations sent, or with none, their open
+        invoices oldest due date first. allocations [] keeps it all as
+        credit. What isn't applied stays on the payment as unapplied_minor.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCustomerPaymentRequest'
+            example:
+              clientUuid: "9a1c2d3e-4f50-4c6d-8e9f-0a1b2c3d4e5f"
+              customerId: "6c1a2f3e-2b4a-4c1a-9c1a-2b4a4c1a9c1a"
+              amountMinor: 4500000
+              date: "2026-10-20"
+              method: MPESA
+              reference: QAB12CD34E
+      responses:
+        '201':
+          description: The payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerPaymentDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: DUPLICATE_VALUE -- clientUuid already used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: >
+            INVOICE_OVERPAYMENT, INVOICE_INVALID_STATE, PAYMENT_ALLOCATION_INVALID
+            or SYSTEM_ACCOUNT_MISSING. Nothing is posted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    get:
+      tags: [Customer Payments]
+      summary: List payments received
+      description: Requires `payments:view`. Newest first, cursor-paged. Items have no allocations.
+      parameters:
+        - name: customer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: method
+          in: query
+          required: false
+          schema: { type: string, enum: [CASH, BANK, MPESA, OTHER] }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: has_credit
+          in: query
+          required: false
+          description: true = payments with credit left on them.
+          schema: { type: string, enum: ["true", "false"] }
+        - name: q
+          in: query
+          required: false
+          description: Customer name, payment number or reference; case-insensitive.
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of payments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CustomerPayment'
+                  next_cursor: { type: string, nullable: true }
+                  has_more: { type: boolean }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /customer-payments/{id}:
+    get:
+      tags: [Customer Payments]
+      summary: Get a payment with its allocations
+      description: Requires `payments:view`.
+      parameters:
+        - $ref: '#/components/parameters/CustomerPaymentIdPath'
+      responses:
+        '200':
+          description: The payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerPaymentDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /customer-statements:
     post:
@@ -3442,6 +3582,11 @@ components:
       schema:
         type: string
         format: uuid
+    CustomerPaymentIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     StatementIdPath:
       name: id
       in: path
@@ -4147,13 +4292,20 @@ components:
         id: { type: string, format: uuid }
         method: { type: string, enum: [CASH, BANK, MPESA, OTHER, CREDIT_NOTE] }
         amount_minor: { type: string, description: Applied to the invoice. }
-        unapplied_minor: { type: string, description: Received beyond the balance (M-Pesa only); left as customer credit. }
+        unapplied_minor:
+          type: string
+          description: Legacy -- "0" on allocations made now; credit is kept on the customer payment (CustomerPayment.unapplied_minor).
         date: { type: string, format: date }
         received_account_id: { type: string, format: uuid, nullable: true }
         reference: { type: string, nullable: true }
         journal_id: { type: string, format: uuid }
         payment_id: { type: string, format: uuid, nullable: true }
         credit_note_id: { type: string, format: uuid, nullable: true }
+        customer_payment_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The customer payment (GET /customer-payments/{id}) this applies; null on credit notes.
         created_at: { type: string, format: date-time }
     InvoiceDetail:
       allOf:
@@ -4615,6 +4767,76 @@ components:
           allOf:
             - $ref: '#/components/schemas/CustomerLastActivity'
 
+    CreateCustomerPaymentRequest:
+      type: object
+      required: [clientUuid, customerId, amountMinor, date]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        amountMinor: { type: integer, minimum: 1 }
+        date: { type: string, format: date }
+        method: { type: string, enum: [CASH, BANK, MPESA, OTHER], default: CASH }
+        receivedAccountId:
+          type: string
+          format: uuid
+          description: Default the business's Cash, Bank or M-Pesa account for method; required for OTHER.
+        reference: { type: string, maxLength: 100 }
+        memo: { type: string, maxLength: 1000 }
+        allocations:
+          type: array
+          maxItems: 200
+          description: >
+            Omit to pay open invoices oldest due first; [] keeps it all as
+            credit. Each amount at most the invoice's balance; together at
+            most amountMinor; each invoice once.
+          items:
+            type: object
+            required: [invoiceId, amountMinor]
+            properties:
+              invoiceId: { type: string, format: uuid }
+              amountMinor: { type: integer, minimum: 1 }
+
+    CustomerPayment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: string, example: "PMT-000031" }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        date: { type: string, format: date }
+        currency: { type: string, example: KES }
+        amount_minor: { type: string }
+        applied_minor: { type: string, description: Applied to invoices. }
+        unapplied_minor: { type: string, description: Customer credit still on the payment. }
+        method: { type: string, enum: [CASH, BANK, MPESA, OTHER] }
+        received_account_id: { type: string, format: uuid, nullable: true }
+        reference: { type: string, nullable: true }
+        memo: { type: string, nullable: true }
+        journal_id: { type: string, format: uuid }
+        payment_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The M-Pesa collection (/payments) it came from, if any.
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    CustomerPaymentDetail:
+      allOf:
+        - $ref: '#/components/schemas/CustomerPayment'
+        - type: object
+          properties:
+            allocations:
+              type: array
+              description: Oldest due first.
+              items:
+                type: object
+                properties:
+                  invoice_id: { type: string, format: uuid }
+                  invoice_number: { type: string }
+                  amount_minor: { type: string }
+                  date: { type: string, format: date }
+
     CreateStatementRequest:
       type: object
       required: [clientUuid, customerId]
@@ -4702,7 +4924,7 @@ components:
         document_number:
           type: string
           nullable: true
-          description: The invoice or credit note number (for a PAYMENT, the invoice it paid).
+          description: The invoice, credit note or payment (PMT-) number.
           example: "INV-000124"
 
     CustomerTransaction:
@@ -4723,7 +4945,8 @@ components:
         document_kind:
           type: string
           nullable: true
-          enum: [INVOICE, CREDIT_NOTE, PROFORMA, null]
+          enum: [INVOICE, CREDIT_NOTE, PROFORMA, CUSTOMER_PAYMENT, null]
+          description: CUSTOMER_PAYMENT on PAYMENT rows -- document_id/number are then the payment's.
         document_number: { type: string, nullable: true }
         credited_invoice_id:
           type: string
@@ -4735,12 +4958,25 @@ components:
           type: string
           nullable: true
           enum: [CASH, BANK, MPESA, OTHER, null]
-          description: PAYMENT rows recorded against an invoice.
+          description: PAYMENT rows from a customer payment.
         reference:
           type: string
           nullable: true
           description: PAYMENT rows -- the payment's reference (cheque number, M-Pesa code); otherwise the journal's reference.
         description: { type: string }
+        applied_invoices:
+          type: array
+          description: PAYMENT rows -- the invoices it was applied to; [] on other rows.
+          items:
+            type: object
+            properties:
+              invoice_id: { type: string, format: uuid }
+              invoice_number: { type: string }
+              amount_minor: { type: string }
+        unapplied_minor:
+          type: string
+          nullable: true
+          description: PAYMENT rows -- credit still on the payment; null on other rows.
         debit_minor:
           type: string
           description: What the row added to the balance.

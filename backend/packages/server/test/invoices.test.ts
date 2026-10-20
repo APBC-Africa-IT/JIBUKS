@@ -682,7 +682,12 @@ describe("M-Pesa collection against an invoice", () => {
     const after = await get(invoice.id);
 
     expect(after.body.status).toBe("PAID");
-    expect(after.body.allocations[1]).toMatchObject({ amount_minor: "10000", unapplied_minor: "20000" });
+    expect(after.body.allocations[1]).toMatchObject({ amount_minor: "10000", unapplied_minor: "0", payment_id: pushed.body.id });
+    // The rest is credit on the customer payment the collection was recorded as.
+    const received = await request(app)
+      .get(`/api/v1/customer-payments/${after.body.allocations[1].customer_payment_id}`)
+      .set(await auth());
+    expect(received.body).toMatchObject({ amount_minor: "30000", applied_minor: "10000", unapplied_minor: "20000", method: "MPESA" });
   });
 
   it("rejects an amount above the balance, or invoiceId with creditAccountId, before prompting", async () => {

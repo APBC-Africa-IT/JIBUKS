@@ -1,0 +1,19 @@
+meta {
+  name: Get Payment
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/customer-payments/{{customerPaymentId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  customerPaymentId: 00000000-0000-4000-8000-000000000000
+}

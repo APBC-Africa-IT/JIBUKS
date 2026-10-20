@@ -231,39 +231,36 @@ export async function cancelInvoice(
 }
 
 // ---------------------------------------------------------------------
-// Payments
+// Payments -- primitives for the customerPayments module, which records
+// every payment received against invoices.
 // ---------------------------------------------------------------------
 
-export interface ApplyPaymentRequest {
-  readonly tenantId: string;
-  readonly invoiceId: string;
-  /** Identity of the allocation and of its journal. */
-  readonly clientUuid: string;
-  readonly amountMinor: number;
-  readonly date: string;
-  readonly receivedAccountId: string;
-  readonly method: InvoicePaymentMethod;
-  readonly reference?: string;
-  /** Set for an M-Pesa collection (payments module). */
-  readonly paymentId?: string;
-  /** See documents.PaymentRequest. M-Pesa collections pass true. */
-  readonly allowOverpayment: boolean;
+export type InvoiceRow = repository.InvoiceRow;
+export type TxClient = repository.TxClient;
+
+/** The AR document, or 404 INVOICE_NOT_FOUND (bills and cash sales are never found). */
+export async function getInvoiceRow(tenantId: string, invoiceId: string): Promise<InvoiceRow> {
+  return documents.getRow(AR, tenantId, invoiceId);
 }
 
-export type ApplyPaymentResult = documents.PaymentResult;
-
-export async function applyPayment(request: ApplyPaymentRequest, audit: AuditContext): Promise<ApplyPaymentResult> {
-  const { invoiceId, receivedAccountId, ...rest } = request;
-  return documents.pay(AR, { ...rest, id: invoiceId, moneyAccountId: receivedAccountId }, audit);
+/** The customer's invoices that can take a payment now, oldest due first. */
+export async function listPayableInvoices(tenantId: string, customerId: string): Promise<InvoiceRow[]> {
+  return repository.listPayableInvoices(tenantId, customerId);
 }
 
-export async function recordPayment(
-  request: Omit<ApplyPaymentRequest, "allowOverpayment" | "paymentId">,
-  audit: AuditContext,
-): Promise<InvoiceDetailView> {
-  await applyPayment({ ...request, allowOverpayment: false }, audit);
-  return getInvoice(request.tenantId, request.invoiceId);
+/** What is still owed on an issued invoice; 0 on drafts, cancelled invoices and other kinds. */
+export const balanceDue = documents.balanceDue;
+
+/** The business's RECEIVABLE account -- where credit not applied to an invoice is posted. */
+export async function defaultReceivableAccountId(tenantId: string): Promise<string> {
+  return documents.defaultControlAccountId(AR, tenantId);
 }
+
+/** Locks an invoice row for the rest of the transaction. */
+export const lockInvoice = repository.lockInvoice;
+
+/** Records an amount applied to a locked invoice and moves it to PART_PAID or PAID. */
+export const applyAllocation = repository.applyAllocation;
 
 export interface CollectableInvoice {
   readonly id: string;
@@ -386,7 +383,7 @@ export async function getInvoicePdf(tenantId: string, invoiceId: string): Promis
 
 export type JournalDocumentLink = repository.JournalDocumentLinkRow;
 
-/** Which sales document each journal issued, cancelled or paid (customerLedger labels a customer's history with these). */
+/** Which sales document each journal issued or cancelled (customerLedger labels a customer's history with these). */
 export async function listJournalDocumentLinks(tenantId: string, journalIds: readonly string[]): Promise<JournalDocumentLink[]> {
   return repository.listJournalDocumentLinks(tenantId, journalIds);
 }

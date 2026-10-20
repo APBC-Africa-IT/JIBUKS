@@ -1,0 +1,36 @@
+meta {
+  name: Receive Payment for Chosen Invoices
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/customer-payments
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "customerId": "{{customerId}}",
+    "amountMinor": 3000000,
+    "date": "2026-10-20",
+    "method": "BANK",
+    "reference": "EFT-55120",
+    "allocations": [
+      { "invoiceId": "{{invoiceId}}", "amountMinor": 2000000 }
+    ]
+  }
+}
+
+vars:pre-request {
+  customerId: 00000000-0000-4000-8000-000000000000
+  invoiceId: 00000000-0000-4000-8000-000000000000
+}
