@@ -1,0 +1,19 @@
+meta {
+  name: Get Refund
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v1/customer-refunds/{{refundId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  refundId: 00000000-0000-4000-8000-000000000000
+}

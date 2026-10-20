@@ -1,0 +1,33 @@
+meta {
+  name: Refund Credit
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/customer-refunds
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "customerId": "{{customerId}}",
+    "amountMinor": 50000,
+    "date": "2026-10-20",
+    "method": "MPESA",
+    "reference": "RKT9X2Y3Z1",
+    "memo": "Overpaid in September"
+  }
+}
+
+vars:pre-request {
+  customerId: 00000000-0000-4000-8000-000000000000
+}

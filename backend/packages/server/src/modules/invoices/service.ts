@@ -38,6 +38,8 @@ export interface InvoiceView
   > {
   readonly customer_id: string;
   readonly customer_name: string;
+  /** Credit notes: what is left to apply to invoices or refund ("0" on other documents and drafts). */
+  readonly credit_remaining_minor: string;
 }
 
 export type InvoiceLineView = Omit<InvoiceLineRow, "item_name" | "amount_minor">;
@@ -50,7 +52,8 @@ export interface InvoiceDetailView extends InvoiceView {
 function toInvoiceView(view: DocumentView): InvoiceView {
   const { party_name, supplier_id, supplier_reference, customer_id, payment_method, deposit_account_id, cheque_number, ...rest } =
     view;
-  return { ...rest, customer_id: customer_id!, customer_name: party_name! };
+  const creditRemaining = rest.kind === "CREDIT_NOTE" && rest.status !== "DRAFT" ? Number(rest.total_minor) - Number(rest.amount_paid_minor) : 0;
+  return { ...rest, customer_id: customer_id!, customer_name: party_name!, credit_remaining_minor: String(creditRemaining) };
 }
 
 function toInvoiceDetail(detail: DocumentDetail): InvoiceDetailView {
@@ -107,7 +110,7 @@ function toLineRequests(lines: readonly InvoiceLineRequest[]): LineDraft[] {
 export interface CreateInvoiceRequest {
   readonly tenantId: string;
   readonly clientUuid: string;
-  readonly kind: "INVOICE" | "PROFORMA";
+  readonly kind: "INVOICE" | "PROFORMA" | "CREDIT_NOTE";
   readonly branchId?: string;
   readonly customerId: string;
   readonly receivableAccountId?: string;
@@ -261,6 +264,14 @@ export const lockInvoice = repository.lockInvoice;
 
 /** Records an amount applied to a locked invoice and moves it to PART_PAID or PAID. */
 export const applyAllocation = repository.applyAllocation;
+
+/** Records `amountMinor` more of a locked, issued credit note as used (applied or refunded). */
+export const useCredit = repository.useCredit;
+
+/** The customer's issued credit notes with something left to use, oldest first. */
+export async function listCreditNotesWithCredit(tenantId: string, customerId: string): Promise<InvoiceRow[]> {
+  return repository.listCreditNotesWithCredit(tenantId, customerId);
+}
 
 export interface CollectableInvoice {
   readonly id: string;

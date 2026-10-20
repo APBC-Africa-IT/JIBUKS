@@ -14,6 +14,7 @@ import {
   isCurrencyCode,
   type AccountType,
   type AssignableSystemAccountKey,
+  type InvoicePaymentMethod,
 } from "@jibuks/domain";
 import type { AccountSnapshot } from "@jibuks/ledger";
 import type { AuditContext } from "@jibuks/db";
@@ -122,6 +123,24 @@ export async function requireSystemAccount(tenantId: string, systemKey: SystemAc
     );
   }
   return account;
+}
+
+/**
+ * The money account a payment method uses when a request names none: the
+ * business's Cash or Bank account, or its M-Pesa account (created if it
+ * has none yet, as for an STK push). OTHER has no default -- the request
+ * schemas require an account for it; `field` names that account in errors.
+ */
+export async function defaultMoneyAccountId(
+  tenantId: string,
+  method: InvoicePaymentMethod,
+  field: string,
+  audit: AuditContext,
+): Promise<string> {
+  if (method === "MPESA") {
+    return (await getOrCreateMpesaAccount(tenantId, audit)).id;
+  }
+  return (await requireSystemAccount(tenantId, method === "BANK" ? "BANK" : "CASH", field)).id;
 }
 
 /** Every system key with the id of the account carrying it, or null -- for GET /tenant. */

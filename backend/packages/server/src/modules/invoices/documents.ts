@@ -450,7 +450,7 @@ async function baseCurrency(side: Side, tenantId: string, requested?: string): P
 export interface CreateRequest {
   readonly tenantId: string;
   readonly clientUuid: string;
-  readonly kind: "INVOICE" | "PROFORMA" | "BILL";
+  readonly kind: "INVOICE" | "PROFORMA" | "BILL" | "CREDIT_NOTE";
   readonly branchId?: string;
   readonly partyId: string;
   readonly controlAccountId?: string;
@@ -487,14 +487,15 @@ export async function create(side: Side, request: CreateRequest, audit: AuditCon
   const currency = await baseCurrency(side, request.tenantId, request.currency);
   const party = await loadTradingParty(side, request.tenantId, request.partyId, currency);
   // A pro-forma posts nothing, so it only gets a control account if asked.
-  if (request.controlAccountId === undefined && request.kind === side.main) {
+  if (request.controlAccountId === undefined && request.kind !== "PROFORMA") {
     request = { ...request, controlAccountId: await defaultControlAccountId(side, request.tenantId) };
   }
   // A converted pro-forma copies its lines as they are, items deactivated since included.
   const lines = await resolveLines(side, request.tenantId, request.lines, { allowInactive: request.proformaId !== undefined });
   const built = await buildLines(side, request.tenantId, request.taxMode, lines, request.controlAccountId ?? null);
-  const paymentTermsDays = request.paymentTermsDays ?? party.payment_terms_days ?? 0;
-  const dueDate = request.dueDate ?? (request.kind === side.main ? addDays(request.issueDate, paymentTermsDays) : null);
+  // A credit or debit note isn't due, so it has no terms.
+  const paymentTermsDays = request.kind === side.reduction ? null : (request.paymentTermsDays ?? party.payment_terms_days ?? 0);
+  const dueDate = request.dueDate ?? (request.kind === side.main ? addDays(request.issueDate, paymentTermsDays ?? 0) : null);
 
   const row = await repository.insertInvoice(
     {
@@ -775,8 +776,8 @@ export async function issue(
   let prepared: PreparedJournal | null = null;
   if (doc.kind !== "PROFORMA") {
     creditLimitOverridden = await checkCreditLimit(side, doc, request);
-    if (doc.kind === side.reduction) {
-      const original = await getRow(side, tenantId, doc.credited_invoice_id!);
+    if (doc.kind === side.reduction && doc.credited_invoice_id) {
+      const original = await getRow(side, tenantId, doc.credited_invoice_id);
       assertReducible(side, original);
       assertReductionFits(side, original, Number(doc.total_minor));
     }
@@ -840,6 +841,10 @@ export async function issue(
         },
         audit,
       );
+      if (side.direction === "AR") {
+        // All of a credit note raised against an invoice is used on it.
+        await repository.useCredit(client, issued, Number(issued.total_minor), audit);
+      }
     }
   });
   return getDetail(side, tenantId, id);

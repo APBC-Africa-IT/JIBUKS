@@ -22,6 +22,10 @@ export interface CustomerPaymentRow {
   readonly applied_minor: string;
   /** Customer credit still on the payment. */
   readonly unapplied_minor: string;
+  /** Credit paid back to the customer (customer refunds). amount = applied + unapplied + refunded. */
+  readonly refunded_minor: string;
+  /** The receivable account the payment's credit was posted to; null if it never had any. */
+  readonly credit_account_id: string | null;
   readonly method: InvoicePaymentMethod;
   readonly received_account_id: string | null;
   readonly reference: string | null;
@@ -47,7 +51,7 @@ export interface PaymentAllocationRow {
 }
 
 const COLUMNS = `p.id, p.tenant_id, p.client_uuid, p.number, p.customer_id, p.date::text AS date, p.currency, p.amount_minor,
-  p.applied_minor, p.unapplied_minor, p.method, p.received_account_id, p.reference, p.memo, p.journal_id, p.payment_id,
+  p.applied_minor, p.unapplied_minor, p.refunded_minor, p.credit_account_id, p.method, p.received_account_id, p.reference, p.memo, p.journal_id, p.payment_id,
   p.created_by, p.created_at, c.name AS customer_name`;
 
 const SELECT_WITH_CUSTOMER = `SELECT ${COLUMNS} FROM customer_payments p JOIN customers c ON c.id = p.customer_id`;
@@ -78,14 +82,15 @@ export interface InsertPaymentInput {
   readonly memo: string | null;
   readonly journalId: string;
   readonly paymentId: string | null;
+  readonly creditAccountId: string | null;
 }
 
 export async function insertPayment(client: TxClient, input: InsertPaymentInput, audit: AuditContext): Promise<CustomerPaymentRow> {
   const result = await client.query<CustomerPaymentRow>(
     `INSERT INTO customer_payments
        (id, tenant_id, client_uuid, number, customer_id, date, currency, amount_minor, applied_minor, unapplied_minor,
-        method, received_account_id, reference, memo, journal_id, payment_id, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        method, received_account_id, reference, memo, journal_id, payment_id, credit_account_id, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
      RETURNING *`,
     [
       randomUUID(),
@@ -104,6 +109,7 @@ export async function insertPayment(client: TxClient, input: InsertPaymentInput,
       input.memo,
       input.journalId,
       input.paymentId,
+      input.creditAccountId,
       audit.actorUserId,
     ],
   );
@@ -207,6 +213,52 @@ export async function listPayments(
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT ${add(filters.limit + 1)}`,
       params,
+    );
+    return result.rows;
+  });
+}
+
+/** Locks a payment row for the rest of the transaction. */
+export async function lockPayment(client: TxClient, id: string): Promise<CustomerPaymentRow | null> {
+  const result = await client.query<CustomerPaymentRow>(`SELECT * FROM customer_payments WHERE id = $1 FOR UPDATE`, [id]);
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Moves `amountMinor` of a locked payment's credit to applied (used on an
+ * invoice) or refunded. The database refuses more than its unapplied_minor.
+ */
+export async function useCredit(
+  client: TxClient,
+  before: CustomerPaymentRow,
+  amountMinor: number,
+  use: "APPLIED" | "REFUNDED",
+  audit: AuditContext,
+): Promise<CustomerPaymentRow> {
+  const column = use === "APPLIED" ? "applied_minor" : "refunded_minor";
+  const result = await client.query<CustomerPaymentRow>(
+    `UPDATE customer_payments SET unapplied_minor = unapplied_minor - $2, ${column} = ${column} + $2 WHERE id = $1 RETURNING *`,
+    [before.id, amountMinor],
+  );
+  const payment = result.rows[0]!;
+  await recordAuditLog(client, {
+    tenantId: before.tenant_id,
+    action: "UPDATE",
+    entityType: "customer_payment",
+    entityId: before.id,
+    beforeState: before,
+    afterState: payment,
+    context: audit,
+  });
+  return payment;
+}
+
+/** The customer's payments with credit left on them, oldest first. */
+export async function listWithCredit(tenantId: string, customerId: string): Promise<CustomerPaymentListRow[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<CustomerPaymentListRow>(
+      `${SELECT_WITH_CUSTOMER} WHERE p.customer_id = $1 AND p.unapplied_minor > 0 ORDER BY p.date, p.created_at, p.id`,
+      [customerId],
     );
     return result.rows;
   });

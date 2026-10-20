@@ -1,0 +1,19 @@
+meta {
+  name: Available Credit
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/customers/{{customerId}}/credit
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  customerId: 00000000-0000-4000-8000-000000000000
+}
