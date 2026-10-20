@@ -173,7 +173,8 @@ describe("onboarding service (direct)", () => {
   });
 
   it.each([
-    { template: "SME_TRADING", vat: false, count: 26, mpesa: "1020" },
+    // 27 less the two VAT-only accounts (1250 VAT Recoverable, 2200 VAT Payable).
+    { template: "SME_TRADING", vat: false, count: 25, mpesa: "1020" },
     { template: "SME_TRADING", vat: true, count: 27, mpesa: "1020" },
     { template: "NGO", vat: false, count: 17, mpesa: null },
     { template: "NGO", vat: true, count: 19, mpesa: null },

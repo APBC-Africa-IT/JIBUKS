@@ -17,7 +17,7 @@ import { invitesRouter } from "./modules/invites/routes.js";
 import { onboardingRouter } from "./modules/onboarding/routes.js";
 import { usersRouter } from "./modules/users/routes.js";
 import { accountsRouter } from "./modules/accounts/routes.js";
-import { customersRouter } from "./modules/customers/routes.js";
+import { customerSettingsRouter, customersRouter } from "./modules/customers/routes.js";
 import { suppliersRouter } from "./modules/suppliers/routes.js";
 import { periodsRouter } from "./modules/periods/routes.js";
 import { journalsRouter } from "./modules/journals/routes.js";
@@ -40,6 +40,7 @@ import { invoicesRouter } from "./modules/invoices/routes.js";
 import { customerStatementsRouter } from "./modules/customerStatements/routes.js";
 import { customerPaymentsRouter } from "./modules/customerPayments/routes.js";
 import { customerRefundsRouter } from "./modules/customerCredits/routes.js";
+import { customerReportsRouter } from "./modules/customerReports/routes.js";
 import { supplierBillsRouter } from "./modules/supplierBills/routes.js";
 import { openingBalancesRouter } from "./modules/openingBalances/routes.js";
 import { requireAuth0Token } from "./middleware/auth0.js";
@@ -77,6 +78,7 @@ export function createApp(): Express {
   app.use("/api/v1/roles", rolesRouter);
   app.use("/api/v1/accounts", accountsRouter);
   app.use("/api/v1/customers", customersRouter);
+  app.use("/api/v1/customer-settings", customerSettingsRouter);
   app.use("/api/v1/suppliers", suppliersRouter);
   app.use("/api/v1/periods", periodsRouter);
   app.use("/api/v1/journals", journalsRouter);
@@ -98,6 +100,7 @@ export function createApp(): Express {
   app.use("/api/v1/customer-statements", customerStatementsRouter);
   app.use("/api/v1/customer-payments", customerPaymentsRouter);
   app.use("/api/v1/customer-refunds", customerRefundsRouter);
+  app.use("/api/v1/reports", customerReportsRouter);
   app.use("/api/v1/supplier-bills", supplierBillsRouter);
   app.use("/api/v1/payments", paymentsRouter);
   // Provider callbacks (no bearer token) -- see payments/routes.ts.

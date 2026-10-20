@@ -24,3 +24,11 @@ customersRouter.get("/:id/credit", requirePermission("customers:view"), asyncHan
 customersRouter.patch("/:id", requirePermission("customers:edit"), asyncHandler(controllers.update));
 customersRouter.post("/:id/deactivate", requirePermission("customers:edit"), asyncHandler(controllers.deactivate));
 customersRouter.post("/:id/reactivate", requirePermission("customers:edit"), asyncHandler(controllers.reactivate));
+
+/** The business's customer defaults (/customer-settings): what a new customer starts with. */
+export const customerSettingsRouter: RouterType = Router();
+
+customerSettingsRouter.use(requireRealIdentity);
+
+customerSettingsRouter.get("/", requirePermission("customers:view"), asyncHandler(controllers.getSettings));
+customerSettingsRouter.patch("/", requirePermission("customers:edit"), asyncHandler(controllers.updateSettings));

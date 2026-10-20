@@ -263,3 +263,20 @@ export async function listWithCredit(tenantId: string, customerId: string): Prom
     return result.rows;
   });
 }
+
+/** Each customer's latest payment dated on or before `asOf` (customers who never paid are absent). */
+export async function listLatestByCustomer(
+  tenantId: string,
+  asOf: string,
+): Promise<{ customer_id: string; date: string; amount_minor: string; number: string }[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<{ customer_id: string; date: string; amount_minor: string; number: string }>(
+      `SELECT DISTINCT ON (customer_id) customer_id, date, amount_minor, number
+         FROM customer_payments
+        WHERE date <= $1
+        ORDER BY customer_id, date DESC, created_at DESC, id DESC`,
+      [asOf],
+    );
+    return result.rows;
+  });
+}

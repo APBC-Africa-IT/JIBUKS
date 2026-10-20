@@ -160,6 +160,8 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `GET /invites` / `POST /invites` | `invites:view` / `invites:create` |
 | `GET /accounts…` / `POST /accounts` / `POST /accounts/{id}/deactivate` / `reactivate` | `accounts:view` / `accounts:create` / `accounts:edit` |
 | Customers, Suppliers | same pattern: `customers:*`, `suppliers:*` |
+| `GET /customer-settings` / `PATCH /customer-settings` | `customers:view` / `customers:edit` |
+| `GET /reports/customers-to-follow-up` | `reports:view` |
 | `GET /periods…` / `POST /periods` | `periods:view` / `periods:create` |
 | `POST /periods/{id}/close` | `periods:close` |
 | `POST /periods/{id}/reopen` | `periods:reopen` |
@@ -710,6 +712,11 @@ Create a new customer for the tenant.
 | `paymentTermsDays` | integer | No | Net payment terms in days, 0–365 (0 = due on receipt). Will drive invoice due dates. |
 | `currency` | string | No | The customer's default currency (ISO 4217, from the supported list). **Omit to use the business's base currency**; it's then returned as `null`, the same convention as accounts. |
 | `creditLimitMinor` | integer | No | Credit limit in the customer's currency, integer minor units (`50000000` = KES 500,000.00). Omit for no limit. **Stored and returned only; not yet enforced** on credit sales. |
+| `preferredChannel` | string | No | How they want to be contacted: `SMS`, `WHATSAPP`, `EMAIL` or `NONE`. |
+| `sendStatements` | boolean | No | Whether they get statements. |
+| `paymentReminders` | boolean | No | Whether they get payment reminders. |
+
+**Defaults:** whatever is left out of `paymentTermsDays`, `creditLimitMinor`, `preferredChannel`, `sendStatements` and `paymentReminders` is filled in from the business's [customer defaults](#customer-defaults). The server sends no messages yet; the app and the follow-up report read these.
 
 **Success Response:** `201 Created` — same shape as `GET /customers/{id}` below, minus `balance_minor` (a brand-new customer has no journal history yet).
 
@@ -743,6 +750,9 @@ List / fetch customers for the caller's tenant. Each customer includes a server-
   "payment_terms_days": 30,
   "currency": "KES",
   "credit_limit_minor": "50000000",
+  "preferred_channel": "WHATSAPP",
+  "send_statements": true,
+  "payment_reminders": true,
   "created_at": "2026-07-30T10:25:50.110Z",
   "balance_minor": "150000",
   "last_activity": { "type": "INVOICE", "date": "2026-10-18", "document_number": "INV-000124" }
@@ -861,6 +871,60 @@ Accepts every field from `POST /customers`. Returns the updated customer (withou
 ### `POST /customers/{id}/deactivate` / `POST /customers/{id}/reactivate` 
 
 **Customers are never deleted** — only deactivated/reactivated, preserving full history. Deactivating a customer does **not** block posting further journal lines tagged with it in this phase.
+
+### Customer defaults
+
+`GET /customer-settings` (`customers:view`) / `PATCH /customer-settings` (`customers:edit`). The Settings screen's **Billing Preferences** and **Communication Preferences** for the whole business: what a **new** customer starts with when `POST /customers` leaves a field out.
+
+```json
+{
+  "payment_terms_days": 30,
+  "credit_limit_minor": "5000000",
+  "preferred_channel": "WHATSAPP",
+  "send_statements": true,
+  "payment_reminders": true,
+  "updated_by": "…",
+  "updated_at": "2026-10-20T09:00:00.000Z"
+}
+```
+
+PATCH takes `paymentTermsDays`, `creditLimitMinor`, `preferredChannel`, `sendStatements`, `paymentReminders`. Send only what changes; `null` clears a default. A business that never saved any gets nulls and `false`. **Changing a default never changes existing customers**: each customer's own values count, editable with `PATCH /customers/{id}`. The screen's **Customer Details** and **Status** rows are per customer (`PATCH /customers/{id}`, `POST /customers/{id}/deactivate` / `reactivate`).
+
+**Errors:** `400 VALIDATION_ERROR` (empty body, bad values).
+
+### `GET /reports/customers-to-follow-up`
+
+`reports:view`. The Reports screen's **Collections: Customers to Follow Up**: customers with an invoice past due at `as_of`, **most days overdue first**, then the larger amount. Built the same way as [receivables aging](#721-receivables-aging), so the amounts match it for the same date.
+
+| Query | Description |
+|---|---|
+| `as_of` | Default today (Nairobi). |
+| `min_days_overdue` | Only invoices at least this many days past due. Default `1`. |
+
+```json
+{
+  "as_of": "2026-10-20",
+  "currency": "KES",
+  "min_days_overdue": 1,
+  "customer_count": 1,
+  "overdue_minor": "6000000",
+  "rows": [
+    {
+      "customer_id": "…", "customer_name": "Jane Traders", "phone": "+254711000000", "email": null,
+      "preferred_channel": "SMS", "payment_reminders": true,
+      "overdue_minor": "6000000", "overdue_invoice_count": 2, "oldest_due_date": "2026-09-05", "days_overdue": 45,
+      "balance_minor": "7000000",
+      "last_payment": { "date": "2026-10-01", "amount_minor": "2000000", "number": "PMT-000031" },
+      "invoices": [
+        { "id": "…", "number": "INV-000118", "due_date": "2026-09-05", "days_overdue": 45, "open_minor": "3000000" },
+        { "id": "…", "number": "INV-000124", "due_date": "2026-09-20", "days_overdue": 30, "open_minor": "3000000" }
+      ]
+    }
+  ]
+}
+```
+
+`balance_minor` is everything they owe at `as_of`, due or not, net of credit. `last_payment` is `null` if they have never paid. The other customer reports come from existing endpoints: **Customer Balances** = `GET /customers` → `GET /customers/{id}/transactions`; **Aging** = `GET /receivables-aging`; **Customer Activity** = `GET /customers/{id}/transactions`; **Customer Contacts** = `GET /customers`.
 
 ### Notes for consuming clients (Customers)
 
