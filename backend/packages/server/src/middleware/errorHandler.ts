@@ -77,6 +77,9 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   // customer payments
   CUSTOMER_PAYMENT_NOT_FOUND: 404,
   PAYMENT_ALLOCATION_INVALID: 422,
+  // customer credit
+  CREDIT_NOT_AVAILABLE: 422,
+  CUSTOMER_REFUND_NOT_FOUND: 404,
   // idempotency -- status codes follow the IETF Idempotency-Key header
   // draft: reuse with a different payload is 422, a concurrent retry of a
   // still-running request is 409.

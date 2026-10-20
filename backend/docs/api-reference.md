@@ -60,6 +60,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.27 Cheque Payments](#727-cheque-payments)
 - [7.28 Customer Statements](#728-customer-statements)
 - [7.29 Customer Payments](#729-customer-payments)
+- [7.29b Customer Credit](#729b-customer-credit)
 
 ---
 
@@ -181,6 +182,9 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /invoices/{id}/cancel` | `invoices:cancel` |
 | `POST /invoices/{id}/payments` | `payments:create` |
 | `POST /customer-payments` / `GET /customer-payments`, `GET /customer-payments/{id}` | `payments:create` / `payments:view` |
+| `GET /customers/{id}/credit` | `customers:view` |
+| `POST /invoices/{id}/apply-credit` | `payments:create` |
+| `POST /customer-refunds` / `GET /customer-refunds`, `GET /customer-refunds/{id}` | `refunds:create` (Owner, Accountant) / `payments:view` |
 | `GET /invoices/{id}/pdf` | `invoices:view` |
 | `PATCH /tenant` | `tenant:edit` (Owner only) |
 | `PATCH /accounts/{id}` | `accounts:edit` |
@@ -829,6 +833,7 @@ Omit both for the whole history.
 | `INVOICE` / `CREDIT_NOTE` | Issued | The invoice / credit note; a credit note also has `credited_invoice_*` |
 | `INVOICE_CANCELLED` / `CREDIT_NOTE_CANCELLED` | The reversal posted when it was cancelled | The cancelled document |
 | `PAYMENT` | Money received | The customer payment (`document_kind: "CUSTOMER_PAYMENT"`, `PMT-` number) with `payment_method`, `reference`, `applied_invoices` (what it paid) and `unapplied_minor` (credit left on it); null for an M-Pesa collection with no invoice |
+| `REFUND` | Credit paid back to the customer | The refund (`document_kind: "CUSTOMER_REFUND"`, `RF-` number) with `payment_method` and `reference` |
 | `CREDIT_SALE` | A legacy `POST /credit-sales` | null |
 | `REVERSAL` | A reversed journal | null |
 | `JOURNAL` | Any other journal tagged with the customer | null |
@@ -1746,7 +1751,7 @@ Base path: `/api/v1/invoices`. Sales invoices, credit notes and pro-formas (FR-A
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `clientUuid` | uuid | ✅ Yes | The invoice's identity (DR-05). |
-| `kind` | string | No | `INVOICE` (default) or `PROFORMA`. |
+| `kind` | string | No | `INVOICE` (default), `PROFORMA`, or `CREDIT_NOTE` for a [credit note against no invoice](#credit-notes-against-no-invoice) (a discount, goodwill). A credit note takes no `dueDate`, `paymentTermsDays`, `poNumber`, `shipTo` or `shippingDate` (`400`). |
 | `customerId` | uuid | ✅ Yes | |
 | `receivableAccountId` | uuid | No | Accounts Receivable. Omit for the business's `RECEIVABLE` account (a pro-forma gets it when converted). |
 | `issueDate` | date | ✅ Yes | The invoice date, and the date its journal posts on. Its period must be open when you issue (the current month opens automatically). |
@@ -1908,7 +1913,13 @@ To collect by **M-Pesa STK push**, call [`POST /payments/mpesa/stk-push`](#post-
 }
 ```
 
-Customer, currency and receivable account come from the invoice; `taxMode` defaults to the invoice's; `issueDate` defaults to today. A credit note can't exceed what's still owed (`422 CREDIT_NOTE_EXCEEDS_BALANCE`, counting other draft credit notes too) — refunds for paid invoices come later.
+Customer, currency and receivable account come from the invoice; `taxMode` defaults to the invoice's; `issueDate` defaults to today. A credit note can't exceed what's still owed (`422 CREDIT_NOTE_EXCEEDS_BALANCE`, counting other draft credit notes too). Issuing it uses all of it on that invoice, so its `credit_remaining_minor` is `0`. For credit beyond what an invoice owes, raise one against no invoice (below) and [refund](#729b-customer-credit) it.
+
+#### Credit notes against no invoice
+
+`POST /invoices` with `"kind": "CREDIT_NOTE"` (and `issue: true`, or issue it later) — the Credit Note screen's **Create Credit Note** for a discount or goodwill not tied to an invoice, like CN-022 "Discount". It has `credited_invoice_id: null`, no due date or terms. Issuing posts Dr income (and output VAT) / Cr receivables tagged with the customer, so the customer's balance drops by the total, and **all of it is customer credit**: `credit_remaining_minor` = `total_minor`. Use it with [`POST /invoices/{id}/apply-credit`](#post-invoicesidapply-credit) or refund it with [`POST /customer-refunds`](#post-customer-refunds). Put the reason ("Returned goods", "Discount") in `notes`; it prints on the PDF and is shown as the credit's `description`.
+
+Every invoice-shaped response now has `credit_remaining_minor`: on an issued credit note, what's left to apply or refund; `"0"` on everything else.
 
 ### `POST /invoices/{id}/convert`
 
@@ -2659,5 +2670,99 @@ Every payment against invoices is a customer payment, whichever way it arrives: 
 
 - **Receive Payments list:** `GET /customer-payments`. Each card is `customer_name`, `amount_minor`, `method` and `date`.
 - **Receive Payment form:** pick the customer, then show their open invoices oldest first from [`GET /receivables-aging?customer_id=…`](#721-receivables-aging) (`invoices[]` with `open_minor`). Pre-fill the amounts oldest first, let the user untick or edit them, and send what's left ticked as `allocations`. Or send no `allocations` and let the server apply oldest first.
-- **Credit:** a customer with credit has a negative `balance_minor`, which is the Customers List's "Credit available". Applying that credit to an invoice later, and refunds, are the next step.
-- **Not built yet:** voiding or editing a payment, applying credit later, refunds, receipts as PDF.
+- **Credit:** a customer with credit has a negative `balance_minor`, which is the Customers List's "Credit available". Use it with [7.29b Customer Credit](#729b-customer-credit).
+- **Not built yet:** voiding or editing a payment, receipts as PDF. Applying credit later and refunds: see [7.29b](#729b-customer-credit).
+
+---
+
+## 7.29b Customer Credit
+
+The **Credit Note** screen: the Available Credit total, **Apply to Invoice**, and refunds. A customer's credit is held in two places, both already in their balance:
+
+- **Credit notes** with something left (`credit_remaining_minor`): ones raised [against no invoice](#credit-notes-against-no-invoice), or partly used.
+- **Payments** with money not applied to an invoice (`unapplied_minor` on a [customer payment](#729-customer-payments)).
+
+When the request doesn't choose which credit to use, the **oldest is used first**.
+
+### `GET /customers/{id}/credit`
+
+`customers:view`. The Available Credit card.
+
+```json
+{
+  "customer_id": "…",
+  "customer_name": "Jane Traders",
+  "currency": "KES",
+  "available_minor": "200000",
+  "sources": [
+    { "type": "CREDIT_NOTE", "id": "…", "number": "CN-000021", "date": "2026-09-12", "amount_minor": "200000",
+      "remaining_minor": "150000", "credited_invoice_id": null, "description": "Returned goods", "account_id": "…" },
+    { "type": "PAYMENT", "id": "…", "number": "PMT-000031", "date": "2026-09-18", "amount_minor": "4500000",
+      "remaining_minor": "50000", "credited_invoice_id": null, "description": "QAB12CD34E", "account_id": "…" }
+  ]
+}
+```
+
+`sources` are oldest first. `id` is the credit note's id (use `GET /invoices/{id}`) or the payment's (`GET /customer-payments/{id}`). `description` is the credit note's `notes` or the payment's `reference`. `account_id` is the receivable account the credit sits in. The **Credit Notes** list on the screen is `GET /invoices?kind=CREDIT_NOTE&customer_id=…`, showing `number`, `credited_invoice_id`'s number, `total_minor`, `notes` and `issue_date`. `404 CUSTOMER_NOT_FOUND`.
+
+### `POST /invoices/{id}/apply-credit`
+
+`payments:create`. **Apply to Invoice**: uses the customer's credit to pay an `ISSUED` / `PART_PAID` / `OVERDUE` invoice. **Nothing is posted**, because the credit is already in receivables. Each credit used adds an allocation to the invoice (`method: "CREDIT_NOTE"` with `credit_note_id`, or the payment's method with `customer_payment_id`, sharing that credit's journal) and moves the amount off the credit.
+
+```json
+{ "clientUuid": "…", "amountMinor": 150000, "date": "2026-10-20",
+  "sources": [{ "creditNoteId": "…", "amountMinor": 150000 }] }
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `clientUuid` | Yes | Same one again: `409 DUPLICATE_VALUE`. |
+| `amountMinor` | No | Omit for as much as the invoice owes and the credit covers. |
+| `date` | No | When it counts for aging. Default today. Not before the invoice's date or the credit's. |
+| `sources` | No | `[{ "creditNoteId" or "customerPaymentId", "amountMinor" }]`: which credit to use. Omit for oldest first. With `amountMinor` too, they must add up to it. |
+
+**Success:** `201` with the invoice (new `allocations`, `amount_paid_minor`, `status`).
+
+**Errors:** `400` (sources don't add up, the same credit twice, a date too early); `404 INVOICE_NOT_FOUND`; `422 INVOICE_INVALID_STATE` (draft, paid, cancelled, not an invoice); `422 INVOICE_OVERPAYMENT` (more than it owes); `422 CREDIT_NOT_AVAILABLE` (no credit, not enough, or the chosen credit isn't this customer's); `422 PAYMENT_ALLOCATION_INVALID` (the credit sits in a different receivable account from the invoice: move it with a journal first).
+
+### `POST /customer-refunds`
+
+`refunds:create` (Owner, Accountant). Pays credit back to the customer. Numbered `RF-000001` (gapless). Posts Dr receivables (tagged with the customer, in the account the credit sits in) / Cr the money account, so the customer's balance rises back by the amount.
+
+```json
+{
+  "clientUuid": "…",
+  "customerId": "…",
+  "amountMinor": 50000,
+  "date": "2026-10-20",
+  "method": "MPESA",
+  "reference": "RKT9X2Y3Z1",
+  "memo": "Overpaid in September"
+}
+```
+
+`method` defaults to `CASH`. `paidFromAccountId` defaults to the business's Cash, Bank or M-Pesa account for the method, and is required for `OTHER`. `sources` works as for apply-credit (omit for oldest first).
+
+**Success:** `201`
+```json
+{
+  "id": "…", "number": "RF-000004", "customer_id": "…", "customer_name": "Jane Traders", "date": "2026-10-20",
+  "currency": "KES", "amount_minor": "50000", "method": "MPESA", "paid_from_account_id": "…",
+  "reference": "RKT9X2Y3Z1", "memo": "Overpaid in September", "journal_id": "…", "created_by": "…", "created_at": "…",
+  "sources": [{ "type": "PAYMENT", "id": "…", "number": "PMT-000031", "amount_minor": "50000" }]
+}
+```
+
+A payment refunded from shows it in `refunded_minor`; then `amount_minor = applied_minor + unapplied_minor + refunded_minor`. In the customer's history it is a `REFUND` row.
+
+**Errors:** `400` (as above; `OTHER` without `paidFromAccountId`); `404 CUSTOMER_NOT_FOUND`; `422 CREDIT_NOT_AVAILABLE` (more than the credit); `422 SYSTEM_ACCOUNT_MISSING`; `409 DUPLICATE_VALUE`.
+
+### `GET /customer-refunds`, `GET /customer-refunds/{id}`
+
+`payments:view`. Newest first, cursor paging; filters `customer_id`, `from` / `to` (refund date). List items have no `sources`. `404 CUSTOMER_REFUND_NOT_FOUND`.
+
+### Notes for consuming clients (Customer Credit)
+
+- **Credit Note screen:** the orange card is `available_minor` from `GET /customers/{id}/credit`. **Create Credit Note** is `POST /invoices` with `kind: "CREDIT_NOTE"` (no invoice), or `POST /invoices/{id}/credit-notes` from an invoice. **Apply to Invoice** is `POST /invoices/{id}/apply-credit`. "Or refunded" is `POST /customer-refunds`.
+- A customer with an open invoice and credit at the same time shows both: the invoice in aging, the credit here. Their `balance_minor` is the net.
+- **Not built yet:** voiding a refund or un-applying credit, and moving credit between receivable accounts (use a journal).

@@ -69,6 +69,9 @@ export type DomainErrorCode =
   // customer payments
   | "CUSTOMER_PAYMENT_NOT_FOUND"
   | "PAYMENT_ALLOCATION_INVALID"
+  // customer credit
+  | "CREDIT_NOT_AVAILABLE"
+  | "CUSTOMER_REFUND_NOT_FOUND"
   // idempotency -- Section 9.1, C-08
   | "IDEMPOTENCY_KEY_INVALID"
   | "IDEMPOTENCY_KEY_REUSED"

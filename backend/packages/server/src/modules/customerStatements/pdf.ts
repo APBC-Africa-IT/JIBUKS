@@ -76,6 +76,10 @@ export function describeTransaction(t: CustomerTransaction): string {
       const number = fromPayment && t.document_number ? ` ${t.document_number}` : "";
       return `Payment${number}${how ? ` (${how})` : ""}${paid.length > 0 ? ` - ${paid.join(", ")}` : ""}`;
     }
+    case "REFUND": {
+      const how = [t.payment_method ? METHOD_LABELS[t.payment_method] : null, t.reference].filter(Boolean).join(" ");
+      return `Refund${t.document_number ? ` ${t.document_number}` : ""}${how ? ` (${how})` : ""}`;
+    }
     case "CREDIT_SALE":
       return `Credit sale${t.reference ? ` ${t.reference}` : ""}`;
     default:

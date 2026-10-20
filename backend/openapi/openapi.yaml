@@ -167,6 +167,10 @@ tags:
       Money received from a customer (PMT-000001), applied to any of their
       invoices -- oldest due first by default -- with the rest kept as
       credit. Every AR payment is one, however it is recorded.
+  - name: Customer Credit
+    description: >
+      A customer's credit (credit notes with something left, payments with
+      unapplied money): the total, applying it to invoices, refunds (RF-000001).
   - name: Customer Statements
     description: >
       Statements as numbered snapshots (ST-000001) of a customer's
@@ -835,6 +839,51 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
 
+  /invoices/{id}/apply-credit:
+    post:
+      tags: [Customer Credit]
+      summary: Apply the customer's credit to an invoice
+      description: >
+        Requires `payments:create`. Posts nothing -- the credit is already in
+        receivables. Adds allocations pointing at the credit notes or
+        payments used (oldest first unless `sources` chooses).
+      parameters:
+        - $ref: '#/components/parameters/InvoiceIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyCreditRequest'
+      responses:
+        '201':
+          description: The invoice
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: DUPLICATE_VALUE -- clientUuid already used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: INVOICE_INVALID_STATE, INVOICE_OVERPAYMENT, CREDIT_NOT_AVAILABLE or PAYMENT_ALLOCATION_INVALID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /invoices/{id}/payments:
     parameters:
       - $ref: '#/components/parameters/InvoiceIdPath'
@@ -1438,6 +1487,119 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CustomerPaymentDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /customer-refunds:
+    post:
+      tags: [Customer Credit]
+      summary: Refund a customer's credit
+      description: >
+        Requires `refunds:create`. Numbered RF-000001. Posts Dr receivables
+        (tagged with the customer) / Cr the money account, drawing on the
+        credit chosen or the oldest first.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRefundRequest'
+      responses:
+        '201':
+          description: The refund
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerRefundDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: DUPLICATE_VALUE -- clientUuid already used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: CREDIT_NOT_AVAILABLE or SYSTEM_ACCOUNT_MISSING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    get:
+      tags: [Customer Credit]
+      summary: List refunds
+      description: Requires `payments:view`. Newest first, cursor-paged. Items have no sources.
+      parameters:
+        - name: customer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of refunds
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CustomerRefund'
+                  next_cursor: { type: string, nullable: true }
+                  has_more: { type: boolean }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /customer-refunds/{id}:
+    get:
+      tags: [Customer Credit]
+      summary: Get a refund with its sources
+      description: Requires `payments:view`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The refund
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerRefundDetail'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2560,6 +2722,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+
+  /customers/{id}/credit:
+    get:
+      tags: [Customer Credit]
+      summary: A customer's available credit
+      description: >
+        Requires `customers:view`. Credit notes with something left and
+        payments with unapplied money, oldest first, and their total.
+      parameters:
+        - $ref: '#/components/parameters/CustomerIdPath'
+      responses:
+        '200':
+          description: The available credit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableCredit'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /customers/{id}/transactions:
     get:
@@ -3884,6 +4069,7 @@ components:
         - "cash_expenses:create"
         - "payments:view"
         - "payments:create"
+        - "refunds:create"
         - "invoices:view"
         - "invoices:create"
         - "invoices:issue"
@@ -4154,7 +4340,14 @@ components:
       required: [clientUuid, customerId, issueDate, lines]
       properties:
         clientUuid: { type: string, format: uuid }
-        kind: { type: string, enum: [INVOICE, PROFORMA], default: INVOICE }
+        kind:
+          type: string
+          enum: [INVOICE, PROFORMA, CREDIT_NOTE]
+          default: INVOICE
+          description: >
+            CREDIT_NOTE = a credit note against no invoice (discount, goodwill);
+            issued, all of it is customer credit. It takes no dueDate,
+            paymentTermsDays, poNumber, shipTo or shippingDate.
         branchId: { type: string, format: uuid }
         customerId: { type: string, format: uuid }
         receivableAccountId: { type: string, format: uuid, description: "Omit for the business's RECEIVABLE account (422 SYSTEM_ACCOUNT_MISSING if none). A pro-forma gets one when converted." }
@@ -4255,6 +4448,9 @@ components:
         total_minor: { type: string }
         amount_paid_minor: { type: string, description: Paid plus credited. }
         balance_due_minor: { type: string, description: "Still owed; \"0\" for drafts, cancelled, credit notes and pro-formas." }
+        credit_remaining_minor:
+          type: string
+          description: Issued credit notes -- what is left to apply or refund; "0" on everything else.
         reference: { type: string, nullable: true }
         notes: { type: string, nullable: true }
         journal_id: { type: string, format: uuid, nullable: true }
@@ -4808,6 +5004,14 @@ components:
         amount_minor: { type: string }
         applied_minor: { type: string, description: Applied to invoices. }
         unapplied_minor: { type: string, description: Customer credit still on the payment. }
+        refunded_minor:
+          type: string
+          description: Credit paid back (customer refunds). amount = applied + unapplied + refunded.
+        credit_account_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The receivable account its credit was posted to.
         method: { type: string, enum: [CASH, BANK, MPESA, OTHER] }
         received_account_id: { type: string, format: uuid, nullable: true }
         reference: { type: string, nullable: true }
@@ -4836,6 +5040,104 @@ components:
                   invoice_number: { type: string }
                   amount_minor: { type: string }
                   date: { type: string, format: date }
+
+    CreditSourceRequest:
+      type: object
+      description: Exactly one of creditNoteId and customerPaymentId.
+      required: [amountMinor]
+      properties:
+        creditNoteId: { type: string, format: uuid }
+        customerPaymentId: { type: string, format: uuid }
+        amountMinor: { type: integer, minimum: 1 }
+
+    AvailableCredit:
+      type: object
+      properties:
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        currency: { type: string }
+        available_minor: { type: string, description: The Available Credit total. }
+        sources:
+          type: array
+          description: Oldest first -- the order credit is used in when none is chosen.
+          items:
+            type: object
+            properties:
+              type: { type: string, enum: [CREDIT_NOTE, PAYMENT] }
+              id: { type: string, format: uuid, description: The credit note's (invoice) id or the customer payment's id. }
+              number: { type: string }
+              date: { type: string, format: date }
+              amount_minor: { type: string }
+              remaining_minor: { type: string }
+              credited_invoice_id: { type: string, format: uuid, nullable: true }
+              description: { type: string, nullable: true, description: "Credit note notes, or payment reference." }
+              account_id: { type: string, format: uuid, description: The receivable account the credit sits in. }
+
+    ApplyCreditRequest:
+      type: object
+      required: [clientUuid]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        amountMinor: { type: integer, minimum: 1, description: Omit for as much as the invoice owes and the credit covers. }
+        date: { type: string, format: date, description: Default today; not before the invoice's or the credit's date. }
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Omit for oldest first. With amountMinor, must add up to it.
+          items: { $ref: '#/components/schemas/CreditSourceRequest' }
+
+    CreateRefundRequest:
+      type: object
+      required: [clientUuid, customerId, amountMinor, date]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        amountMinor: { type: integer, minimum: 1 }
+        date: { type: string, format: date }
+        method: { type: string, enum: [CASH, BANK, MPESA, OTHER], default: CASH }
+        paidFromAccountId: { type: string, format: uuid, description: Default by method; required for OTHER. }
+        reference: { type: string, maxLength: 100 }
+        memo: { type: string, maxLength: 1000 }
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Omit for oldest first. Must add up to amountMinor.
+          items: { $ref: '#/components/schemas/CreditSourceRequest' }
+
+    CustomerRefund:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: string, example: RF-000004 }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        date: { type: string, format: date }
+        currency: { type: string }
+        amount_minor: { type: string }
+        method: { type: string, enum: [CASH, BANK, MPESA, OTHER] }
+        paid_from_account_id: { type: string, format: uuid }
+        reference: { type: string, nullable: true }
+        memo: { type: string, nullable: true }
+        journal_id: { type: string, format: uuid }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    CustomerRefundDetail:
+      allOf:
+        - $ref: '#/components/schemas/CustomerRefund'
+        - type: object
+          properties:
+            sources:
+              type: array
+              items:
+                type: object
+                properties:
+                  type: { type: string, enum: [CREDIT_NOTE, PAYMENT] }
+                  id: { type: string, format: uuid }
+                  number: { type: string }
+                  amount_minor: { type: string }
 
     CreateStatementRequest:
       type: object
@@ -4908,11 +5210,11 @@ components:
 
     CustomerTransactionType:
       type: string
-      enum: [OPENING_BALANCE, INVOICE, CREDIT_NOTE, INVOICE_CANCELLED, CREDIT_NOTE_CANCELLED, PAYMENT, CREDIT_SALE, REVERSAL, JOURNAL]
+      enum: [OPENING_BALANCE, INVOICE, CREDIT_NOTE, INVOICE_CANCELLED, CREDIT_NOTE_CANCELLED, PAYMENT, REFUND, CREDIT_SALE, REVERSAL, JOURNAL]
       description: >
         INVOICE / CREDIT_NOTE: issued. *_CANCELLED: the cancellation of one.
         PAYMENT: money received (against an invoice, or an M-Pesa payment with
-        none). CREDIT_SALE: a legacy POST /credit-sales. OPENING_BALANCE: from
+        none). REFUND: credit paid back (customer refund). CREDIT_SALE: a legacy POST /credit-sales. OPENING_BALANCE: from
         opening balances. REVERSAL: a reversed journal. JOURNAL: any other
         journal tagged with the customer.
 
@@ -4945,7 +5247,7 @@ components:
         document_kind:
           type: string
           nullable: true
-          enum: [INVOICE, CREDIT_NOTE, PROFORMA, CUSTOMER_PAYMENT, null]
+          enum: [INVOICE, CREDIT_NOTE, PROFORMA, CUSTOMER_PAYMENT, CUSTOMER_REFUND, null]
           description: CUSTOMER_PAYMENT on PAYMENT rows -- document_id/number are then the payment's.
         document_number: { type: string, nullable: true }
         credited_invoice_id:

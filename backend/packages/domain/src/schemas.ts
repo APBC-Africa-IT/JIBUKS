@@ -698,11 +698,16 @@ const invoiceExtraFields = {
   memo: z.string().max(2000),
 };
 
-/** POST /invoices -- a DRAFT invoice or pro-forma, or with issue: true, issued at once. */
+/**
+ * POST /invoices -- a DRAFT invoice, pro-forma or credit note, or with
+ * issue: true, issued at once. A CREDIT_NOTE here is against no invoice
+ * (a discount, goodwill): issued, all of it is customer credit. For one
+ * against an invoice use POST /invoices/{id}/credit-notes.
+ */
 export const createInvoiceSchema = z
   .object({
     clientUuid: uuidSchema,
-    kind: z.enum(["INVOICE", "PROFORMA"]).default("INVOICE"),
+    kind: z.enum(["INVOICE", "PROFORMA", "CREDIT_NOTE"]).default("INVOICE"),
     branchId: uuidSchema.optional(),
     customerId: uuidSchema,
     /** Omit for the business's RECEIVABLE account (a pro-forma gets one when converted). */
@@ -730,6 +735,13 @@ export const createInvoiceSchema = z
     checkInvoiceTax(body, ctx);
     if (body.dueDate !== undefined && body.dueDate < body.issueDate) {
       ctx.addIssue({ code: "custom", path: ["dueDate"], message: "dueDate can't be before issueDate" });
+    }
+    if (body.kind === "CREDIT_NOTE") {
+      for (const field of ["dueDate", "paymentTermsDays", "poNumber", "shipTo", "shippingDate"] as const) {
+        if (body[field] !== undefined) {
+          ctx.addIssue({ code: "custom", path: [field], message: "A credit note has no " + field });
+        }
+      }
     }
   });
 
@@ -1375,3 +1387,98 @@ export const listCustomerPaymentsQuerySchema = paginationSchema
   });
 
 export type ListCustomerPaymentsQueryDto = z.infer<typeof listCustomerPaymentsQuerySchema>;
+
+// ---------------------------------------------------------------------
+// Customer credit -- applying it to invoices, and refunds
+// ---------------------------------------------------------------------
+
+/** A credit note or a payment with credit on it -- exactly one of the two ids. */
+const creditSourceSchema = z
+  .object({
+    creditNoteId: uuidSchema.optional(),
+    customerPaymentId: uuidSchema.optional(),
+    amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+  })
+  .refine((s) => (s.creditNoteId === undefined) !== (s.customerPaymentId === undefined), {
+    message: "Give exactly one of creditNoteId and customerPaymentId",
+  });
+
+/** Each credit at most once; when amountMinor is given too, the sources add up to it. */
+function checkCreditSources(
+  body: {
+    amountMinor?: number | undefined;
+    sources?: { creditNoteId?: string | undefined; customerPaymentId?: string | undefined; amountMinor: number }[] | undefined;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (!body.sources) return;
+  const seen = new Set<string>();
+  body.sources.forEach((s, i) => {
+    const id = (s.creditNoteId ?? s.customerPaymentId)!;
+    if (seen.has(id)) {
+      ctx.addIssue({ code: "custom", path: ["sources", i], message: "Each credit may appear only once" });
+    }
+    seen.add(id);
+  });
+  const total = body.sources.reduce((sum, s) => sum + s.amountMinor, 0);
+  if (body.amountMinor !== undefined && total !== body.amountMinor) {
+    ctx.addIssue({ code: "custom", path: ["sources"], message: "The sources must add up to amountMinor" });
+  }
+}
+
+/** POST /invoices/{id}/apply-credit -- use the customer's credit on an invoice. */
+export const applyCreditSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    /** Omit for as much as the invoice owes and the credit covers. */
+    amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero").optional(),
+    /** When it counts for aging. Omit for today (Africa/Nairobi). */
+    date: accountingDateSchema.optional(),
+    /** Which credit to use. Omit to use the oldest credit first. */
+    sources: z.array(creditSourceSchema).min(1).max(100).optional(),
+  })
+  .superRefine(checkCreditSources);
+
+export type ApplyCreditDto = z.infer<typeof applyCreditSchema>;
+
+/** POST /customer-refunds -- pay a customer's credit back to them. */
+export const createRefundSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    customerId: uuidSchema,
+    amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+    date: accountingDateSchema,
+    method: z.enum(INVOICE_PAYMENT_METHODS).default("CASH"),
+    /** Where the money came from. Omit for the business's Cash, Bank or M-Pesa account (by method); required for OTHER. */
+    paidFromAccountId: uuidSchema.optional(),
+    reference: z.string().trim().min(1).max(100).optional(),
+    memo: z.string().trim().min(1).max(1000).optional(),
+    /** Which credit to refund. Omit to use the oldest credit first. */
+    sources: z.array(creditSourceSchema).min(1).max(100).optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.method === "OTHER" && body.paidFromAccountId === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["paidFromAccountId"],
+        message: "Required when method is OTHER -- there is no default account for it",
+      });
+    }
+    checkCreditSources(body, ctx);
+  });
+
+export type CreateRefundDto = z.infer<typeof createRefundSchema>;
+
+/** GET /customer-refunds -- newest first, cursor pagination. */
+export const listRefundsQuerySchema = paginationSchema
+  .extend({
+    customer_id: uuidSchema.optional(),
+    from: accountingDateSchema.optional(),
+    to: accountingDateSchema.optional(),
+  })
+  .refine((r) => r.from === undefined || r.to === undefined || r.from <= r.to, {
+    message: "from must be on or before to",
+    path: ["to"],
+  });
+
+export type ListRefundsQueryDto = z.infer<typeof listRefundsQuerySchema>;

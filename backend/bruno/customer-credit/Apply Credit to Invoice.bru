@@ -1,0 +1,33 @@
+meta {
+  name: Apply Credit to Invoice
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/invoices/{{invoiceId}}/apply-credit
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}"
+  }
+}
+
+vars:pre-request {
+  invoiceId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  No amountMinor or sources: as much as the invoice owes, oldest credit first.
+  Choose credit with "sources": [{ "creditNoteId": "…", "amountMinor": 150000 }]
+  or [{ "customerPaymentId": "…", "amountMinor": 50000 }].
+}

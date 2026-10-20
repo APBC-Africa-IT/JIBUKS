@@ -14,6 +14,8 @@
 import type { InvoiceKind, InvoicePaymentMethod } from "@jibuks/domain";
 import * as customersService from "../customers/service.js";
 import type { CustomerLedgerJournalRow, CustomerWithActivityRow, ListCustomersFilters } from "../customers/repository.js";
+import * as customerCreditsService from "../customerCredits/service.js";
+import type { RefundView } from "../customerCredits/service.js";
 import * as customerPaymentsService from "../customerPayments/service.js";
 import type { JournalPayment } from "../customerPayments/service.js";
 import * as invoicesService from "../invoices/service.js";
@@ -26,6 +28,7 @@ export const TRANSACTION_TYPES = [
   "INVOICE_CANCELLED",
   "CREDIT_NOTE_CANCELLED",
   "PAYMENT",
+  "REFUND",
   "CREDIT_SALE",
   "REVERSAL",
   "JOURNAL",
@@ -38,6 +41,8 @@ interface Label {
   readonly link: JournalDocumentLink | null;
   /** The customer payment the journal posted. */
   readonly payment: JournalPayment | null;
+  /** The refund the journal posted. */
+  readonly refund: RefundView | null;
 }
 
 const JOURNAL_SOURCE_TYPES: Readonly<Record<string, TransactionType>> = {
@@ -47,32 +52,44 @@ const JOURNAL_SOURCE_TYPES: Readonly<Record<string, TransactionType>> = {
   REVERSAL: "REVERSAL",
 };
 
-function labelFrom(link: JournalDocumentLink | undefined, payment: JournalPayment | undefined, source: string): Label {
+function labelFrom(
+  link: JournalDocumentLink | undefined,
+  payment: JournalPayment | undefined,
+  refund: RefundView | undefined,
+  source: string,
+): Label {
+  const none = { link: null, payment: null, refund: null };
   if (payment) {
-    return { type: "PAYMENT", link: null, payment };
+    return { ...none, type: "PAYMENT", payment };
+  }
+  if (refund) {
+    return { ...none, type: "REFUND", refund };
   }
   if (!link) {
-    return { type: JOURNAL_SOURCE_TYPES[source] ?? "JOURNAL", link: null, payment: null };
+    return { ...none, type: JOURNAL_SOURCE_TYPES[source] ?? "JOURNAL" };
   }
   const credit = link.kind === "CREDIT_NOTE";
   if (link.link === "CANCEL") {
-    return { type: credit ? "CREDIT_NOTE_CANCELLED" : "INVOICE_CANCELLED", link, payment: null };
+    return { ...none, type: credit ? "CREDIT_NOTE_CANCELLED" : "INVOICE_CANCELLED", link };
   }
-  return { type: credit ? "CREDIT_NOTE" : "INVOICE", link, payment: null };
+  return { ...none, type: credit ? "CREDIT_NOTE" : "INVOICE", link };
 }
 
-/** Labels journals by id: by the customer payment or sales document behind each, else by its source. */
+/** Labels journals by id: by the customer payment, refund or sales document behind each, else by its source. */
 async function labelJournals(
   tenantId: string,
   journals: readonly { readonly id: string; readonly source: string }[],
 ): Promise<Map<string, Label>> {
   const ids = journals.map((j) => j.id);
-  const [links, payments] = await Promise.all([
+  const [links, payments, refunds] = await Promise.all([
     invoicesService.listJournalDocumentLinks(tenantId, ids),
     customerPaymentsService.listJournalPayments(tenantId, ids),
+    customerCreditsService.listJournalRefunds(tenantId, ids),
   ]);
   const byJournal = new Map(links.map((link) => [link.journal_id, link]));
-  return new Map(journals.map((j) => [j.id, labelFrom(byJournal.get(j.id), payments.get(j.id), j.source)]));
+  return new Map(
+    journals.map((j) => [j.id, labelFrom(byJournal.get(j.id), payments.get(j.id), refunds.get(j.id), j.source)]),
+  );
 }
 
 /** An invoice a payment row was applied to. */
@@ -87,14 +104,14 @@ export interface CustomerTransaction {
   readonly journal_number: string | null;
   readonly date: string;
   readonly type: TransactionType;
-  /** The invoice or credit note the row issued or cancelled, or the customer payment (CUSTOMER_PAYMENT) it recorded. */
+  /** The invoice or credit note the row issued or cancelled, or the customer payment or refund it recorded. */
   readonly document_id: string | null;
-  readonly document_kind: InvoiceKind | "CUSTOMER_PAYMENT" | null;
+  readonly document_kind: InvoiceKind | "CUSTOMER_PAYMENT" | "CUSTOMER_REFUND" | null;
   readonly document_number: string | null;
   /** CREDIT_NOTE rows: the invoice it credits. */
   readonly credited_invoice_id: string | null;
   readonly credited_invoice_number: string | null;
-  /** PAYMENT rows from a customer payment: how it was paid; `reference` is its cheque number or M-Pesa code. */
+  /** PAYMENT and REFUND rows: how the money moved; `reference` is its cheque number or M-Pesa code. */
   readonly payment_method: InvoicePaymentMethod | null;
   readonly reference: string | null;
   readonly description: string;
@@ -154,19 +171,20 @@ export async function getCustomerTransactions(request: CustomerTransactionsReque
     balance += debit - credit;
     totalDebit += debit;
     totalCredit += credit;
-    const { type, link, payment } = labels.get(journal.journal_id)!;
+    const { type, link, payment, refund } = labels.get(journal.journal_id)!;
+    const money = payment?.payment ?? refund;
     return {
       journal_id: journal.journal_id,
       journal_number: journal.journal_number,
       date: journal.date,
       type,
-      document_id: payment?.payment.id ?? link?.document_id ?? null,
-      document_kind: payment ? "CUSTOMER_PAYMENT" : (link?.kind ?? null),
-      document_number: payment?.payment.number ?? link?.number ?? null,
+      document_id: money?.id ?? link?.document_id ?? null,
+      document_kind: payment ? "CUSTOMER_PAYMENT" : refund ? "CUSTOMER_REFUND" : (link?.kind ?? null),
+      document_number: money?.number ?? link?.number ?? null,
       credited_invoice_id: link?.credited_invoice_id ?? null,
       credited_invoice_number: link?.credited_invoice_number ?? null,
-      payment_method: payment?.payment.method ?? null,
-      reference: payment ? payment.payment.reference : journal.reference,
+      payment_method: money?.method ?? null,
+      reference: money ? money.reference : journal.reference,
       description: journal.description,
       applied_invoices: (payment?.allocations ?? []).map((a) => ({
         invoice_id: a.invoice_id,
@@ -232,7 +250,7 @@ async function withLastActivity(tenantId: string, customers: readonly CustomerWi
       if (!label || !date) {
         return { ...customer, last_activity: null };
       }
-      const documentNumber = label.payment?.payment.number ?? label.link?.number ?? null;
+      const documentNumber = label.payment?.payment.number ?? label.refund?.number ?? label.link?.number ?? null;
       return { ...customer, last_activity: { type: label.type, date, document_number: documentNumber } };
     },
   );

@@ -1,0 +1,22 @@
+meta {
+  name: List Refunds
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/customer-refunds
+  body: none
+  auth: none
+}
+
+params:query {
+  ~customer_id: 00000000-0000-4000-8000-000000000000
+  ~from: 2026-10-01
+  ~to: 2026-10-31
+  ~limit: 50
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}

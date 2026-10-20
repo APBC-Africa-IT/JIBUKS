@@ -785,6 +785,44 @@ export async function applyAllocation(
   return { invoice, allocation };
 }
 
+/**
+ * Records `amountMinor` more of an issued credit note (already locked) as
+ * used -- applied to an invoice or refunded. A credit note's
+ * amount_paid_minor is what of it has been used; the database refuses
+ * using more than its total.
+ */
+export async function useCredit(client: TxClient, before: InvoiceRow, amountMinor: number, audit: AuditContext): Promise<InvoiceRow> {
+  const result = await client.query<InvoiceRow>(
+    `UPDATE invoices SET amount_paid_minor = amount_paid_minor + $2, updated_at = now() WHERE id = $1 RETURNING *`,
+    [before.id, amountMinor],
+  );
+  const note = result.rows[0]!;
+  await recordAuditLog(client, {
+    tenantId: before.tenant_id,
+    action: "UPDATE",
+    entityType: "invoice",
+    entityId: before.id,
+    beforeState: before,
+    afterState: note,
+    context: audit,
+  });
+  return note;
+}
+
+/** A customer's issued credit notes with something left to use, oldest first. */
+export async function listCreditNotesWithCredit(tenantId: string, customerId: string): Promise<InvoiceRow[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<InvoiceRow>(
+      `SELECT * FROM invoices
+        WHERE direction = 'AR' AND kind = 'CREDIT_NOTE' AND status = 'ISSUED' AND customer_id = $1
+          AND amount_paid_minor < total_minor
+        ORDER BY issue_date, created_at, id`,
+      [customerId],
+    );
+    return result.rows;
+  });
+}
+
 /** A customer's invoices that can take a payment now, oldest due first (issue date when there's no due date). */
 export async function listPayableInvoices(tenantId: string, customerId: string): Promise<InvoiceRow[]> {
   return readAsTenant(tenantId, async (client) => {

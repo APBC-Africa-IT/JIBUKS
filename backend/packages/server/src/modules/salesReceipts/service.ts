@@ -196,20 +196,6 @@ export interface CreateSalesReceiptRequest {
   readonly lines: readonly SalesReceiptLineRequest[];
 }
 
-/** The account a payment method's money lands in when the sale names none. */
-async function defaultDepositAccountId(
-  tenantId: string,
-  method: InvoicePaymentMethod,
-  audit: AuditContext,
-): Promise<string> {
-  if (method === "MPESA") {
-    // Same as an STK push: the M-Pesa account is created if the business has none yet.
-    return (await accountsService.getOrCreateMpesaAccount(tenantId, audit)).id;
-  }
-  // OTHER never gets here: createSalesReceiptSchema requires depositAccountId for it.
-  const key = method === "BANK" ? "BANK" : "CASH";
-  return (await accountsService.requireSystemAccount(tenantId, key, "depositAccountId")).id;
-}
 
 function journalLines(
   depositAccountId: string,
@@ -263,7 +249,8 @@ export async function createSalesReceipt(
     }
   }
   const depositAccountId =
-    request.depositAccountId ?? (await defaultDepositAccountId(request.tenantId, request.paymentMethod, audit));
+    request.depositAccountId ??
+    (await accountsService.defaultMoneyAccountId(request.tenantId, request.paymentMethod, "depositAccountId", audit));
   const lines = await documents.resolveLines(
     CASH_SALES,
     request.tenantId,

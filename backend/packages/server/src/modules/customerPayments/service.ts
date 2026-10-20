@@ -77,15 +77,6 @@ interface PlannedAllocation {
   readonly amountMinor: number;
 }
 
-/** The account a payment method's money lands in when the request names none (as for sales receipts). */
-async function defaultReceivedAccountId(tenantId: string, method: InvoicePaymentMethod, audit: AuditContext): Promise<string> {
-  if (method === "MPESA") {
-    return (await accountsService.getOrCreateMpesaAccount(tenantId, audit)).id;
-  }
-  // OTHER never gets here: createCustomerPaymentSchema requires receivedAccountId for it.
-  const key = method === "BANK" ? "BANK" : "CASH";
-  return (await accountsService.requireSystemAccount(tenantId, key, "receivedAccountId")).id;
-}
 
 function isPayable(invoice: InvoiceRow): boolean {
   return invoice.kind === "INVOICE" && (invoice.status === "ISSUED" || invoice.status === "PART_PAID");
@@ -179,7 +170,9 @@ export async function receivePayment(request: ReceivePaymentRequest, audit: Audi
   const appliedMinor = plan.reduce((sum, p) => sum + p.amountMinor, 0);
   const unappliedMinor = request.amountMinor - appliedMinor;
 
-  const receivedAccountId = request.receivedAccountId ?? (await defaultReceivedAccountId(request.tenantId, request.method, audit));
+  const receivedAccountId =
+    request.receivedAccountId ??
+    (await accountsService.defaultMoneyAccountId(request.tenantId, request.method, "receivedAccountId", audit));
   // Credit sits in the receivable account of the invoices the money was for,
   // else of the customer's open invoices, else the business's default one.
   let creditAccountId: string | null = null;
@@ -242,6 +235,7 @@ export async function receivePayment(request: ReceivePaymentRequest, audit: Audi
         memo: request.memo ?? null,
         journalId: journal.id,
         paymentId: request.paymentId ?? null,
+        creditAccountId,
       },
       audit,
     );
@@ -359,3 +353,20 @@ export async function listJournalPayments(tenantId: string, journalIds: readonly
     ]),
   );
 }
+
+// ---------------------------------------------------------------------
+// Credit -- primitives for the customerCredits module.
+// ---------------------------------------------------------------------
+
+export type CustomerPaymentRow = repository.CustomerPaymentRow;
+
+/** The customer's payments with credit left on them, oldest first. */
+export async function listWithCredit(tenantId: string, customerId: string): Promise<CustomerPaymentView[]> {
+  return repository.listWithCredit(tenantId, customerId);
+}
+
+/** Locks a payment row for the rest of the transaction. */
+export const lockPayment = repository.lockPayment;
+
+/** Moves some of a locked payment's credit to applied or refunded. */
+export const useCredit = repository.useCredit;
