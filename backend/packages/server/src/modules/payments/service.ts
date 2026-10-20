@@ -26,6 +26,7 @@ import { DomainError, isUuid, type CurrencyCode } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as accountsService from "../accounts/service.js";
 import * as customersService from "../customers/service.js";
+import * as customerPaymentsService from "../customerPayments/service.js";
 import * as invoicesService from "../invoices/service.js";
 import * as journalsService from "../journals/service.js";
 import { todayInNairobi } from "../periods/service.js";
@@ -360,24 +361,26 @@ async function postToLedger(
   const taxAmountMinor = Number(payment.tax_amount_minor);
   try {
     if (payment.invoice_id) {
-      // Posted and applied to the invoice in one transaction. Money beyond
-      // what the invoice still owes is kept as customer credit, not refused.
-      const applied = await invoicesService.applyPayment(
+      // Recorded as a customer payment, posted and applied to the invoice in
+      // one transaction. Money beyond what the invoice still owes is kept as
+      // customer credit, not refused.
+      const received = await customerPaymentsService.receivePayment(
         {
           tenantId: payment.tenant_id,
-          invoiceId: payment.invoice_id,
           clientUuid: payment.id,
+          customerId: payment.customer_id!,
           amountMinor,
           date: payment.transaction_date!,
-          receivedAccountId: payment.received_account_id,
           method: "MPESA",
+          receivedAccountId: payment.received_account_id,
           ...(payment.mpesa_receipt_number ? { reference: payment.mpesa_receipt_number } : {}),
+          allocations: [{ invoiceId: payment.invoice_id, amountMinor }],
+          overpayment: "CREDIT",
           paymentId: payment.id,
-          allowOverpayment: true,
         },
         actor,
       );
-      await repository.setPostingResult(payment.tenant_id, payment.id, applied.journalId, null);
+      await repository.setPostingResult(payment.tenant_id, payment.id, received.journal_id, null);
       return;
     }
     const journal = await journalsService.createJournal(

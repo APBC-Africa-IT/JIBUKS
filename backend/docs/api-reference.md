@@ -59,6 +59,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.26 Items](#726-items)
 - [7.27 Cheque Payments](#727-cheque-payments)
 - [7.28 Customer Statements](#728-customer-statements)
+- [7.29 Customer Payments](#729-customer-payments)
 
 ---
 
@@ -179,6 +180,7 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /invoices/{id}/issue` | `invoices:issue` (+ `invoices:override_credit_limit` to pass `overrideCreditLimit: true`) |
 | `POST /invoices/{id}/cancel` | `invoices:cancel` |
 | `POST /invoices/{id}/payments` | `payments:create` |
+| `POST /customer-payments` / `GET /customer-payments`, `GET /customer-payments/{id}` | `payments:create` / `payments:view` |
 | `GET /invoices/{id}/pdf` | `invoices:view` |
 | `PATCH /tenant` | `tenant:edit` (Owner only) |
 | `PATCH /accounts/{id}` | `accounts:edit` |
@@ -743,7 +745,7 @@ List / fetch customers for the caller's tenant. Each customer includes a server-
 }
 ```
 
-`last_activity` is the customer's latest posted transaction, or `null` if they have none. `type` is one of the transaction types listed under [`GET /customers/{id}/transactions`](#get-customersidtransactions); `document_number` is the invoice or credit note number (for a `PAYMENT`, the invoice it paid), else `null`. The Customers List screen's second line comes from this: `INVOICE` → "Invoice sent", `PAYMENT` → "Paid", and a negative `balance_minor` → "Credit available".
+`last_activity` is the customer's latest posted transaction, or `null` if they have none. `type` is one of the transaction types listed under [`GET /customers/{id}/transactions`](#get-customersidtransactions); `document_number` is the invoice, credit note or payment (`PMT-`) number, else `null`. The Customers List screen's second line comes from this: `INVOICE` → "Invoice sent", `PAYMENT` → "Paid", and a negative `balance_minor` → "Credit available".
 
 `credit_limit_minor` comes back as a **string** (64-bit value), like `balance_minor`. `null` means no limit.
 
@@ -792,6 +794,8 @@ Omit both for the whole history.
       "payment_method": null,
       "reference": "INV-000124",
       "description": "Invoice INV-000124",
+      "applied_invoices": [],
+      "unapplied_minor": null,
       "debit_minor": "100000",
       "credit_minor": "0",
       "balance_minor": "130000"
@@ -802,13 +806,15 @@ Omit both for the whole history.
       "date": "2026-09-10",
       "type": "PAYMENT",
       "document_id": "…",
-      "document_kind": "INVOICE",
-      "document_number": "INV-000124",
+      "document_kind": "CUSTOMER_PAYMENT",
+      "document_number": "PMT-000031",
       "credited_invoice_id": null,
       "credited_invoice_number": null,
       "payment_method": "MPESA",
       "reference": "QAB12CD34E",
-      "description": "Payment for INV-000124",
+      "description": "Payment PMT-000031 from Jane Traders",
+      "applied_invoices": [{ "invoice_id": "…", "invoice_number": "INV-000124", "amount_minor": "30000" }],
+      "unapplied_minor": "0",
       "debit_minor": "0",
       "credit_minor": "30000",
       "balance_minor": "100000"
@@ -822,7 +828,7 @@ Omit both for the whole history.
 | `OPENING_BALANCE` | From opening balances | null |
 | `INVOICE` / `CREDIT_NOTE` | Issued | The invoice / credit note; a credit note also has `credited_invoice_*` |
 | `INVOICE_CANCELLED` / `CREDIT_NOTE_CANCELLED` | The reversal posted when it was cancelled | The cancelled document |
-| `PAYMENT` | Money received | The invoice it was applied to, with `payment_method` and `reference`; null for an M-Pesa payment with no invoice |
+| `PAYMENT` | Money received | The customer payment (`document_kind: "CUSTOMER_PAYMENT"`, `PMT-` number) with `payment_method`, `reference`, `applied_invoices` (what it paid) and `unapplied_minor` (credit left on it); null for an M-Pesa collection with no invoice |
 | `CREDIT_SALE` | A legacy `POST /credit-sales` | null |
 | `REVERSAL` | A reversed journal | null |
 | `JOURNAL` | Any other journal tagged with the customer | null |
@@ -1876,9 +1882,11 @@ Amounts are exactly as issued; the business and customer details are their **cur
 
 `method`: `CASH` (default), `BANK`, `MPESA`, `OTHER` — informational; `receivedAccountId` decides where the money is posted. Posts Dr `receivedAccountId` / Cr the invoice's receivable account (customer-tagged), and returns the invoice (`201`) with the new allocation.
 
+It is recorded as a [customer payment](#729-customer-payments) (`PMT-` number) applied in full to this invoice, so it shows on the Receive Payments list; the allocation's `customer_payment_id` points to it. For a payment that covers several invoices, or more than is owed, use `POST /customer-payments`.
+
 **Errors:** `422 INVOICE_OVERPAYMENT` (more than `balance_due_minor` — nothing is posted), `422 INVOICE_INVALID_STATE` (draft, cancelled, paid, credit note or pro-forma), `409 DUPLICATE_VALUE` (`clientUuid` used).
 
-To collect by **M-Pesa STK push**, call [`POST /payments/mpesa/stk-push`](#post-paymentsmpesastk-push) with `invoiceId` instead; the payment is applied automatically once it succeeds.
+To collect by **M-Pesa STK push**, call [`POST /payments/mpesa/stk-push`](#post-paymentsmpesastk-push) with `invoiceId` instead; the payment is applied automatically once it succeeds, also as a customer payment. Money beyond what the invoice still owes is kept as credit on that payment (`unapplied_minor`); the allocation's own `unapplied_minor` is now always `0`.
 
 ### `POST /invoices/{id}/cancel`
 
@@ -2558,3 +2566,98 @@ The server **doesn't send** statements. The app downloads the PDF, shares it (Wh
 - **Statements screen:** list `GET /customer-statements` (`q` for the search box). Each card shows `customer_name`, `closing_balance_minor`, the month of `period_to` and `status`.
 - **Issue Statement:** pick a customer and period, `POST`, then offer the PDF to share. Call `mark-sent` once it's shared.
 - **Not built yet:** sending by SMS/email from the server, issuing statements for all customers at once, and the business logo on the PDF.
+
+---
+
+## 7.29 Customer Payments
+
+Base path: `/api/v1/customer-payments`. The **Receive Payments** screen. A payment is money received from a **customer**, not from one invoice. It gets a `PMT-000001` number (gapless per business) and posts **one journal**: Dr the money account, Cr receivables tagged with the customer. It can pay any number of that customer's invoices. Whatever isn't applied stays on the payment as **credit** (`unapplied_minor`). That credit is already in the customer's balance (which goes negative) and will be applied to later invoices or refunded (next step).
+
+Every payment against invoices is a customer payment, whichever way it arrives: this endpoint, [`POST /invoices/{id}/payments`](#post-invoicesidpayments), or an [M-Pesa STK push](#post-paymentsmpesastk-push) with `invoiceId`. Payments recorded before this existed were converted, one each, numbered in the order they were made.
+
+### `POST /customer-payments`
+
+`payments:create` (Owner, Accountant, Cashier). Accepts `Idempotency-Key`.
+
+```json
+{
+  "clientUuid": "9a1c2d3e-…",
+  "customerId": "6c1a2f3e-…",
+  "amountMinor": 4500000,
+  "date": "2026-10-20",
+  "method": "MPESA",
+  "reference": "QAB12CD34E",
+  "memo": "Paid for September"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `clientUuid` | uuid | Yes | Same one again: `409 DUPLICATE_VALUE`. |
+| `customerId` | uuid | Yes | |
+| `amountMinor` | integer | Yes | More than 0. In the customer's currency (the base currency if they have none). |
+| `date` | date | Yes | Needs an open period, like any posting. |
+| `method` | `CASH` / `BANK` / `MPESA` / `OTHER` | No | Default `CASH`. |
+| `receivedAccountId` | uuid | No | Where the money went. Default: the business's Cash, Bank or M-Pesa account for `method` (M-Pesa is created if missing). **Required for `OTHER`.** |
+| `reference` | string | No | Cheque number, M-Pesa code… Also the journal's reference (else the `PMT-` number). |
+| `memo` | string | No | Internal note. |
+| `allocations` | array | No | `[{ "invoiceId": "…", "amountMinor": 2000000 }]`: the invoices it pays and how much of each. **Omit** to pay the customer's open invoices **oldest due date first** (issue date if no due date) as far as the money goes. Send **`[]`** to keep it all as credit. |
+
+**How the money is split:**
+- **Oldest first (no `allocations`):** pays each open invoice in full, oldest due first, until the money runs out. Money left after every invoice is paid becomes credit.
+- **Chosen invoices:** each amount must be no more than that invoice's `balance_due_minor`, and together no more than `amountMinor`. The rest becomes credit.
+- **Credit** is posted to the receivable account of the invoices involved, else the business's `RECEIVABLE` account.
+
+**Success Response:** `201 Created`
+```json
+{
+  "id": "…",
+  "number": "PMT-000031",
+  "customer_id": "…",
+  "customer_name": "Jane Traders",
+  "date": "2026-10-20",
+  "currency": "KES",
+  "amount_minor": "4500000",
+  "applied_minor": "4000000",
+  "unapplied_minor": "500000",
+  "method": "MPESA",
+  "received_account_id": "…",
+  "reference": "QAB12CD34E",
+  "memo": "Paid for September",
+  "journal_id": "…",
+  "payment_id": null,
+  "created_by": "…",
+  "created_at": "2026-10-20T09:15:02.118Z",
+  "allocations": [
+    { "invoice_id": "…", "invoice_number": "INV-000118", "amount_minor": "2500000", "date": "2026-10-20" },
+    { "invoice_id": "…", "invoice_number": "INV-000124", "amount_minor": "1500000", "date": "2026-10-20" }
+  ]
+}
+```
+
+`payment_id` is the M-Pesa collection (`/payments`) when the payment came from an STK push. `allocations` are oldest due first.
+
+**Errors:** `400 VALIDATION_ERROR` (allocations add up to more than `amountMinor`, the same invoice twice, `OTHER` without `receivedAccountId`, zero amount); `404 CUSTOMER_NOT_FOUND`, `404 INVOICE_NOT_FOUND`; `422 INVOICE_OVERPAYMENT` (more than an invoice still owes); `422 INVOICE_INVALID_STATE` (a draft, paid or cancelled invoice, a credit note or pro-forma, or the invoice changed meanwhile: try again); `422 PAYMENT_ALLOCATION_INVALID` (another customer's invoice, or another currency); `422 SYSTEM_ACCOUNT_MISSING` (no default account for the method, or no `RECEIVABLE` account for credit with no invoice); `409 DUPLICATE_VALUE`. Nothing is posted on any error.
+
+### `GET /customer-payments`
+
+`payments:view`. Newest first, cursor paging as for `GET /invoices`. Items have no `allocations`.
+
+| Filter | Description |
+|---|---|
+| `customer_id` | One customer's payments. |
+| `method` | `CASH`, `BANK`, `MPESA` or `OTHER` (the screen's Method filter). |
+| `from` / `to` | Payment date range, inclusive (the Date filter). |
+| `has_credit` | `true` = payments with credit left on them. |
+| `q` | The search box: customer name, payment number or reference, case-insensitive. |
+
+### `GET /customer-payments/{id}`
+
+`payments:view`. One payment with its `allocations`. `404 CUSTOMER_PAYMENT_NOT_FOUND`.
+
+### Notes for consuming clients (Customer Payments)
+
+- **Receive Payments list:** `GET /customer-payments`. Each card is `customer_name`, `amount_minor`, `method` and `date`.
+- **Receive Payment form:** pick the customer, then show their open invoices oldest first from [`GET /receivables-aging?customer_id=…`](#721-receivables-aging) (`invoices[]` with `open_minor`). Pre-fill the amounts oldest first, let the user untick or edit them, and send what's left ticked as `allocations`. Or send no `allocations` and let the server apply oldest first.
+- **Credit:** a customer with credit has a negative `balance_minor`, which is the Customers List's "Credit available". Applying that credit to an invoice later, and refunds, are the next step.
+- **Not built yet:** voiding or editing a payment, applying credit later, refunds, receipts as PDF.

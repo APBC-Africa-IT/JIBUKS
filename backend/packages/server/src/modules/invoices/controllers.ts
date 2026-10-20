@@ -16,6 +16,7 @@ import {
 } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import { loadPermissions } from "../../middleware/requirePermission.js";
+import * as customerPaymentsService from "../customerPayments/service.js";
 import * as service from "./service.js";
 
 function auditContextFrom(req: Request): AuditContext {
@@ -113,13 +114,26 @@ export async function cancel(req: Request, res: Response): Promise<void> {
   res.json(await service.cancelInvoice(req.tenantId!, req.params["id"]!, body.reason, auditContextFrom(req)));
 }
 
+/** A payment against one invoice: recorded as a customer payment applied to it in full. */
 export async function recordPayment(req: Request, res: Response): Promise<void> {
   const body = recordInvoicePaymentSchema.parse(req.body);
-  const invoice = await service.recordPayment(
-    { ...defined(body), tenantId: req.tenantId!, invoiceId: req.params["id"]! },
+  const invoiceId = req.params["id"]!;
+  const invoice = await service.getInvoiceRow(req.tenantId!, invoiceId);
+  await customerPaymentsService.receivePayment(
+    {
+      tenantId: req.tenantId!,
+      clientUuid: body.clientUuid,
+      customerId: invoice.customer_id!,
+      amountMinor: body.amountMinor,
+      date: body.date,
+      method: body.method,
+      receivedAccountId: body.receivedAccountId,
+      reference: body.reference,
+      allocations: [{ invoiceId, amountMinor: body.amountMinor }],
+    },
     auditContextFrom(req),
   );
-  res.status(201).json(invoice);
+  res.status(201).json(await service.getInvoice(req.tenantId!, invoiceId));
 }
 
 export async function createCreditNote(req: Request, res: Response): Promise<void> {

@@ -133,10 +133,12 @@ describe("GET /api/v1/customers/{id}/transactions", () => {
       expect.objectContaining({ type: "INVOICE", document_id: b.id, debit_minor: "50000", balance_minor: "180000" }),
       expect.objectContaining({
         type: "PAYMENT",
-        document_id: b.id,
-        document_number: b.number,
+        document_kind: "CUSTOMER_PAYMENT",
+        document_number: expect.stringMatching(/^PMT-\d{6,}$/),
         payment_method: "MPESA",
         reference: "QAB12CD34E",
+        applied_invoices: [{ invoice_id: b.id, invoice_number: b.number, amount_minor: "20000" }],
+        unapplied_minor: "0",
         credit_minor: "20000",
         balance_minor: "160000",
       }),
@@ -212,7 +214,10 @@ describe("last activity on GET /api/v1/customers", () => {
     const now = await get(`/customers/${f.customerId}`);
     const earlier = await get(`/customers/${f.customerId}?as_of=${addDays(today, -1)}`);
 
-    expect(now.body).toMatchObject({ balance_minor: "0", last_activity: { type: "PAYMENT", document_number: invoice.number } });
+    expect(now.body).toMatchObject({
+      balance_minor: "0",
+      last_activity: { type: "PAYMENT", document_number: expect.stringMatching(/^PMT-\d{6,}$/) },
+    });
     expect(earlier.body.last_activity).toBeNull();
   });
 });

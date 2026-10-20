@@ -50,7 +50,7 @@ const BUCKET_LABELS: Readonly<Record<string, string>> = {
   DAYS_OVER_90: "Over 90 days",
 };
 
-/** What the customer reads on a row: "Invoice INV-000124", "Payment (M-Pesa QAB12CD34E) - INV-000124". */
+/** What the customer reads on a row: "Invoice INV-000124", "Payment PMT-000003 (M-Pesa QAB12CD34E) - INV-000124, INV-000125". */
 export function describeTransaction(t: CustomerTransaction): string {
   switch (t.type) {
     case "OPENING_BALANCE":
@@ -65,7 +65,16 @@ export function describeTransaction(t: CustomerTransaction): string {
       return `Credit note ${t.document_number ?? ""} cancelled`;
     case "PAYMENT": {
       const how = [t.payment_method ? METHOD_LABELS[t.payment_method] : null, t.reference].filter(Boolean).join(" ");
-      return `Payment${how ? ` (${how})` : ""}${t.document_number ? ` - ${t.document_number}` : ""}`;
+      // Rows from a customer payment carry the payment's number and what it paid;
+      // rows snapshotted before customer payments existed name the invoice itself.
+      const fromPayment = t.document_kind === "CUSTOMER_PAYMENT";
+      const paid = fromPayment
+        ? (t.applied_invoices ?? []).map((a) => a.invoice_number)
+        : t.document_number
+          ? [t.document_number]
+          : [];
+      const number = fromPayment && t.document_number ? ` ${t.document_number}` : "";
+      return `Payment${number}${how ? ` (${how})` : ""}${paid.length > 0 ? ` - ${paid.join(", ")}` : ""}`;
     }
     case "CREDIT_SALE":
       return `Credit sale${t.reference ? ` ${t.reference}` : ""}`;

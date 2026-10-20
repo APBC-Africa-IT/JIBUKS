@@ -66,6 +66,9 @@ export type DomainErrorCode =
   | "OPENING_BALANCES_LOCKED"
   // customer statements
   | "STATEMENT_NOT_FOUND"
+  // customer payments
+  | "CUSTOMER_PAYMENT_NOT_FOUND"
+  | "PAYMENT_ALLOCATION_INVALID"
   // idempotency -- Section 9.1, C-08
   | "IDEMPOTENCY_KEY_INVALID"
   | "IDEMPOTENCY_KEY_REUSED"
