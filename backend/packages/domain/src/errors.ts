@@ -64,6 +64,8 @@ export type DomainErrorCode =
   | "ACCOUNT_WRONG_TYPE"
   // opening balances -- FR-ACC-04
   | "OPENING_BALANCES_LOCKED"
+  // customer statements
+  | "STATEMENT_NOT_FOUND"
   // idempotency -- Section 9.1, C-08
   | "IDEMPOTENCY_KEY_INVALID"
   | "IDEMPOTENCY_KEY_REUSED"

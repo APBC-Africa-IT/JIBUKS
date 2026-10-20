@@ -32,6 +32,8 @@ export const PERMISSIONS = [
   "customers:view",
   "customers:create",
   "customers:edit",
+  "statements:view",
+  "statements:create",
   "suppliers:view",
   "suppliers:create",
   "suppliers:edit",

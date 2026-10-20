@@ -72,6 +72,8 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   ACCOUNT_WRONG_TYPE: 422,
   // opening balances
   OPENING_BALANCES_LOCKED: 422,
+  // customer statements
+  STATEMENT_NOT_FOUND: 404,
   // idempotency -- status codes follow the IETF Idempotency-Key header
   // draft: reuse with a different payload is 422, a concurrent retry of a
   // still-running request is 409.

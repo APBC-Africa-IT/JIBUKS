@@ -1,0 +1,31 @@
+meta {
+  name: Issue Statement
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/customer-statements
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "customerId": "{{customerId}}",
+    "from": "2026-09-01",
+    "to": "2026-09-30",
+    "message": "Kindly settle by 5 October. M-Pesa Paybill 123456."
+  }
+}
+
+vars:pre-request {
+  customerId: 00000000-0000-4000-8000-000000000000
+}

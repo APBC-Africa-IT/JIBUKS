@@ -1,0 +1,20 @@
+meta {
+  name: Mark Statement Sent
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/customer-statements/{{statementId}}/mark-sent
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Idempotency-Key: {{$randomUUID}}
+}
+
+vars:pre-request {
+  statementId: 00000000-0000-4000-8000-000000000000
+}

@@ -162,6 +162,11 @@ tags:
       with default price, unit and accounts. Sub-items via parentItemId.
       Never deleted, only deactivated. trackStock is stored; stock
       quantities come later.
+  - name: Customer Statements
+    description: >
+      Statements as numbered snapshots (ST-000001) of a customer's
+      transactions and aging for a period, with a PDF and a sent mark. They
+      post nothing; the server doesn't send them.
   - name: Cheque Payments
     description: >
       Cheques as numbered documents (CHQ-000001): cheque number, optional
@@ -1299,6 +1304,161 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /customer-statements:
+    post:
+      tags: [Customer Statements]
+      summary: Issue a statement
+      description: >
+        Requires `statements:create`. Snapshots the customer's transactions
+        (as GET /customers/{id}/transactions) for from..to and their aging at
+        to, and numbers it ST-000001 (gapless). Posts nothing.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStatementRequest'
+            example:
+              clientUuid: "4b0c7c4e-8f8e-4c64-9d0c-3a7d3f6b1a01"
+              customerId: "6c1a2f3e-2b4a-4c1a-9c1a-2b4a4c1a9c1a"
+              from: "2026-09-01"
+              to: "2026-09-30"
+      responses:
+        '201':
+          description: The statement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatementDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: DUPLICATE_VALUE -- clientUuid already used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    get:
+      tags: [Customer Statements]
+      summary: List statements
+      description: Requires `statements:view`. Newest first, cursor-paged. Items have no transactions.
+      parameters:
+        - name: customer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: sent
+          in: query
+          required: false
+          description: true = marked sent, false = not yet.
+          schema: { type: string, enum: ["true", "false"] }
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive match on the customer's name or the statement number.
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of statements
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Statement'
+                  next_cursor: { type: string, nullable: true }
+                  has_more: { type: boolean }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /customer-statements/{id}:
+    get:
+      tags: [Customer Statements]
+      summary: Get a statement with its transactions
+      description: Requires `statements:view`.
+      parameters:
+        - $ref: '#/components/parameters/StatementIdPath'
+      responses:
+        '200':
+          description: The statement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatementDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /customer-statements/{id}/pdf:
+    get:
+      tags: [Customer Statements]
+      summary: Download a statement as PDF
+      description: Requires `statements:view`. Amounts from the snapshot; business and customer details current.
+      parameters:
+        - $ref: '#/components/parameters/StatementIdPath'
+      responses:
+        '200':
+          description: The PDF (inline; filename="ST-000007.pdf")
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /customer-statements/{id}/mark-sent:
+    post:
+      tags: [Customer Statements]
+      summary: Mark a statement sent
+      description: >
+        Requires `statements:create`. No body. Records that the app shared
+        the statement; marking one already sent keeps the first sent_at.
+      parameters:
+        - $ref: '#/components/parameters/StatementIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The statement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatementDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /cheque-payments:
     post:
@@ -3282,6 +3442,11 @@ components:
       schema:
         type: string
         format: uuid
+    StatementIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     CustomerIdPath:
       name: id
       in: path
@@ -3549,6 +3714,8 @@ components:
         - "customers:view"
         - "customers:create"
         - "customers:edit"
+        - "statements:view"
+        - "statements:create"
         - "suppliers:view"
         - "suppliers:create"
         - "suppliers:edit"
@@ -4447,6 +4614,75 @@ components:
             GET /customers/{id}.
           allOf:
             - $ref: '#/components/schemas/CustomerLastActivity'
+
+    CreateStatementRequest:
+      type: object
+      required: [clientUuid, customerId]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        from:
+          type: string
+          format: date
+          description: First day covered. Default the 1st of the month `to` is in.
+        to:
+          type: string
+          format: date
+          description: The statement date. Default today (Africa/Nairobi).
+        message: { type: string, minLength: 1, maxLength: 1000 }
+
+    Statement:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: string, example: "ST-000007" }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        period_from: { type: string, format: date }
+        period_to:
+          type: string
+          format: date
+          description: The statement date.
+        currency:
+          type: string
+          nullable: true
+          description: Null means the tenant's base currency.
+        opening_balance_minor: { type: string }
+        total_debit_minor: { type: string }
+        total_credit_minor: { type: string }
+        closing_balance_minor:
+          type: string
+          description: Owed at period_to; negative = the customer is in credit.
+        aging:
+          type: object
+          description: >
+            At period_to, same fields as GET /receivables-aging; the buckets
+            plus not_invoiced_minor add up to balance_minor (= closing_balance_minor).
+          additionalProperties: { type: string }
+          example:
+            current_minor: "4500000"
+            days_1_30_minor: "2000000"
+            days_31_60_minor: "800000"
+            days_61_90_minor: "0"
+            days_over_90_minor: "0"
+            not_invoiced_minor: "0"
+            balance_minor: "7300000"
+        message: { type: string, nullable: true }
+        status: { type: string, enum: [SENT, NOT_SENT] }
+        sent_at: { type: string, format: date-time, nullable: true }
+        sent_by: { type: string, format: uuid, nullable: true }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    StatementDetail:
+      allOf:
+        - $ref: '#/components/schemas/Statement'
+        - type: object
+          properties:
+            transactions:
+              type: array
+              items:
+                $ref: '#/components/schemas/CustomerTransaction'
 
     CustomerTransactionType:
       type: string
