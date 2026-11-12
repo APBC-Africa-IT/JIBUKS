@@ -1,0 +1,19 @@
+meta {
+  name: List Supplier Types
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/supplier-types
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  The Supplier Type dropdown. Every business starts with Individual, Business, Wholesaler, Manufacturer and Distributor.
+}

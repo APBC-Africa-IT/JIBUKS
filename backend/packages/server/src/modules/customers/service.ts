@@ -32,6 +32,9 @@ export interface CreateCustomerRequest {
   readonly preferredChannel?: CustomerChannel;
   readonly sendStatements?: boolean;
   readonly paymentReminders?: boolean;
+  readonly city?: string;
+  readonly country?: string;
+  readonly postalCode?: string;
 }
 
 /** What the request leaves out of terms, credit limit and communication preferences comes from the business's customer defaults. */
@@ -54,6 +57,9 @@ export async function createCustomer(request: CreateCustomerRequest, audit: Audi
       ...(request.currency !== undefined ? { currency: request.currency } : {}),
       ...(creditLimitMinor !== undefined ? { creditLimitMinor } : {}),
       ...(preferredChannel !== undefined ? { preferredChannel } : {}),
+      ...(request.city !== undefined ? { city: request.city } : {}),
+      ...(request.country !== undefined ? { country: request.country } : {}),
+      ...(request.postalCode !== undefined ? { postalCode: request.postalCode } : {}),
       sendStatements: request.sendStatements ?? defaults.send_statements,
       paymentReminders: request.paymentReminders ?? defaults.payment_reminders,
     },

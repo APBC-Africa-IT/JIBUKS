@@ -9,39 +9,29 @@
 import { DomainError } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import * as repository from "./repository.js";
-import type { SupplierRow, SupplierWithBalanceRow, UpdateSupplierInput } from "./repository.js";
+import type {
+  CreateSupplierInput,
+  ListSuppliersFilters,
+  SupplierRow,
+  SupplierTypeRow,
+  SupplierWithBalanceRow,
+  TxClient,
+  UpdateSupplierInput,
+} from "./repository.js";
 
-export interface CreateSupplierRequest {
-  readonly tenantId: string;
-  readonly name: string;
-  readonly phone?: string;
-  readonly email?: string;
-  readonly address?: string;
-  readonly tags?: string[];
-  readonly taxIdentifier?: string;
-  readonly paymentTermsDays?: number;
-  readonly currency?: string;
-}
+export type CreateSupplierRequest = CreateSupplierInput;
 
 export async function createSupplier(request: CreateSupplierRequest, audit: AuditContext): Promise<SupplierRow> {
-  return repository.createSupplier(
-    {
-      tenantId: request.tenantId,
-      name: request.name,
-      ...(request.phone !== undefined ? { phone: request.phone } : {}),
-      ...(request.email !== undefined ? { email: request.email } : {}),
-      ...(request.address !== undefined ? { address: request.address } : {}),
-      ...(request.tags !== undefined ? { tags: request.tags } : {}),
-      ...(request.taxIdentifier !== undefined ? { taxIdentifier: request.taxIdentifier } : {}),
-      ...(request.paymentTermsDays !== undefined ? { paymentTermsDays: request.paymentTermsDays } : {}),
-      ...(request.currency !== undefined ? { currency: request.currency } : {}),
-    },
-    audit,
-  );
+  return repository.createSupplier(request, audit);
 }
 
-export async function listSuppliers(tenantId: string, asOf?: string): Promise<SupplierWithBalanceRow[]> {
-  return repository.listSuppliers(tenantId, asOf);
+/** Creates the supplier inside the caller's transaction (opening balances posts its opening journal in the same one). */
+export async function insertSupplier(client: TxClient, request: CreateSupplierRequest, audit: AuditContext): Promise<SupplierRow> {
+  return repository.insertSupplier(client, request, audit);
+}
+
+export async function listSuppliers(tenantId: string, filters: ListSuppliersFilters = {}): Promise<SupplierWithBalanceRow[]> {
+  return repository.listSuppliers(tenantId, filters);
 }
 
 export async function getSupplier(tenantId: string, supplierId: string, asOf?: string): Promise<SupplierWithBalanceRow> {
@@ -79,4 +69,30 @@ export async function updateSupplier(
     throw new DomainError("SUPPLIER_NOT_FOUND", `Supplier ${supplierId} not found`);
   }
   return supplier;
+}
+
+export async function listSupplierTypes(tenantId: string): Promise<SupplierTypeRow[]> {
+  return repository.listSupplierTypes(tenantId);
+}
+
+/** A new business's starting Supplier Type list (onboarding). */
+export async function seedDefaultSupplierTypes(tenantId: string): Promise<void> {
+  return repository.seedDefaultSupplierTypes(tenantId);
+}
+
+export async function createSupplierType(tenantId: string, name: string, audit: AuditContext): Promise<SupplierTypeRow> {
+  return repository.createSupplierType(tenantId, name, audit);
+}
+
+export async function renameSupplierType(
+  tenantId: string,
+  supplierTypeId: string,
+  name: string,
+  audit: AuditContext,
+): Promise<SupplierTypeRow> {
+  const type = await repository.renameSupplierType(tenantId, supplierTypeId, name, audit);
+  if (!type) {
+    throw new DomainError("SUPPLIER_TYPE_NOT_FOUND", `Supplier type ${supplierTypeId} not found`);
+  }
+  return type;
 }

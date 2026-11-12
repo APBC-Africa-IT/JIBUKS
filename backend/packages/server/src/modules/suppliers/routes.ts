@@ -19,3 +19,12 @@ suppliersRouter.get("/:id", requirePermission("suppliers:view"), asyncHandler(co
 suppliersRouter.patch("/:id", requirePermission("suppliers:edit"), asyncHandler(controllers.update));
 suppliersRouter.post("/:id/deactivate", requirePermission("suppliers:edit"), asyncHandler(controllers.deactivate));
 suppliersRouter.post("/:id/reactivate", requirePermission("suppliers:edit"), asyncHandler(controllers.reactivate));
+
+/** Each business's Supplier Type list (/supplier-types): the dropdown and its "+ Add type". */
+export const supplierTypesRouter: RouterType = Router();
+
+supplierTypesRouter.use(requireRealIdentity);
+
+supplierTypesRouter.get("/", requirePermission("suppliers:view"), asyncHandler(controllers.listTypes));
+supplierTypesRouter.post("/", requirePermission("suppliers:create"), asyncHandler(controllers.createType));
+supplierTypesRouter.patch("/:id", requirePermission("suppliers:edit"), asyncHandler(controllers.renameType));

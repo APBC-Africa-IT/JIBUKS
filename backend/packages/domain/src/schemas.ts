@@ -36,6 +36,13 @@ export const minorUnitsSchema = z
 
 export const accountTypeSchema = z.enum(ACCOUNT_TYPES);
 
+/** ISO 3166-1 alpha-2 country code, e.g. KE; upper-cased. */
+export const countryCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .pipe(z.string().regex(/^[A-Z]{2}$/, "A two-letter country code, e.g. KE"));
+
 /** Query params for GET /accounts, GET /customers, GET /suppliers and their
  * /{id} counterparts: an optional point-in-time cutoff for the returned
  * balance_minor (Section 9.1 dates). `as_of` (not camelCase) because it's a
@@ -179,9 +186,70 @@ const partyFields = {
   paymentTermsDays: paymentTermsDaysSchema.optional(),
   /** Omit for the tenant's base currency (same convention as accounts). */
   currency: currencySchema.optional(),
+  city: z.string().trim().min(1).max(100).optional(),
+  /** ISO 3166-1 alpha-2, e.g. KE. */
+  country: countryCodeSchema.optional(),
+  postalCode: z.string().trim().min(1).max(20).optional(),
 };
 
-export const createSupplierSchema = z.object(partyFields);
+/** How the business usually pays a supplier. */
+export const SUPPLIER_PAYMENT_METHODS = ["CASH", "BANK", "MPESA", "CHEQUE", "OTHER"] as const;
+export type SupplierPaymentMethod = (typeof SUPPLIER_PAYMENT_METHODS)[number];
+
+/** Basis points: 1600 = 16%. */
+const taxRateBpsSchema = z.number().int().min(0).max(10000);
+
+/** What the Add Supplier screen adds to the shared party fields. */
+const supplierDetailFields = {
+  /** From GET /supplier-types. */
+  supplierTypeId: uuidSchema,
+  vatRegistered: z.boolean(),
+  /** The VAT rate this supplier's bills usually carry; only a VAT-registered supplier charges VAT. */
+  defaultTaxRateBps: taxRateBpsSchema,
+  preferredPaymentMethod: z.enum(SUPPLIER_PAYMENT_METHODS),
+  bankName: z.string().trim().min(1).max(100),
+  bankAccountNumber: z.string().trim().min(1).max(50),
+  mpesaPhone: z.string().trim().min(1).max(20),
+  /** The supplier's M-Pesa Paybill or Till number. */
+  mpesaPaybillTill: z.string().trim().min(1).max(20),
+};
+
+function checkSupplierVat(
+  body: { vatRegistered?: boolean | undefined; defaultTaxRateBps?: number | null | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  if (body.vatRegistered === false && body.defaultTaxRateBps !== undefined && body.defaultTaxRateBps !== null && body.defaultTaxRateBps > 0) {
+    ctx.addIssue({ code: "custom", path: ["defaultTaxRateBps"], message: "A supplier that isn't VAT registered charges no VAT" });
+  }
+}
+
+export const createSupplierSchema = z
+  .object({
+    ...partyFields,
+    supplierTypeId: supplierDetailFields.supplierTypeId.optional(),
+    vatRegistered: supplierDetailFields.vatRegistered.default(false),
+    defaultTaxRateBps: supplierDetailFields.defaultTaxRateBps.optional(),
+    preferredPaymentMethod: supplierDetailFields.preferredPaymentMethod.optional(),
+    bankName: supplierDetailFields.bankName.optional(),
+    bankAccountNumber: supplierDetailFields.bankAccountNumber.optional(),
+    mpesaPhone: supplierDetailFields.mpesaPhone.optional(),
+    mpesaPaybillTill: supplierDetailFields.mpesaPaybillTill.optional(),
+    /** The "Active Supplier" box -- false creates it already inactive. */
+    isActive: z.boolean().default(true),
+    /**
+     * What the business owed this supplier when its books in JiBUks began.
+     * Added to the business's opening balances (Cr Accounts Payable tagged
+     * with the supplier / Dr Opening Balance Equity). `date` must be the
+     * business's opening date once one is set.
+     */
+    openingBalance: z
+      .object({
+        amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+        date: accountingDateSchema,
+      })
+      .optional(),
+  })
+  .superRefine(checkSupplierVat);
 
 /** How a customer wants to be contacted. NONE = don't. */
 export const CUSTOMER_CHANNELS = ["SMS", "WHATSAPP", "EMAIL", "NONE"] as const;
@@ -214,13 +282,47 @@ const updatePartyFields = {
   taxIdentifier: taxIdentifierSchema.nullable().optional(),
   paymentTermsDays: paymentTermsDaysSchema.nullable().optional(),
   currency: currencySchema.nullable().optional(),
+  city: partyFields.city.nullable(),
+  country: partyFields.country.nullable(),
+  postalCode: partyFields.postalCode.nullable(),
 };
 
 const atLeastOneField = (body: object) => Object.keys(body).length > 0;
 
+/** Use deactivate/reactivate for the Active box; the opening balance is changed through /opening-balances. */
 export const updateSupplierSchema = z
-  .object(updatePartyFields)
-  .refine(atLeastOneField, "Provide at least one field to update");
+  .object({
+    ...updatePartyFields,
+    supplierTypeId: supplierDetailFields.supplierTypeId.nullable().optional(),
+    vatRegistered: supplierDetailFields.vatRegistered.optional(),
+    defaultTaxRateBps: supplierDetailFields.defaultTaxRateBps.nullable().optional(),
+    preferredPaymentMethod: supplierDetailFields.preferredPaymentMethod.nullable().optional(),
+    bankName: supplierDetailFields.bankName.nullable().optional(),
+    bankAccountNumber: supplierDetailFields.bankAccountNumber.nullable().optional(),
+    mpesaPhone: supplierDetailFields.mpesaPhone.nullable().optional(),
+    mpesaPaybillTill: supplierDetailFields.mpesaPaybillTill.nullable().optional(),
+  })
+  .refine(atLeastOneField, "Provide at least one field to update")
+  .superRefine(checkSupplierVat);
+
+/** GET /suppliers -- the balance cutoff, a search box and a type filter. */
+export const listSuppliersQuerySchema = partyBalanceQuerySchema.extend({
+  /** Case-insensitive match on name, code, phone or email. */
+  q: z.string().trim().min(1).max(100).optional(),
+  supplier_type_id: uuidSchema.optional(),
+});
+
+export type ListSuppliersQueryDto = z.infer<typeof listSuppliersQuerySchema>;
+
+/** The Supplier Type dropdown's starting list for every business. */
+export const DEFAULT_SUPPLIER_TYPES = ["Individual", "Business", "Wholesaler", "Manufacturer", "Distributor"] as const;
+
+/** POST /supplier-types ("+ Add type") and PATCH /supplier-types/{id} (rename). */
+export const supplierTypeSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+});
+
+export type SupplierTypeDto = z.infer<typeof supplierTypeSchema>;
 
 export const updateCustomerSchema = z
   .object({

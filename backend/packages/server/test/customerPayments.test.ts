@@ -226,7 +226,18 @@ describe("POST /api/v1/customer-payments", () => {
     const first = await post("/customer-payments", paymentBody(f, 10000));
     const second = await post("/customer-payments", paymentBody(f, 10000));
 
-    expect(Number(second.number.slice(4))).toBe(Number(first.number.slice(4)) + 1);
+    // Other test files post payments on this business at the same time, so
+    // the two needn't be adjacent: check order, and that no number is skipped
+    // (numbers issued = payments stored).
+    const counts = await withTenant(TEST_TENANT_ID, async (client) => {
+      const result = await client.query<{ issued: number; stored: number }>(
+        `SELECT (SELECT last_value FROM payment_number_sequences)::int AS issued,
+                (SELECT count(*) FROM customer_payments)::int AS stored`,
+      );
+      return result.rows[0]!;
+    });
+    expect(Number(second.number.slice(4))).toBeGreaterThan(Number(first.number.slice(4)));
+    expect(counts.issued).toBe(counts.stored);
   });
 
   it("refuses allocations that don't fit, before posting anything", async () => {

@@ -92,7 +92,7 @@ describe("GET /api/v1/suppliers", () => {
       );
     });
     await withTenant(otherTenantId, async (client) => {
-      await client.query(`INSERT INTO suppliers (tenant_id, name) VALUES ($1, 'Other Tenant Supplier')`, [
+      await client.query(`INSERT INTO suppliers (tenant_id, name, code) VALUES ($1, 'Other Tenant Supplier', 'SUP-0001')`, [
         otherTenantId,
       ]);
     });
@@ -284,7 +284,7 @@ describe("GET /api/v1/suppliers (balance_minor)", () => {
       );
       return withTenant(otherTenantId, async (tenantClient) => {
         const result = await tenantClient.query(
-          `INSERT INTO suppliers (tenant_id, name) VALUES ($1, 'Foreign Supplier') RETURNING id`,
+          `INSERT INTO suppliers (tenant_id, name, code) VALUES ($1, 'Foreign Supplier', 'SUP-0001') RETURNING id`,
           [otherTenantId],
         );
         return result.rows[0]!.id as string;

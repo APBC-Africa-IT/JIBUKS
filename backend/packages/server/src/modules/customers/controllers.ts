@@ -35,6 +35,9 @@ export async function create(req: Request, res: Response): Promise<void> {
       ...(body.preferredChannel !== undefined ? { preferredChannel: body.preferredChannel } : {}),
       ...(body.sendStatements !== undefined ? { sendStatements: body.sendStatements } : {}),
       ...(body.paymentReminders !== undefined ? { paymentReminders: body.paymentReminders } : {}),
+      ...(body.city !== undefined ? { city: body.city } : {}),
+      ...(body.country !== undefined ? { country: body.country } : {}),
+      ...(body.postalCode !== undefined ? { postalCode: body.postalCode } : {}),
     },
     auditContextFrom(req),
   );

@@ -18,7 +18,10 @@ headers {
 body:json {
   {
     "paymentTermsDays": 30,
-    "taxIdentifier": "P051234567X"
+    "taxIdentifier": "P051234567X",
+    "city": "Mombasa",
+    "preferredPaymentMethod": "BANK",
+    "bankName": "Equity"
   }
 }
 
@@ -27,5 +30,5 @@ vars:pre-request {
 }
 
 docs {
-  Requires suppliers:edit. Send only fields to change; null clears one. Currency is locked once the supplier has transactions (422 PARTY_CURRENCY_LOCKED).
+  Requires suppliers:edit. Send only fields to change; null clears one. Currency is locked once the supplier has transactions (422 PARTY_CURRENCY_LOCKED). A VAT rate above 0 needs vatRegistered (422 TAX_NOT_REGISTERED). The code, isActive and opening balance can't be changed here.
 }

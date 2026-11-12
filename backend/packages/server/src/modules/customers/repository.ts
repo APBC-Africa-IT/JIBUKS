@@ -33,6 +33,10 @@ export interface CustomerRow {
   readonly preferred_channel: CustomerChannel | null;
   readonly send_statements: boolean;
   readonly payment_reminders: boolean;
+  readonly city: string | null;
+  /** ISO 3166-1 alpha-2. */
+  readonly country: string | null;
+  readonly postal_code: string | null;
   readonly created_at: string;
 }
 
@@ -81,6 +85,9 @@ export interface CreateCustomerInput {
   readonly preferredChannel?: CustomerChannel;
   readonly sendStatements?: boolean;
   readonly paymentReminders?: boolean;
+  readonly city?: string;
+  readonly country?: string;
+  readonly postalCode?: string;
 }
 
 export async function createCustomer(input: CreateCustomerInput, audit: AuditContext): Promise<CustomerRow> {
@@ -88,8 +95,8 @@ export async function createCustomer(input: CreateCustomerInput, audit: AuditCon
     const id = randomUUID();
     const result = await client.query<CustomerRow>(
       `INSERT INTO customers (id, tenant_id, name, phone, email, address, tags, tax_identifier, payment_terms_days, currency,
-                              credit_limit_minor, preferred_channel, send_statements, payment_reminders)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                              credit_limit_minor, preferred_channel, send_statements, payment_reminders, city, country, postal_code)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        RETURNING *`,
       [
         id,
@@ -106,6 +113,9 @@ export async function createCustomer(input: CreateCustomerInput, audit: AuditCon
         input.preferredChannel ?? null,
         input.sendStatements ?? false,
         input.paymentReminders ?? false,
+        input.city ?? null,
+        input.country ?? null,
+        input.postalCode ?? null,
       ],
     );
 
@@ -352,6 +362,9 @@ export interface UpdateCustomerInput {
   readonly preferredChannel?: CustomerChannel | null | undefined;
   readonly sendStatements?: boolean | undefined;
   readonly paymentReminders?: boolean | undefined;
+  readonly city?: string | null | undefined;
+  readonly country?: string | null | undefined;
+  readonly postalCode?: string | null | undefined;
 }
 
 const UPDATABLE_COLUMNS: Readonly<Record<keyof UpdateCustomerInput, string>> = {
@@ -367,6 +380,9 @@ const UPDATABLE_COLUMNS: Readonly<Record<keyof UpdateCustomerInput, string>> = {
   preferredChannel: "preferred_channel",
   sendStatements: "send_statements",
   paymentReminders: "payment_reminders",
+  city: "city",
+  country: "country",
+  postalCode: "postal_code",
 };
 
 /**
