@@ -56,6 +56,28 @@ export interface SupplierWithBalanceRow extends SupplierRow {
   readonly balance_minor: string;
 }
 
+/** A SupplierWithBalanceRow plus the id, date and source of its latest posted journal (all null if none). */
+export interface SupplierWithActivityRow extends SupplierWithBalanceRow {
+  readonly last_activity_journal_id: string | null;
+  readonly last_activity_date: string | null;
+  readonly last_activity_source: string | null;
+}
+
+/** The supplier's most recent POSTED journal -- what the "last activity" is built from (supplierLedger names it). */
+function lastActivityJoin(asOfParamIndex: number | null): string {
+  const asOfClause = asOfParamIndex !== null ? ` AND j.date <= $${asOfParamIndex}` : "";
+  return `
+    LEFT JOIN LATERAL (
+      SELECT j.id AS last_activity_journal_id, j.date::text AS last_activity_date, j.source AS last_activity_source
+      FROM journal_lines jl
+      JOIN journals j ON j.id = jl.journal_id AND j.status = 'POSTED'${asOfClause}
+      WHERE jl.supplier_id = base.id
+      ORDER BY j.date DESC, j.created_at DESC, j.id DESC
+      LIMIT 1
+    ) la ON true
+  `;
+}
+
 /** Mirrors customers/repository.ts's balanceJoin, keyed on
  * journal_lines.supplier_id. Only POSTED journals count (FR-ACC-02). */
 function balanceJoin(asOfParamIndex: number | null): string {
@@ -178,7 +200,7 @@ export interface ListSuppliersFilters {
   readonly supplierTypeId?: string | undefined;
 }
 
-export async function listSuppliers(tenantId: string, filters: ListSuppliersFilters = {}): Promise<SupplierWithBalanceRow[]> {
+export async function listSuppliers(tenantId: string, filters: ListSuppliersFilters = {}): Promise<SupplierWithActivityRow[]> {
   return readAsTenant(tenantId, async (client) => {
     const params: unknown[] = [];
     let asOfParamIndex: number | null = null;
@@ -198,14 +220,18 @@ export async function listSuppliers(tenantId: string, filters: ListSuppliersFilt
       where.push(`s.supplier_type_id = $${params.length}`);
     }
 
-    const result = await client.query<SupplierWithBalanceRow>(
-      `SELECT s.*, st.name AS supplier_type_name, ${BALANCE_EXPR}
-       FROM suppliers s
-       LEFT JOIN supplier_types st ON st.id = s.supplier_type_id
-       ${balanceJoin(asOfParamIndex)}
-       ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
-       GROUP BY s.id, st.name
-       ORDER BY s.name ASC`,
+    const result = await client.query<SupplierWithActivityRow>(
+      `SELECT base.*, la.*
+       FROM (
+         SELECT s.*, st.name AS supplier_type_name, ${BALANCE_EXPR}
+         FROM suppliers s
+         LEFT JOIN supplier_types st ON st.id = s.supplier_type_id
+         ${balanceJoin(asOfParamIndex)}
+         ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+         GROUP BY s.id, st.name
+       ) base
+       ${lastActivityJoin(asOfParamIndex)}
+       ORDER BY base.name ASC`,
       params,
     );
     return result.rows;
@@ -216,7 +242,7 @@ export async function getSupplierById(
   tenantId: string,
   supplierId: string,
   asOf?: string,
-): Promise<SupplierWithBalanceRow | null> {
+): Promise<SupplierWithActivityRow | null> {
   return readAsTenant(tenantId, async (client) => {
     const params: unknown[] = [supplierId];
     let asOfParamIndex: number | null = null;
@@ -225,16 +251,99 @@ export async function getSupplierById(
       asOfParamIndex = params.length;
     }
 
-    const result = await client.query<SupplierWithBalanceRow>(
-      `SELECT s.*, st.name AS supplier_type_name, ${BALANCE_EXPR}
-       FROM suppliers s
-       LEFT JOIN supplier_types st ON st.id = s.supplier_type_id
-       ${balanceJoin(asOfParamIndex)}
-       WHERE s.id = $1
-       GROUP BY s.id, st.name`,
+    const result = await client.query<SupplierWithActivityRow>(
+      `SELECT base.*, la.*
+       FROM (
+         SELECT s.*, st.name AS supplier_type_name, ${BALANCE_EXPR}
+         FROM suppliers s
+         LEFT JOIN supplier_types st ON st.id = s.supplier_type_id
+         ${balanceJoin(asOfParamIndex)}
+         WHERE s.id = $1
+         GROUP BY s.id, st.name
+       ) base
+       ${lastActivityJoin(asOfParamIndex)}`,
       params,
     );
     return result.rows[0] ?? null;
+  });
+}
+
+/** One POSTED journal's net effect on a supplier -- a row of their ledger. */
+export interface SupplierLedgerJournalRow {
+  readonly journal_id: string;
+  readonly supplier_id: string;
+  readonly date: string;
+  readonly journal_number: string | null;
+  readonly reference: string | null;
+  readonly description: string;
+  readonly source: string;
+  readonly debit_minor: string; // bigint
+  readonly credit_minor: string;
+}
+
+const LEDGER_COLUMNS = `j.id AS journal_id, jl.supplier_id, j.date::text AS date, j.number AS journal_number, j.reference,
+  j.description, j.source, SUM(jl.debit_minor)::text AS debit_minor, SUM(jl.credit_minor)::text AS credit_minor`;
+
+/** Every POSTED journal tagged with this supplier in [from, to], oldest
+ * first, its supplier-tagged lines summed (a journal normally has one). */
+export async function listLedgerJournals(
+  tenantId: string,
+  supplierId: string,
+  from?: string,
+  to?: string,
+): Promise<SupplierLedgerJournalRow[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const params: unknown[] = [supplierId];
+    const where = ["jl.supplier_id = $1"];
+    if (from) {
+      params.push(from);
+      where.push(`j.date >= $${params.length}`);
+    }
+    if (to) {
+      params.push(to);
+      where.push(`j.date <= $${params.length}`);
+    }
+    const result = await client.query<SupplierLedgerJournalRow>(
+      `SELECT ${LEDGER_COLUMNS}
+       FROM journal_lines jl
+       JOIN journals j ON j.id = jl.journal_id AND j.status = 'POSTED'
+       WHERE ${where.join(" AND ")}
+       GROUP BY j.id, jl.supplier_id
+       ORDER BY j.date, j.created_at, j.id`,
+      params,
+    );
+    return result.rows;
+  });
+}
+
+/** The latest POSTED journals tagged with any supplier, on or before `asOf`, newest first -- one row per journal and supplier. */
+export async function listRecentLedgerJournals(tenantId: string, asOf: string, limit: number): Promise<SupplierLedgerJournalRow[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<SupplierLedgerJournalRow>(
+      `SELECT ${LEDGER_COLUMNS}
+       FROM journal_lines jl
+       JOIN journals j ON j.id = jl.journal_id AND j.status = 'POSTED'
+       WHERE jl.supplier_id IS NOT NULL AND j.date <= $1
+       GROUP BY j.id, jl.supplier_id
+       ORDER BY j.date DESC, j.created_at DESC, j.id DESC
+       LIMIT $2`,
+      [asOf, limit],
+    );
+    return result.rows;
+  });
+}
+
+/** The supplier's balance (what the business owes them) from POSTED journals dated before `date`. */
+export async function balanceBefore(tenantId: string, supplierId: string, date: string): Promise<number> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<{ balance_minor: string }>(
+      `SELECT COALESCE(SUM(jl.credit_minor - jl.debit_minor), 0)::text AS balance_minor
+       FROM journal_lines jl
+       JOIN journals j ON j.id = jl.journal_id AND j.status = 'POSTED'
+       WHERE jl.supplier_id = $1 AND j.date < $2`,
+      [supplierId, date],
+    );
+    return Number(result.rows[0]!.balance_minor);
   });
 }
 

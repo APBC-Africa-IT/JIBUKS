@@ -640,7 +640,11 @@ export interface JournalDocumentLinkRow {
 }
 
 /** The AR documents the given journals issued or cancelled. */
-export async function listJournalDocumentLinks(tenantId: string, journalIds: readonly string[]): Promise<JournalDocumentLinkRow[]> {
+export async function listJournalDocumentLinks(
+  tenantId: string,
+  journalIds: readonly string[],
+  direction: "AR" | "AP" = "AR",
+): Promise<JournalDocumentLinkRow[]> {
   if (journalIds.length === 0) {
     return [];
   }
@@ -650,11 +654,40 @@ export async function listJournalDocumentLinks(tenantId: string, journalIds: rea
               o.id AS credited_invoice_id, o.number AS credited_invoice_number
          FROM invoices i
          LEFT JOIN invoices o ON o.id = i.credited_invoice_id
-        WHERE i.direction = 'AR' AND i.journal_id = ANY($1::uuid[])
+        WHERE i.direction = $2 AND i.journal_id = ANY($1::uuid[])
        UNION ALL
        SELECT i.cancel_journal_id, 'CANCEL', i.id, i.kind, i.number, NULL, NULL
          FROM invoices i
-        WHERE i.direction = 'AR' AND i.cancel_journal_id = ANY($1::uuid[])`,
+        WHERE i.direction = $2 AND i.cancel_journal_id = ANY($1::uuid[])`,
+      [journalIds, direction],
+    );
+    return result.rows;
+  });
+}
+
+/** Money paid against a bill (POST /supplier-bills/{id}/payments): one row per bill the journal paid. */
+export interface JournalBillPaymentRow {
+  readonly journal_id: string;
+  readonly bill_id: string;
+  readonly bill_number: string | null;
+  readonly supplier_reference: string | null;
+  readonly amount_minor: string;
+  readonly method: InvoicePaymentMethod;
+  readonly reference: string | null;
+}
+
+export async function listJournalBillPayments(tenantId: string, journalIds: readonly string[]): Promise<JournalBillPaymentRow[]> {
+  if (journalIds.length === 0) {
+    return [];
+  }
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<JournalBillPaymentRow>(
+      `SELECT a.journal_id, i.id AS bill_id, i.number AS bill_number, i.supplier_reference,
+              a.amount_minor::text AS amount_minor, a.method, a.reference
+         FROM invoice_allocations a
+         JOIN invoices i ON i.id = a.invoice_id
+        WHERE i.direction = 'AP' AND a.method NOT IN ('CREDIT_NOTE', 'DEBIT_NOTE') AND a.journal_id = ANY($1::uuid[])
+        ORDER BY a.created_at, a.id`,
       [journalIds],
     );
     return result.rows;

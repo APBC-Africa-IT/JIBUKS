@@ -3136,6 +3136,76 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /suppliers/{id}/transactions:
+    get:
+      tags: [Suppliers]
+      summary: A supplier's transaction history
+      description: >
+        Every POSTED journal tagged with the supplier, oldest first, one row
+        per journal, with a running balance of what the business owes them
+        (credit_minor adds, debit_minor takes off). Requires suppliers:view.
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdPath'
+        - name: from
+          in: query
+          required: false
+          description: First date included; everything before it is summed into opening_balance_minor.
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: The supplier's transactions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierTransactions'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /payables-overview:
+    get:
+      tags: [Suppliers]
+      summary: Suppliers hub Overview
+      description: >
+        Total Payables, Overdue, Due Soon and Recent Supplier Activity.
+        Requires reports:view.
+      parameters:
+        - name: as_of
+          in: query
+          required: false
+          description: Default today (Africa/Nairobi).
+          schema: { type: string, format: date }
+        - name: due_soon_days
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 90, default: 7 }
+        - name: recent_limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        '200':
+          description: The overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayablesOverview'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /suppliers/{id}/deactivate:
     post:
       tags: [Suppliers]
@@ -5843,6 +5913,81 @@ components:
             The list's tag. OVERDUE = a posted bill is past due; DUE = owed,
             nothing past due; CREDIT = the supplier owes the business;
             SETTLED = nothing either way. Same responses as balance_minor.
+        last_activity:
+          type: object
+          nullable: true
+          description: The supplier's latest posted transaction at as_of; null if none. Same responses as balance_minor.
+          properties:
+            type: { $ref: '#/components/schemas/SupplierTransactionType' }
+            date: { type: string, format: date }
+            document_number: { type: string, nullable: true }
+    SupplierTransactionType:
+      type: string
+      enum: [OPENING_BALANCE, BILL, DEBIT_NOTE, BILL_CANCELLED, DEBIT_NOTE_CANCELLED, PAYMENT, REVERSAL, JOURNAL]
+    SupplierTransaction:
+      type: object
+      properties:
+        journal_id: { type: string, format: uuid }
+        journal_number: { type: string, nullable: true }
+        date: { type: string, format: date }
+        type: { $ref: '#/components/schemas/SupplierTransactionType' }
+        document_id: { type: string, format: uuid, nullable: true }
+        document_kind: { type: string, nullable: true, enum: [BILL, DEBIT_NOTE, null] }
+        document_number: { type: string, nullable: true }
+        debited_bill_id: { type: string, format: uuid, nullable: true, description: "DEBIT_NOTE rows - the bill it was raised against." }
+        debited_bill_number: { type: string, nullable: true }
+        payment_method: { type: string, nullable: true, enum: [CASH, BANK, MPESA, OTHER, null] }
+        reference: { type: string, nullable: true }
+        description: { type: string }
+        paid_bills:
+          type: array
+          description: PAYMENT rows - the bills it paid.
+          items:
+            type: object
+            properties:
+              bill_id: { type: string, format: uuid }
+              bill_number: { type: string, nullable: true }
+              supplier_reference: { type: string, nullable: true }
+              amount_minor: { type: string }
+        credit_minor: { type: string, description: "What the row added to what the business owes." }
+        debit_minor: { type: string, description: "What the row took off." }
+        balance_minor: { type: string, description: "What the business owes after the row; negative = the supplier owes the business." }
+    SupplierTransactions:
+      type: object
+      properties:
+        supplier_id: { type: string, format: uuid }
+        supplier_name: { type: string }
+        currency: { type: string, nullable: true }
+        from: { type: string, format: date, nullable: true }
+        to: { type: string, format: date, nullable: true }
+        opening_balance_minor: { type: string }
+        total_credit_minor: { type: string }
+        total_debit_minor: { type: string }
+        closing_balance_minor: { type: string, description: "Equals GET /suppliers/{id}?as_of=<to>." }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/SupplierTransaction' }
+    PayablesOverview:
+      type: object
+      properties:
+        as_of: { type: string, format: date }
+        currency: { type: string }
+        total_payables_minor: { type: string, description: "Everything owed to suppliers net of supplier credit - the GET /payables-aging total." }
+        overdue_minor: { type: string, description: "Left on posted bills past their due date." }
+        overdue_bill_count: { type: integer }
+        due_soon_days: { type: integer }
+        due_soon_minor: { type: string, description: "Left on posted bills due from as_of to as_of + due_soon_days." }
+        due_soon_bill_count: { type: integer }
+        recent_activity:
+          type: array
+          description: Newest first.
+          items:
+            allOf:
+              - $ref: '#/components/schemas/SupplierTransaction'
+              - type: object
+                properties:
+                  supplier_id: { type: string, format: uuid }
+                  supplier_name: { type: string }
     SupplierType:
       type: object
       properties:

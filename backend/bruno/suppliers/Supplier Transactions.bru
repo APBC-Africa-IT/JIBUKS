@@ -1,0 +1,24 @@
+meta {
+  name: Supplier Transactions
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/suppliers/{{supplierId}}/transactions
+  body: none
+  auth: none
+}
+
+params:query {
+  ~from: 2026-09-01
+  ~to: 2026-09-30
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  The supplier's history, oldest first, with a running balance of what the business owes them (credit_minor adds, debit_minor takes off). Types: OPENING_BALANCE, BILL, DEBIT_NOTE, BILL_CANCELLED, DEBIT_NOTE_CANCELLED, PAYMENT (paid_bills), REVERSAL, JOURNAL. Omit from/to for the whole history.
+}
