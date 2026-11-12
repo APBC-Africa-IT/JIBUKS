@@ -204,7 +204,7 @@ describe("POST /api/v1/cheques", () => {
       );
       return withTenant(otherTenantId, async (tenantClient) => {
         const result = await tenantClient.query(
-          `INSERT INTO suppliers (tenant_id, name) VALUES ($1, 'Foreign Supplier') RETURNING id`,
+          `INSERT INTO suppliers (tenant_id, name, code) VALUES ($1, 'Foreign Supplier', 'SUP-0001') RETURNING id`,
           [otherTenantId],
         );
         return result.rows[0]!.id as string;

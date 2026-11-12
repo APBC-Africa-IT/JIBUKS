@@ -18,8 +18,29 @@ headers {
 body:json {
   {
     "name": "Acme Supplies",
+    "supplierTypeId": "{{supplierTypeId}}",
     "phone": "+254711111111",
+    "email": "orders@acme.example",
+    "address": "Kangundo Road",
+    "city": "Nairobi",
+    "country": "KE",
+    "postalCode": "00100",
     "taxIdentifier": "P051234567X",
-    "paymentTermsDays": 30
+    "vatRegistered": true,
+    "defaultTaxRateBps": 1600,
+    "preferredPaymentMethod": "MPESA",
+    "bankName": "KCB",
+    "bankAccountNumber": "1234567890",
+    "mpesaPhone": "+254711111111",
+    "mpesaPaybillTill": "522522",
+    "paymentTermsDays": 30,
+    "isActive": true
   }
+}
+
+docs {
+  The Add Supplier screen. The server assigns the next SUP- code. Every field but name is optional.
+  To add an opening balance (needs opening_balances:manage), add:
+    "openingBalance": { "amountMinor": 3250000, "date": "<the business's opening date from GET /opening-balances>" }
+  It is posted to the business's opening balances in the same transaction as the supplier.
 }

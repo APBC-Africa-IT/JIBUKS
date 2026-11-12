@@ -1,0 +1,26 @@
+meta {
+  name: Rename Supplier Type
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/supplier-types/{{supplierTypeId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Wholesale Supplier"
+  }
+}
+
+docs {
+  Requires suppliers:edit. Every supplier of the type shows the new name.
+}

@@ -2998,7 +2998,10 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       tags: [Suppliers]
       summary: Create a supplier
-      description: Creates a new supplier for the CALLER'S tenant.
+      description: >
+        The Add Supplier screen. The server assigns the next SUP- code. An
+        openingBalance also needs opening_balances:manage and is posted to
+        the business's opening balances in the same transaction.
       requestBody:
         required: true
         content:
@@ -3021,6 +3024,18 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: SUPPLIER_TYPE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: OPENING_BALANCE_DATE_MISMATCH, OPENING_BALANCES_LOCKED, CURRENCY_MISMATCH or SYSTEM_ACCOUNT_MISSING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
     get:
       tags: [Suppliers]
       summary: List suppliers
@@ -3029,6 +3044,15 @@ paths:
         name. Each supplier includes balance_minor, computed server-side.
       parameters:
         - $ref: '#/components/parameters/PartyAsOfQuery'
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive match on name, code, phone or email.
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - name: supplier_type_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
       responses:
         '403':
           $ref: '#/components/responses/Forbidden'
@@ -3106,7 +3130,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
-          description: PARTY_CURRENCY_LOCKED
+          description: PARTY_CURRENCY_LOCKED or TAX_NOT_REGISTERED
           content:
             application/json:
               schema:
@@ -3157,6 +3181,106 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /supplier-types:
+    get:
+      tags: [Suppliers]
+      summary: List supplier types
+      description: The Supplier Type dropdown. Every business starts with Individual, Business, Wholesaler, Manufacturer and Distributor. Requires suppliers:view.
+      responses:
+        '200':
+          description: The business's supplier types, by name
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SupplierType'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Suppliers]
+      summary: Add a supplier type
+      description: The dropdown's "+ Add type". Requires suppliers:create. The same name in any case is 409 DUPLICATE_VALUE.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+            example:
+              name: "Contractor"
+      responses:
+        '201':
+          description: The new type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierType'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: DUPLICATE_VALUE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /supplier-types/{id}:
+    patch:
+      tags: [Suppliers]
+      summary: Rename a supplier type
+      description: Requires suppliers:edit. Every supplier of the type shows the new name.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+      responses:
+        '200':
+          description: The renamed type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierType'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: DUPLICATE_VALUE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
   # ── Periods ───────────────────────────────────────────────────────
   /periods:
@@ -5061,6 +5185,9 @@ components:
         preferredChannel: { type: string, enum: [SMS, WHATSAPP, EMAIL, NONE], nullable: true }
         sendStatements: { type: boolean }
         paymentReminders: { type: boolean }
+        city: { type: string, maxLength: 100, nullable: true }
+        country: { type: string, pattern: '^[A-Za-z]{2}$', nullable: true, description: ISO 3166-1 alpha-2; upper-cased. }
+        postalCode: { type: string, maxLength: 20, nullable: true }
     CreateCustomerRequest:
       type: object
       required: [name]
@@ -5103,6 +5230,9 @@ components:
           description: Omit for the business default (GET /customer-settings).
         sendStatements: { type: boolean, description: Omit for the business default. }
         paymentReminders: { type: boolean, description: Omit for the business default. }
+        city: { type: string, maxLength: 100 }
+        country: { type: string, pattern: '^[A-Za-z]{2}$', description: "ISO 3166-1 alpha-2, e.g. KE; upper-cased." }
+        postalCode: { type: string, maxLength: 20 }
     Customer:
       type: object
       properties:
@@ -5142,6 +5272,9 @@ components:
         preferred_channel: { type: string, nullable: true, enum: [SMS, WHATSAPP, EMAIL, NONE, null] }
         send_statements: { type: boolean }
         payment_reminders: { type: boolean }
+        city: { type: string, nullable: true }
+        country: { type: string, nullable: true, description: ISO 3166-1 alpha-2. }
+        postal_code: { type: string, nullable: true }
         last_activity:
           type: object
           nullable: true
@@ -5567,12 +5700,18 @@ components:
     UpdateSupplierRequest:
       type: object
       minProperties: 1
-      description: Omitted fields are unchanged; null clears an optional field.
+      description: >
+        Omitted fields are unchanged; null clears an optional field. A VAT
+        rate above 0 on a supplier that isn't VAT registered (as stored) is
+        422 TAX_NOT_REGISTERED.
       properties:
         name: { type: string, maxLength: 200 }
         phone: { type: string, maxLength: 20, nullable: true }
         email: { type: string, format: email, nullable: true }
         address: { type: string, maxLength: 500, nullable: true }
+        city: { type: string, maxLength: 100, nullable: true }
+        country: { type: string, pattern: '^[A-Za-z]{2}$', nullable: true }
+        postalCode: { type: string, maxLength: 20, nullable: true }
         tags:
           type: array
           items: { type: string }
@@ -5582,6 +5721,14 @@ components:
           type: string
           nullable: true
           description: Can't change once the party has transactions (422 PARTY_CURRENCY_LOCKED).
+        supplierTypeId: { type: string, format: uuid, nullable: true }
+        vatRegistered: { type: boolean }
+        defaultTaxRateBps: { type: integer, minimum: 0, maximum: 10000, nullable: true }
+        preferredPaymentMethod: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER], nullable: true }
+        bankName: { type: string, maxLength: 100, nullable: true }
+        bankAccountNumber: { type: string, maxLength: 50, nullable: true }
+        mpesaPhone: { type: string, maxLength: 20, nullable: true }
+        mpesaPaybillTill: { type: string, maxLength: 20, nullable: true }
     CreateSupplierRequest:
       type: object
       required: [name]
@@ -5590,9 +5737,13 @@ components:
           type: string
           maxLength: 200
           example: "Acme Supplies"
+        supplierTypeId: { type: string, format: uuid, description: From GET /supplier-types. }
         phone: { type: string, maxLength: 20 }
         email: { type: string, format: email }
-        address: { type: string, maxLength: 500 }
+        address: { type: string, maxLength: 500, description: The street line. }
+        city: { type: string, maxLength: 100 }
+        country: { type: string, pattern: '^[A-Za-z]{2}$', description: "ISO 3166-1 alpha-2, e.g. KE; upper-cased." }
+        postalCode: { type: string, maxLength: 20 }
         tags:
           type: array
           items:
@@ -5603,6 +5754,17 @@ components:
           maxLength: 50
           description: Tax identifier, e.g. KRA PIN. Trimmed and upper-cased; letters, digits, spaces, '-' and '/'.
           example: "P051234567X"
+        vatRegistered: { type: boolean, default: false }
+        defaultTaxRateBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: The VAT rate this supplier's bills usually carry (1600 = 16%). Above 0 only if vatRegistered.
+        preferredPaymentMethod: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER] }
+        bankName: { type: string, maxLength: 100 }
+        bankAccountNumber: { type: string, maxLength: 50 }
+        mpesaPhone: { type: string, maxLength: 20 }
+        mpesaPaybillTill: { type: string, maxLength: 20, description: The supplier's Paybill or Till number. }
         paymentTermsDays:
           type: integer
           minimum: 0
@@ -5613,21 +5775,47 @@ components:
           type: string
           description: ISO 4217 code of a supported currency. Omit to use the tenant's base currency.
           example: "KES"
+        isActive: { type: boolean, default: true, description: The Active Supplier box. }
+        openingBalance:
+          type: object
+          required: [amountMinor, date]
+          description: >
+            What the business owed the supplier when its books began. Needs
+            opening_balances:manage. Added to the business's opening balances
+            in the same transaction as the supplier; date must be the
+            business's opening date once one is set (422
+            OPENING_BALANCE_DATE_MISMATCH).
+          properties:
+            amountMinor: { type: integer, minimum: 1 }
+            date: { type: string, format: date }
     Supplier:
       type: object
       properties:
         id: { type: string, format: uuid }
         tenant_id: { type: string, format: uuid }
+        code: { type: string, example: "SUP-0007", description: Gapless per business; assigned by the server. }
         name: { type: string }
+        supplier_type_id: { type: string, format: uuid, nullable: true }
+        supplier_type_name: { type: string, nullable: true, description: Present on GET responses and POST /suppliers. }
         phone: { type: string, nullable: true }
         email: { type: string, nullable: true }
         address: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+        postal_code: { type: string, nullable: true }
         is_active: { type: boolean }
         tags:
           type: array
           items:
             type: string
         tax_identifier: { type: string, nullable: true }
+        vat_registered: { type: boolean }
+        default_tax_rate_bps: { type: integer, nullable: true }
+        preferred_payment_method: { type: string, nullable: true, enum: [CASH, BANK, MPESA, CHEQUE, OTHER, null] }
+        bank_name: { type: string, nullable: true }
+        bank_account_number: { type: string, nullable: true }
+        mpesa_phone: { type: string, nullable: true }
+        mpesa_paybill_till: { type: string, nullable: true }
         payment_terms_days: { type: integer, nullable: true }
         currency:
           type: string
@@ -5642,8 +5830,27 @@ components:
             balance), as of the as_of query param if given, otherwise as
             of now. A 64-bit-safe integer string, same convention as
             debit_minor/credit_minor. Present only on responses from
-            GET /suppliers and GET /suppliers/{id}.
+            GET /suppliers, GET /suppliers/{id} and POST /suppliers.
           example: "80000"
+        overdue_minor:
+          type: string
+          description: What is past due on posted bills at as_of. Same responses as balance_minor.
+          example: "32500"
+        payment_status:
+          type: string
+          enum: [OVERDUE, DUE, CREDIT, SETTLED]
+          description: >
+            The list's tag. OVERDUE = a posted bill is past due; DUE = owed,
+            nothing past due; CREDIT = the supplier owes the business;
+            SETTLED = nothing either way. Same responses as balance_minor.
+    SupplierType:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: "Wholesaler" }
+        supplier_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     # -- Periods --
     CreatePeriodRequest:

@@ -1,0 +1,26 @@
+meta {
+  name: Add Supplier Type
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/supplier-types
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Contractor"
+  }
+}
+
+docs {
+  The dropdown's "+ Add type". Requires suppliers:create. The same name in any case is 409 DUPLICATE_VALUE.
+}

@@ -107,9 +107,15 @@ async function buildPostingContext(tenantId: string): Promise<PostingContext> {
  * trigger remains as defence-in-depth underneath it, same as everywhere
  * else in this system.
  */
-async function validatePartyAttribution(tenantId: string, lines: readonly CreateJournalLineRequest[]): Promise<void> {
+async function validatePartyAttribution(
+  tenantId: string,
+  lines: readonly CreateJournalLineRequest[],
+  options: PrepareJournalOptions = {},
+): Promise<void> {
   const customerIds = new Set(lines.flatMap((l) => (l.customerId ? [l.customerId] : [])));
-  const supplierIds = new Set(lines.flatMap((l) => (l.supplierId ? [l.supplierId] : [])));
+  const supplierIds = new Set(
+    lines.flatMap((l) => (l.supplierId && !options.newSupplierIds?.includes(l.supplierId) ? [l.supplierId] : [])),
+  );
 
   await Promise.all([
     ...Array.from(customerIds, (id) => customersService.getCustomer(tenantId, id)),
@@ -145,8 +151,17 @@ export type PreparedJournal = CreateJournalInput;
  * then inserts it with postPreparedJournal inside its own transaction, so
  * its rows and the journal commit or roll back together.
  */
-export async function prepareJournal(request: CreateJournalRequest, audit: AuditContext): Promise<PreparedJournal> {
-  await validatePartyAttribution(request.tenantId, request.lines);
+export interface PrepareJournalOptions {
+  /** Suppliers the caller creates in the same transaction it posts the journal in -- not checked, since they don't exist yet. */
+  readonly newSupplierIds?: readonly string[];
+}
+
+export async function prepareJournal(
+  request: CreateJournalRequest,
+  audit: AuditContext,
+  options: PrepareJournalOptions = {},
+): Promise<PreparedJournal> {
+  await validatePartyAttribution(request.tenantId, request.lines, options);
   await periodsService.ensureCurrentPeriodForDate(request.tenantId, request.date, audit);
   const context = await buildPostingContext(request.tenantId);
 

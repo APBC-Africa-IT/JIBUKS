@@ -23,6 +23,7 @@ import * as usersService from "../users/service.js";
 import * as periodsService from "../periods/service.js";
 import type { PeriodRow } from "../periods/repository.js";
 import * as accountsService from "../accounts/service.js";
+import * as suppliersService from "../suppliers/service.js";
 import type { AccountRow } from "../accounts/repository.js";
 import * as repository from "./repository.js";
 import type { OnboardResult } from "./repository.js";
@@ -91,6 +92,8 @@ export async function onboard(request: OnboardRequest): Promise<OnboardServiceRe
       ),
     );
   }
+
+  await suppliersService.seedDefaultSupplierTypes(tenant.id);
 
   return { tenant, user, period, accounts };
 }

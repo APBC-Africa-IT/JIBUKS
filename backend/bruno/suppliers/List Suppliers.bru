@@ -12,8 +12,14 @@ get {
 
 params:query {
   ~as_of: 2026-08-31
+  ~q: acme
+  ~supplier_type_id: {{supplierTypeId}}
 }
 
 headers {
   Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Each supplier has code, balance_minor, overdue_minor and payment_status (OVERDUE / DUE / CREDIT / SETTLED) for the list's "(Overdue)" / "(Due)" tag. q matches name, code, phone or email.
 }

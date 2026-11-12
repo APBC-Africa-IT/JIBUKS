@@ -64,6 +64,9 @@ export type DomainErrorCode =
   | "ACCOUNT_WRONG_TYPE"
   // opening balances -- FR-ACC-04
   | "OPENING_BALANCES_LOCKED"
+  | "OPENING_BALANCE_DATE_MISMATCH"
+  // suppliers
+  | "SUPPLIER_TYPE_NOT_FOUND"
   // customer statements
   | "STATEMENT_NOT_FOUND"
   // customer payments

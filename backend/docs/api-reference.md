@@ -161,6 +161,8 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `GET /accounts…` / `POST /accounts` / `POST /accounts/{id}/deactivate` / `reactivate` | `accounts:view` / `accounts:create` / `accounts:edit` |
 | Customers, Suppliers | same pattern: `customers:*`, `suppliers:*` |
 | `GET /customer-settings` / `PATCH /customer-settings` | `customers:view` / `customers:edit` |
+| `GET /supplier-types` / `POST /supplier-types` / `PATCH /supplier-types/{id}` | `suppliers:view` / `suppliers:create` / `suppliers:edit` |
+| `POST /suppliers` with `openingBalance` | `suppliers:create` **and** `opening_balances:manage` |
 | `GET /reports/customers-to-follow-up` | `reports:view` |
 | `GET /periods…` / `POST /periods` | `periods:view` / `periods:create` |
 | `POST /periods/{id}/close` | `periods:close` |
@@ -706,7 +708,10 @@ Create a new customer for the tenant.
 | `name` | string | ✅ Yes | Display name. Max 200 chars. |
 | `phone` | string | No | Max 20 chars. |
 | `email` | string | No | Must be a valid email if given. |
-| `address` | string | No | Max 500 chars. |
+| `address` | string | No | The street line. Max 500 chars. |
+| `city` | string | No | Max 100 chars. |
+| `country` | string | No | ISO 3166-1 two-letter code, e.g. `KE`; upper-cased (`"ke"` is stored as `"KE"`). |
+| `postalCode` | string | No | Max 20 chars. |
 | `tags` | string[] | No | Defaults to `[]`. |
 | `taxIdentifier` | string | No | Tax ID, e.g. KRA PIN. Trimmed and upper-cased (`" p051234567x"` is stored as `"P051234567X"`). Max 50 chars: letters, digits, spaces, `-`, `/`. Not KRA-specific, since tenants also trade in UGX/RWF etc. |
 | `paymentTermsDays` | integer | No | Net payment terms in days, 0–365 (0 = due on receipt). Will drive invoice due dates. |
@@ -935,43 +940,120 @@ PATCH takes `paymentTermsDays`, `creditLimitMinor`, `preferredChannel`, `sendSta
 
 ## 7.6 Suppliers
 
-Base path: `/api/v1/suppliers` 
+Base path: `/api/v1/suppliers`
 
-Mirrors [7.5 Customers](#75-customers) exactly, except a supplier's `balance_minor` sits on the **credit** side (AP-like: money owed to them is a credit balance) and journal lines attribute to it via `supplierId` instead of `customerId`.
+Like [7.5 Customers](#75-customers), except a supplier's `balance_minor` sits on the **credit** side (AP-like: money owed to them is a credit balance) and journal lines attribute to it via `supplierId` instead of `customerId`. Suppliers also carry the **Add Supplier** screen's details: a code, a type, VAT details and how the business pays them.
 
 ---
 
-### `POST /suppliers` 
+### `POST /suppliers`
 
-Same request shape as `POST /customers`, **except there's no `creditLimitMinor`**, e.g.:
+`suppliers:create`. The **Add Supplier** screen.
+
 ```json
-{ "name": "Acme Supplies", "phone": "+254711111111", "taxIdentifier": "P051234567X", "paymentTermsDays": 30 }
+{
+  "name": "FreshFarm Suppliers",
+  "supplierTypeId": "…",
+  "phone": "+254722000000",
+  "email": "orders@freshfarm.example",
+  "address": "Kangundo Road",
+  "city": "Nairobi",
+  "country": "KE",
+  "postalCode": "00100",
+  "taxIdentifier": "P051234567X",
+  "vatRegistered": true,
+  "defaultTaxRateBps": 1600,
+  "preferredPaymentMethod": "MPESA",
+  "bankName": "KCB",
+  "bankAccountNumber": "1234567890",
+  "mpesaPhone": "+254722000000",
+  "mpesaPaybillTill": "522522",
+  "paymentTermsDays": 30,
+  "currency": "KES",
+  "isActive": true,
+  "openingBalance": { "amountMinor": 3250000, "date": "2026-09-01" }
+}
 ```
 
-**Error Response:** `401 Unauthorized`, `400 VALIDATION_ERROR`.
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name`, `phone`, `email`, `address`, `city`, `country`, `postalCode`, `tags`, `taxIdentifier`, `paymentTermsDays`, `currency` | | | As for [`POST /customers`](#post-customers). `taxIdentifier` is the KRA PIN. |
+| `supplierTypeId` | uuid | No | From [`GET /supplier-types`](#supplier-types). `404 SUPPLIER_TYPE_NOT_FOUND` if unknown. |
+| `vatRegistered` | boolean | No | Default `false`. |
+| `defaultTaxRateBps` | integer | No | The VAT rate this supplier's bills usually carry, in basis points (`1600` = 16%, `0` = zero-rated). Above 0 only if `vatRegistered` (`400` otherwise). Stored for the app to pre-fill bill lines. |
+| `preferredPaymentMethod` | string | No | `CASH`, `BANK`, `MPESA`, `CHEQUE` or `OTHER`. |
+| `bankName`, `bankAccountNumber` | string | No | Max 100 / 50 chars. |
+| `mpesaPhone` | string | No | Max 20 chars. |
+| `mpesaPaybillTill` | string | No | The supplier's Paybill or Till number. Max 20 chars. |
+| `isActive` | boolean | No | The **Active Supplier** box. Default `true`; `false` creates the supplier already inactive. |
+| `openingBalance` | object | No | `{ amountMinor, date }`: what the business owed this supplier when its books in JiBUks began. See below. |
+
+**Code:** every supplier gets a **`code`** (`SUP-0001`, `SUP-0002`…, gapless per business). It can't be set or changed. Suppliers created before this were numbered in the order they were created.
+
+**Opening balance:** needs `opening_balances:manage` too (Owner, Accountant). It is added to the business's [opening balances](#724-opening-balances) as Cr Accounts Payable (tagged with the supplier) / Dr Opening Balance Equity, in the **same transaction** as the supplier, so if it can't be posted no supplier is created.
+- `date` must be the business's opening date (`GET /opening-balances` → `date`). If the business has no opening balances yet, this date becomes its opening date. Pre-fill the field from `GET /opening-balances`.
+- `amountMinor` is more than 0, in the base currency. A supplier with a different `currency` can't have one (`422 CURRENCY_MISMATCH`); enter a bill instead.
+- To change it later, use `PUT /opening-balances`.
+
+**Success Response:** `201 Created` with the supplier, shaped like `GET /suppliers/{id}`.
+
+**Errors:** `400 VALIDATION_ERROR`; `403 FORBIDDEN` (opening balance without `opening_balances:manage`); `404 SUPPLIER_TYPE_NOT_FOUND`; `422 OPENING_BALANCE_DATE_MISMATCH`, `422 OPENING_BALANCES_LOCKED` (the opening date's period is closed), `422 CURRENCY_MISMATCH`, `422 SYSTEM_ACCOUNT_MISSING` (no `PAYABLE` account).
 
 ---
 
-### `GET /suppliers` / `GET /suppliers/{id}` 
+### `GET /suppliers` / `GET /suppliers/{id}`
 
-Same query parameters (`as_of`) and shape as `GET /customers`, with `balance_minor` computed from lines tagged via `supplierId`:
+`suppliers:view`. Ordered by name.
+
+| Query | Description |
+|---|---|
+| `as_of` | Cutoff for `balance_minor`, `overdue_minor` and `payment_status`. Default today. |
+| `q` | `GET /suppliers` only. The search box: case-insensitive match on name, code, phone or email. |
+| `supplier_type_id` | `GET /suppliers` only. One type's suppliers. |
+
 ```json
 {
   "id": "9a2f3e6c-4a2b-4c1a-9c1a-4a2b4c1a9c1a",
-  "tenant_id": "33333333-3333-4333-8333-333333333333",
-  "name": "Acme Supplies",
+  "tenant_id": "…",
+  "code": "SUP-0007",
+  "name": "ABC Traders",
+  "supplier_type_id": "…",
+  "supplier_type_name": "Wholesaler",
   "phone": "+254711111111",
   "email": null,
-  "address": null,
+  "address": "Kangundo Road",
+  "city": "Nairobi",
+  "country": "KE",
+  "postal_code": "00100",
   "is_active": true,
   "tags": [],
   "tax_identifier": "P051234567X",
+  "vat_registered": true,
+  "default_tax_rate_bps": 1600,
+  "preferred_payment_method": "MPESA",
+  "bank_name": null,
+  "bank_account_number": null,
+  "mpesa_phone": "+254711111111",
+  "mpesa_paybill_till": "522522",
   "payment_terms_days": 30,
   "currency": null,
   "created_at": "2026-07-30T10:25:50.110Z",
-  "balance_minor": "80000"
+  "balance_minor": "3250000",
+  "overdue_minor": "3250000",
+  "payment_status": "OVERDUE"
 }
 ```
+
+The Suppliers list card is `name`, `balance_minor` and the tag from **`payment_status`**:
+
+| `payment_status` | When | Tag |
+|---|---|---|
+| `OVERDUE` | A posted bill is past its due date (`overdue_minor` > 0 is how much) | "(Overdue)" |
+| `DUE` | The business owes them, nothing past due | "(Due)" |
+| `CREDIT` | They owe the business (negative balance) | — |
+| `SETTLED` | Nothing either way | — |
+
+`overdue_minor` counts posted bills only; the rest of the balance (opening balance, guided `POST /bills`, manual journals) has no due date, so it is never overdue. There's no logo or photo yet; show initials.
 
 **Error Response:** `400 VALIDATION_ERROR` (malformed `as_of`), `404 SUPPLIER_NOT_FOUND`.
 
@@ -979,18 +1061,33 @@ Same query parameters (`as_of`) and shape as `GET /customers`, with `balance_min
 
 ### `PATCH /suppliers/{id}`
 
-`suppliers:edit`. Same rules as [`PATCH /customers/{id}`](#patch-customersid), including `422 PARTY_CURRENCY_LOCKED`, and `404 SUPPLIER_NOT_FOUND`.
+`suppliers:edit`. Any `POST /suppliers` field except `isActive`, `openingBalance` and the code; send only what changes, `null` clears. Same rules as [`PATCH /customers/{id}`](#patch-customersid), including `422 PARTY_CURRENCY_LOCKED`. The VAT rule is checked against what is stored: a rate above 0 on a supplier that isn't VAT registered is `422 TAX_NOT_REGISTERED`. `404 SUPPLIER_NOT_FOUND`, `404 SUPPLIER_TYPE_NOT_FOUND`.
 
 ---
 
-### `POST /suppliers/{id}/deactivate` / `POST /suppliers/{id}/reactivate` 
+### `POST /suppliers/{id}/deactivate` / `POST /suppliers/{id}/reactivate`
 
 **Suppliers are never deleted** — only deactivated/reactivated, same as customers.
 
+---
+
+### Supplier types
+
+Base path: `/api/v1/supplier-types`. The **Supplier Type** dropdown. Each business has its own list, starting with **Individual, Business, Wholesaler, Manufacturer and Distributor**.
+
+| Call | Permission | Does |
+|---|---|---|
+| `GET /supplier-types` | `suppliers:view` | `{ "data": [{ "id", "name", "supplier_count", "created_at", "updated_at" }] }`, by name |
+| `POST /supplier-types` `{ "name": "Contractor" }` | `suppliers:create` | **+ Add type**. `201` with the type. The same name in any case is `409 DUPLICATE_VALUE` |
+| `PATCH /supplier-types/{id}` `{ "name": "…" }` | `suppliers:edit` | Rename; every supplier of that type shows the new name. `404 SUPPLIER_TYPE_NOT_FOUND` |
+
+Types can't be deleted yet.
+
 ### Notes for consuming clients (Suppliers)
 
+- **Add Supplier:** load `GET /supplier-types` for the dropdown and `GET /opening-balances` for the opening balance date. Code shows "(auto)" until saved. The button should say **Save Supplier**.
 - A journal line may carry `customerId` **or** `supplierId`, never both — `400 VALIDATION_ERROR` otherwise.
-- For the guided purchase flow, see [7.11 Bills](#711-bills) — `POST /bills` builds the balanced expense/AP/tax journal for you. `POST /journals` directly with `supplierId` set is still available for anything that doesn't fit that shape.
+- For purchases, see [7.22 Supplier Bills](#722-supplier-bills).
 
 ---
 
@@ -2239,6 +2336,7 @@ FR-ACC-04. What the business had and owed on the day its books in JiBUks begin, 
 - **You don't have to make it balance.** The server adds one line to Opening Balance Equity (`system_key: "OPENING_BALANCE"`, `3900`) for the difference. Don't send a line for that account yourself (`422 JOURNAL_LINE_AMBIGUOUS`). A business onboarded before templates existed gets the account created on first use.
 - **Sending it again replaces the opening balances**: the previous opening journal is reversed on its own date and the new one posted, together.
 - Once the opening journal's period is **closed**, it's locked: `422 OPENING_BALANCES_LOCKED` (reopen the period to change it).
+- A supplier's opening balance can also be entered on [`POST /suppliers`](#post-suppliers) (`openingBalance`); it is added to this journal.
 
 **Success:** `200`, the same shape as `GET` below.
 

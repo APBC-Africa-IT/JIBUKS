@@ -72,6 +72,9 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   ACCOUNT_WRONG_TYPE: 422,
   // opening balances
   OPENING_BALANCES_LOCKED: 422,
+  OPENING_BALANCE_DATE_MISMATCH: 422,
+  // suppliers
+  SUPPLIER_TYPE_NOT_FOUND: 404,
   // customer statements
   STATEMENT_NOT_FOUND: 404,
   // customer payments
