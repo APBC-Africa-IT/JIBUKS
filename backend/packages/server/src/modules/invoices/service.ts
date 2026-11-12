@@ -443,6 +443,17 @@ export async function getInvoicePdf(tenantId: string, invoiceId: string): Promis
 export type JournalDocumentLink = repository.JournalDocumentLinkRow;
 
 /** Which sales document each journal issued or cancelled (customerLedger labels a customer's history with these). */
-export async function listJournalDocumentLinks(tenantId: string, journalIds: readonly string[]): Promise<JournalDocumentLink[]> {
-  return repository.listJournalDocumentLinks(tenantId, journalIds);
+export async function listJournalDocumentLinks(
+  tenantId: string,
+  journalIds: readonly string[],
+  direction: "AR" | "AP" = "AR",
+): Promise<JournalDocumentLink[]> {
+  return repository.listJournalDocumentLinks(tenantId, journalIds, direction);
+}
+
+export type JournalBillPayment = repository.JournalBillPaymentRow;
+
+/** The bills each journal paid (bill payments only, not debit notes). */
+export async function listJournalBillPayments(tenantId: string, journalIds: readonly string[]): Promise<JournalBillPayment[]> {
+  return repository.listJournalBillPayments(tenantId, journalIds);
 }

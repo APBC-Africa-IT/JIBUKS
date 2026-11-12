@@ -75,6 +75,19 @@ export const customerTransactionsQuerySchema = z
 
 export type CustomerTransactionsQueryDto = z.infer<typeof customerTransactionsQuerySchema>;
 
+/** GET /suppliers/{id}/transactions -- the same optional inclusive date range. */
+export const supplierTransactionsQuerySchema = customerTransactionsQuerySchema;
+
+/** GET /payables-overview -- the Suppliers hub's Overview tab. */
+export const payablesOverviewQuerySchema = z.object({
+  /** Omit for today (Africa/Nairobi). */
+  as_of: accountingDateSchema.optional(),
+  /** Bills due within this many days of as_of, not yet overdue, are "due soon". */
+  due_soon_days: z.coerce.number().int().min(1).max(90).default(7),
+  /** How many recent supplier transactions to return. */
+  recent_limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
 export const journalLineSchema = z
   .object({
     accountId: uuidSchema,

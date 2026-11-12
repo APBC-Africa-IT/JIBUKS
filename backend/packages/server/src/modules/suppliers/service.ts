@@ -13,8 +13,9 @@ import type {
   CreateSupplierInput,
   ListSuppliersFilters,
   SupplierRow,
+  SupplierLedgerJournalRow,
   SupplierTypeRow,
-  SupplierWithBalanceRow,
+  SupplierWithActivityRow,
   TxClient,
   UpdateSupplierInput,
 } from "./repository.js";
@@ -30,11 +31,11 @@ export async function insertSupplier(client: TxClient, request: CreateSupplierRe
   return repository.insertSupplier(client, request, audit);
 }
 
-export async function listSuppliers(tenantId: string, filters: ListSuppliersFilters = {}): Promise<SupplierWithBalanceRow[]> {
+export async function listSuppliers(tenantId: string, filters: ListSuppliersFilters = {}): Promise<SupplierWithActivityRow[]> {
   return repository.listSuppliers(tenantId, filters);
 }
 
-export async function getSupplier(tenantId: string, supplierId: string, asOf?: string): Promise<SupplierWithBalanceRow> {
+export async function getSupplier(tenantId: string, supplierId: string, asOf?: string): Promise<SupplierWithActivityRow> {
   const supplier = await repository.getSupplierById(tenantId, supplierId, asOf);
   if (!supplier) {
     throw new DomainError("SUPPLIER_NOT_FOUND", `Supplier ${supplierId} not found`);
@@ -95,4 +96,24 @@ export async function renameSupplierType(
     throw new DomainError("SUPPLIER_TYPE_NOT_FOUND", `Supplier type ${supplierTypeId} not found`);
   }
   return type;
+}
+
+/** The supplier's POSTED journals in [from, to], oldest first (supplierLedger builds on this). */
+export async function listLedgerJournals(
+  tenantId: string,
+  supplierId: string,
+  from?: string,
+  to?: string,
+): Promise<SupplierLedgerJournalRow[]> {
+  return repository.listLedgerJournals(tenantId, supplierId, from, to);
+}
+
+/** The latest POSTED journals tagged with any supplier, newest first. */
+export async function listRecentLedgerJournals(tenantId: string, asOf: string, limit: number): Promise<SupplierLedgerJournalRow[]> {
+  return repository.listRecentLedgerJournals(tenantId, asOf, limit);
+}
+
+/** The supplier's balance from POSTED journals dated before `date`. */
+export async function balanceBefore(tenantId: string, supplierId: string, date: string): Promise<number> {
+  return repository.balanceBefore(tenantId, supplierId, date);
 }

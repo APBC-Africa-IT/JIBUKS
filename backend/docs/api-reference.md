@@ -163,6 +163,8 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `GET /customer-settings` / `PATCH /customer-settings` | `customers:view` / `customers:edit` |
 | `GET /supplier-types` / `POST /supplier-types` / `PATCH /supplier-types/{id}` | `suppliers:view` / `suppliers:create` / `suppliers:edit` |
 | `POST /suppliers` with `openingBalance` | `suppliers:create` **and** `opening_balances:manage` |
+| `GET /suppliers/{id}/transactions` | `suppliers:view` |
+| `GET /payables-overview` | `reports:view` |
 | `GET /reports/customers-to-follow-up` | `reports:view` |
 | `GET /periods…` / `POST /periods` | `periods:view` / `periods:create` |
 | `POST /periods/{id}/close` | `periods:close` |
@@ -1040,9 +1042,12 @@ Like [7.5 Customers](#75-customers), except a supplier's `balance_minor` sits on
   "created_at": "2026-07-30T10:25:50.110Z",
   "balance_minor": "3250000",
   "overdue_minor": "3250000",
-  "payment_status": "OVERDUE"
+  "payment_status": "OVERDUE",
+  "last_activity": { "type": "BILL", "date": "2026-10-18", "document_number": "BILL-000124" }
 }
 ```
+
+`last_activity` is the supplier's latest posted transaction at `as_of`, or `null` if they have none. `type` is one of the types under [`GET /suppliers/{id}/transactions`](#get-suppliersidtransactions); `document_number` is the bill or debit note number (for a payment, the first bill it paid), else `null`.
 
 The Suppliers list card is `name`, `balance_minor` and the tag from **`payment_status`**:
 
@@ -1056,6 +1061,104 @@ The Suppliers list card is `name`, `balance_minor` and the tag from **`payment_s
 `overdue_minor` counts posted bills only; the rest of the balance (opening balance, guided `POST /bills`, manual journals) has no due date, so it is never overdue. There's no logo or photo yet; show initials.
 
 **Error Response:** `400 VALIDATION_ERROR` (malformed `as_of`), `404 SUPPLIER_NOT_FOUND`.
+
+---
+
+### `GET /suppliers/{id}/transactions`
+
+`suppliers:view`. The supplier's history: every `POSTED` journal tagged with them, **oldest first**, one row per journal, with a running balance. The **Supplier Statements** report ("per supplier history") and the supplier's activity are built from this.
+
+| Query | Description |
+|---|---|
+| `from` | First date included. Everything before it is summed into `opening_balance_minor`. |
+| `to` | Last date included; on or after `from`. |
+
+Omit both for the whole history.
+
+```json
+{
+  "supplier_id": "…",
+  "supplier_name": "ABC Traders",
+  "currency": null,
+  "from": "2026-09-01",
+  "to": "2026-09-30",
+  "opening_balance_minor": "10000",
+  "total_credit_minor": "50000",
+  "total_debit_minor": "25000",
+  "closing_balance_minor": "35000",
+  "data": [
+    {
+      "journal_id": "…", "journal_number": null, "date": "2026-09-05", "type": "BILL",
+      "document_id": "…", "document_kind": "BILL", "document_number": "BILL-000124",
+      "debited_bill_id": null, "debited_bill_number": null,
+      "payment_method": null, "reference": "INV-5521", "description": "Bill BILL-000124",
+      "paid_bills": [], "credit_minor": "50000", "debit_minor": "0", "balance_minor": "60000"
+    },
+    {
+      "journal_id": "…", "journal_number": null, "date": "2026-09-10", "type": "PAYMENT",
+      "document_id": null, "document_kind": null, "document_number": null,
+      "debited_bill_id": null, "debited_bill_number": null,
+      "payment_method": "MPESA", "reference": "QAB12CD34E", "description": "…",
+      "paid_bills": [{ "bill_id": "…", "bill_number": "BILL-000124", "supplier_reference": "INV-5521", "amount_minor": "20000" }],
+      "credit_minor": "0", "debit_minor": "20000", "balance_minor": "40000"
+    }
+  ]
+}
+```
+
+The balance is **what the business owes the supplier**, so a row's `credit_minor` adds to it and `debit_minor` takes off it (the opposite of customers). A negative balance means the supplier owes the business. `closing_balance_minor` always equals `GET /suppliers/{id}?as_of=<to>`.
+
+| `type` | Meaning | `document_*` |
+|---|---|---|
+| `OPENING_BALANCE` | From opening balances | null |
+| `BILL` | A bill posted | The bill; null for a guided `POST /bills` |
+| `DEBIT_NOTE` | A debit note posted | The debit note, with `debited_bill_*` |
+| `BILL_CANCELLED` / `DEBIT_NOTE_CANCELLED` | The reversal posted when it was cancelled | The cancelled document |
+| `PAYMENT` | Money paid to the supplier | null; `paid_bills` lists the bills it paid, with `payment_method` and `reference`. A guided `POST /cheques` has `paid_bills: []` |
+| `REVERSAL` | A reversed journal | null |
+| `JOURNAL` | Any other journal tagged with the supplier | null |
+
+Cheques written with `POST /cheque-payments` and cash expenses aren't tagged with a supplier, so they don't appear.
+
+**Error Response:** `400 VALIDATION_ERROR` (bad date, or `from` after `to`), `404 SUPPLIER_NOT_FOUND`.
+
+---
+
+### `GET /payables-overview`
+
+`reports:view` (like payables aging). The Suppliers hub's **Overview** tab.
+
+| Query | Description |
+|---|---|
+| `as_of` | Default today (Nairobi). |
+| `due_soon_days` | How far ahead "Due Soon" looks, 1–90. Default `7`. |
+| `recent_limit` | How many recent transactions, 1–50. Default `10`. |
+
+```json
+{
+  "as_of": "2026-09-23",
+  "currency": "KES",
+  "total_payables_minor": "24530000",
+  "overdue_minor": "4800000",
+  "overdue_bill_count": 1,
+  "due_soon_days": 7,
+  "due_soon_minor": "7650000",
+  "due_soon_bill_count": 2,
+  "recent_activity": [
+    { "supplier_id": "…", "supplier_name": "ABC Traders", "journal_id": "…", "date": "2026-09-05", "type": "BILL",
+      "document_number": "BILL-000124", "credit_minor": "12080000", "debit_minor": "0", "…": "same fields as a transaction row, without balance_minor" }
+  ]
+}
+```
+
+| Card | Field |
+|---|---|
+| **Total Payables** | `total_payables_minor`: everything owed to suppliers, net of supplier credit. The same total as `GET /payables-aging`. |
+| **Overdue** | `overdue_minor`: what's left on posted bills past their due date. |
+| **Due Soon** | `due_soon_minor`: what's left on posted bills due from `as_of` to `as_of` + `due_soon_days`, not yet overdue. |
+| **Recent Supplier Activity** | `recent_activity`, newest first. |
+
+Overdue and Due Soon count posted bills only; opening balances and guided bills have no due date.
 
 ---
 
@@ -1088,6 +1191,7 @@ Types can't be deleted yet.
 - **Add Supplier:** load `GET /supplier-types` for the dropdown and `GET /opening-balances` for the opening balance date. Code shows "(auto)" until saved. The button should say **Save Supplier**.
 - A journal line may carry `customerId` **or** `supplierId`, never both — `400 VALIDATION_ERROR` otherwise.
 - For purchases, see [7.22 Supplier Bills](#722-supplier-bills).
+- **Reports tab:** Payables Summary = `GET /suppliers` (each `balance_minor`) or `GET /payables-overview` for the total; Aging Report = `GET /payables-aging`; Supplier Statements = `GET /suppliers/{id}/transactions` (a PDF comes in a later step).
 
 ---
 

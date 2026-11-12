@@ -19,6 +19,7 @@ import { usersRouter } from "./modules/users/routes.js";
 import { accountsRouter } from "./modules/accounts/routes.js";
 import { customerSettingsRouter, customersRouter } from "./modules/customers/routes.js";
 import { supplierTypesRouter, suppliersRouter } from "./modules/suppliers/routes.js";
+import { payablesOverviewRouter } from "./modules/supplierLedger/routes.js";
 import { periodsRouter } from "./modules/periods/routes.js";
 import { journalsRouter } from "./modules/journals/routes.js";
 import { creditSalesRouter } from "./modules/creditSales/routes.js";
@@ -81,6 +82,7 @@ export function createApp(): Express {
   app.use("/api/v1/customer-settings", customerSettingsRouter);
   app.use("/api/v1/suppliers", suppliersRouter);
   app.use("/api/v1/supplier-types", supplierTypesRouter);
+  app.use("/api/v1/payables-overview", payablesOverviewRouter);
   app.use("/api/v1/periods", periodsRouter);
   app.use("/api/v1/journals", journalsRouter);
   app.use("/api/v1/opening-balances", openingBalancesRouter);

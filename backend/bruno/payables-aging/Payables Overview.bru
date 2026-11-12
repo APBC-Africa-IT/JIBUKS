@@ -1,0 +1,25 @@
+meta {
+  name: Payables Overview
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/payables-overview
+  body: none
+  auth: none
+}
+
+params:query {
+  ~as_of: 2026-09-23
+  ~due_soon_days: 7
+  ~recent_limit: 10
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  The Suppliers hub's Overview tab: total_payables_minor, overdue_minor, due_soon_minor (posted bills due within due_soon_days, default 7) and recent_activity (newest first). Requires reports:view.
+}

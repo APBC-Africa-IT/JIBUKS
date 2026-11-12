@@ -4,22 +4,11 @@
  */
 
 import type { Request, Response } from "express";
-import {
-  createSupplierSchema,
-  daysPastDue,
-  DomainError,
-  listSuppliersQuerySchema,
-  partyBalanceQuerySchema,
-  supplierTypeSchema,
-  updateSupplierSchema,
-} from "@jibuks/domain";
+import { createSupplierSchema, DomainError, supplierTypeSchema, updateSupplierSchema } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import { loadPermissions } from "../../middleware/requirePermission.js";
-import * as documents from "../invoices/documents.js";
-import { AP } from "../invoices/documents.js";
 import * as openingBalancesService from "../openingBalances/service.js";
-import { todayInNairobi } from "../periods/service.js";
-import type { SupplierWithBalanceRow } from "./repository.js";
+import * as supplierLedgerService from "../supplierLedger/service.js";
 import * as service from "./service.js";
 
 function auditContextFrom(req: Request): AuditContext {
@@ -64,46 +53,7 @@ export async function create(req: Request, res: Response): Promise<void> {
   const created = openingBalance
     ? await openingBalancesService.createSupplierWithOpeningBalance(request, openingBalance, auditContextFrom(req))
     : await service.createSupplier(request, auditContextFrom(req));
-  const supplier = await service.getSupplier(req.tenantId!, created.id);
-  const [withStatus] = await withPaymentStatus(req.tenantId!, [supplier], todayInNairobi(), supplier.id);
-  res.status(201).json(withStatus);
-}
-
-/** OVERDUE: a posted bill is past due. DUE: owed, nothing past due. CREDIT: the supplier owes the business. SETTLED: nothing either way. */
-type PaymentStatus = "OVERDUE" | "DUE" | "CREDIT" | "SETTLED";
-
-/** Adds the list's "(Overdue)" / "(Due)" tag: what is past due on posted bills at `asOf`, and the status it gives. */
-async function withPaymentStatus(tenantId: string, suppliers: SupplierWithBalanceRow[], asOf: string, supplierId?: string) {
-  const open = await documents.listOpenAsOf(AP, tenantId, asOf, supplierId);
-  const overdue = new Map<string, number>();
-  for (const bill of open) {
-    if (daysPastDue(bill.due_date ?? bill.issue_date, asOf) > 0) {
-      overdue.set(bill.party_id, (overdue.get(bill.party_id) ?? 0) + Number(bill.open_minor));
-    }
-  }
-  return suppliers.map((supplier) => {
-    const overdueMinor = overdue.get(supplier.id) ?? 0;
-    const balance = Number(supplier.balance_minor);
-    const paymentStatus: PaymentStatus = overdueMinor > 0 ? "OVERDUE" : balance > 0 ? "DUE" : balance < 0 ? "CREDIT" : "SETTLED";
-    return { ...supplier, overdue_minor: String(overdueMinor), payment_status: paymentStatus };
-  });
-}
-
-export async function list(req: Request, res: Response): Promise<void> {
-  const query = listSuppliersQuerySchema.parse(req.query);
-  const suppliers = await service.listSuppliers(req.tenantId!, {
-    asOf: query.as_of,
-    q: query.q,
-    supplierTypeId: query.supplier_type_id,
-  });
-  res.json({ data: await withPaymentStatus(req.tenantId!, suppliers, query.as_of ?? todayInNairobi()) });
-}
-
-export async function getOne(req: Request, res: Response): Promise<void> {
-  const { as_of } = partyBalanceQuerySchema.parse(req.query);
-  const supplier = await service.getSupplier(req.tenantId!, req.params["id"]!, as_of);
-  const [withStatus] = await withPaymentStatus(req.tenantId!, [supplier], as_of ?? todayInNairobi(), supplier.id);
-  res.json(withStatus);
+  res.status(201).json(await supplierLedgerService.getSupplierEntry(req.tenantId!, created.id));
 }
 
 export async function update(req: Request, res: Response): Promise<void> {
