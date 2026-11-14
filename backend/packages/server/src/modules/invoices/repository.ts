@@ -525,15 +525,15 @@ export interface ListFilters {
   readonly direction: "AR" | "AP";
   /** Only these kinds -- keeps cash sales out of invoice lists and the reverse. */
   readonly kinds: readonly InvoiceKind[];
-  /** A stored status, or OVERDUE (derived). */
-  readonly status?: InvoiceStatus | "OVERDUE";
+  /** A stored status, OVERDUE (derived), or DUE (ISSUED + PART_PAID, not overdue). */
+  readonly status?: InvoiceStatus | "OVERDUE" | "DUE";
   /** The customer (AR) or supplier (AP). */
   readonly partyId?: string;
   readonly from?: string;
   readonly to?: string;
   /** Pro-formas by estimate status (estimateStatus in @jibuks/domain, in SQL). */
   readonly estimateStatus?: EstimateStatus;
-  /** Case-insensitive match on the party's name, the number or the reference. */
+  /** Case-insensitive match on the party's name, the number, the reference or (bills) the supplier's invoice number. */
   readonly q?: string;
   /** Today in Africa/Nairobi -- the cutoff for OVERDUE and EXPIRED. */
   readonly today: string;
@@ -585,6 +585,8 @@ export async function listInvoices(tenantId: string, filters: ListFilters): Prom
     where.push(`i.kind = ANY(${add(filters.kinds)}::text[])`);
     if (filters.status === "OVERDUE") {
       where.push(OVERDUE_SQL(`${add(filters.today)}::date`));
+    } else if (filters.status === "DUE") {
+      where.push(`i.status IN ('ISSUED', 'PART_PAID')`, `NOT ${OVERDUE_SQL(`${add(filters.today)}::date`)}`);
     } else if (filters.status !== undefined) {
       where.push(`i.status = ${add(filters.status)}`);
       if (filters.status === "ISSUED" || filters.status === "PART_PAID") {
@@ -606,7 +608,7 @@ export async function listInvoices(tenantId: string, filters: ListFilters): Prom
     if (filters.q !== undefined) {
       // Escape LIKE wildcards so "50%" searches for the text.
       const p = add(`%${filters.q.replace(/[\\%_]/g, "\\$&")}%`);
-      where.push(`(COALESCE(c.name, s.name) ILIKE ${p} OR i.number ILIKE ${p} OR i.reference ILIKE ${p})`);
+      where.push(`(COALESCE(c.name, s.name) ILIKE ${p} OR i.number ILIKE ${p} OR i.reference ILIKE ${p} OR i.supplier_reference ILIKE ${p})`);
     }
     if (filters.after !== undefined) {
       where.push(`(i.created_at, i.id) < (${add(filters.after.createdAt)}::timestamptz, ${add(filters.after.id)}::uuid)`);

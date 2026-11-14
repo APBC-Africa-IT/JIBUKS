@@ -300,6 +300,107 @@ describe("supplier bills", () => {
   });
 });
 
+describe("bill list screen", () => {
+  it("searches by supplier name, number, reference and the supplier's invoice number", async () => {
+    const f = await makeFixture();
+    const tag = randomUUID().slice(0, 8);
+    const byRef = await ok("post", "/supplier-bills", billBody(f, { supplierReference: `KQ-${tag}` }));
+    const byOurRef = await ok("post", "/supplier-bills", billBody(f, { reference: `LPO-${tag}` }));
+    const posted = await postedBill(f);
+
+    const ids = async (q: string) =>
+      (await ok("get", `/supplier-bills?supplier_id=${f.supplierId}&q=${encodeURIComponent(q)}`)).data.map(
+        (b: { id: string }) => b.id,
+      );
+
+    expect(await ids(`kq-${tag}`)).toEqual([byRef.id]);
+    expect(await ids(`LPO-${tag}`)).toEqual([byOurRef.id]);
+    expect(await ids(posted.number)).toEqual([posted.id]);
+    const supplierName = posted.supplier_name.toLowerCase();
+    expect((await ids(supplierName)).length).toBe(3);
+    expect(await ids("100%")).toEqual([]);
+  });
+
+  it("filters DUE: posted and still owed, not overdue -- unlike OVERDUE, PAID and drafts", async () => {
+    const f = await makeFixture();
+    await ok("post", "/supplier-bills", billBody(f)); // draft
+    const due = await postedBill(f, { dueDate: addDays(today, 5) });
+    const partPaid = await postedBill(f, { dueDate: addDays(today, 30) });
+    await ok("post", `/supplier-bills/${partPaid.id}/payments`, {
+      clientUuid: randomUUID(),
+      amountMinor: 10000,
+      date: today,
+      paidFromAccountId: f.bankAccountId,
+    });
+    const overdue = await postedBill(f, { billDate: addDays(today, -40), dueDate: addDays(today, -10) });
+    const paid = await postedBill(f);
+    await ok("post", `/supplier-bills/${paid.id}/payments`, {
+      clientUuid: randomUUID(),
+      amountMinor: 50000,
+      date: today,
+      paidFromAccountId: f.bankAccountId,
+    });
+
+    const ids = async (status: string) =>
+      (await ok("get", `/supplier-bills?supplier_id=${f.supplierId}&status=${status}`)).data.map((b: { id: string }) => b.id);
+
+    expect((await ids("DUE")).sort()).toEqual([due.id, partPaid.id].sort());
+    expect(await ids("OVERDUE")).toEqual([overdue.id]);
+    expect(await ids("PAID")).toEqual([paid.id]);
+    expect((await call("get", "/invoices?status=DUE")).status).toBe(400);
+  });
+});
+
+describe("POST /supplier-bills with post: true", () => {
+  it("creates, numbers and posts in one call", async () => {
+    const f = await makeFixture();
+    const response = await call("post", "/supplier-bills", billBody(f, { post: true }));
+
+    expect(response.status, JSON.stringify(response.body)).toBe(201);
+    expect(response.body).toMatchObject({ status: "ISSUED", total_minor: "50000", balance_due_minor: "50000" });
+    expect(response.body.number).toMatch(/^BILL-/);
+    expect(response.body.journal_id).toBeTruthy();
+  });
+
+  it("leaves nothing behind when posting is refused, so the same clientUuid can be retried", async () => {
+    const f = await makeFixture();
+    const first = billBody(f, { post: true, billDate: "1999-01-15", dueDate: "1999-02-15" });
+
+    const refused = await call("post", "/supplier-bills", first);
+    expect(refused.status, JSON.stringify(refused.body)).toBe(404);
+    expect(refused.body.title).toBe("PERIOD_NOT_FOUND"); // no accounting period covers 1999
+    expect((await ok("get", `/supplier-bills?supplier_id=${f.supplierId}`)).data).toEqual([]);
+
+    const retried = await call("post", "/supplier-bills", { ...first, billDate: today, dueDate: today });
+    expect(retried.status, JSON.stringify(retried.body)).toBe(201);
+    expect(retried.body.status).toBe("ISSUED");
+  });
+});
+
+describe("GET /api/v1/supplier-bills/{id}/pdf", () => {
+  it("returns the posted bill as a PDF named after its number, and 404s an unknown id", async () => {
+    const f = await makeFixture();
+    const bill = await postedBill(f);
+
+    const response = await request(app)
+      .get(`/api/v1/supplier-bills/${bill.id}/pdf`)
+      .set(await auth())
+      .buffer(true)
+      .parse((res, done) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => done(null, Buffer.concat(chunks)));
+      });
+    const missing = await call("get", `/supplier-bills/${randomUUID()}/pdf`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toBe("application/pdf");
+    expect(response.headers["content-disposition"]).toBe(`inline; filename="${bill.number}.pdf"`);
+    expect((response.body as Buffer).subarray(0, 5).toString()).toBe("%PDF-");
+    expect(missing.status).toBe(404);
+  });
+});
+
 describe("GET /api/v1/payables-aging", () => {
   it("ages open bills per supplier, keeps guided bills apart, and drills down", async () => {
     const f = await makeFixture(); // terms 14 days

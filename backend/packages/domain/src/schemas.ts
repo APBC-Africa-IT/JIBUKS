@@ -1078,6 +1078,8 @@ export const createSupplierBillSchema = z
     reference: z.string().max(100).optional(),
     notes: z.string().max(2000).optional(),
     lines: billLinesSchema,
+    /** Save and post in one call (the Save button). Needs supplier_bills:post. */
+    post: z.boolean().default(false),
   })
   .superRefine((body, ctx) => {
     checkBillTax(body, ctx);
@@ -1133,14 +1135,16 @@ export const recordBillPaymentSchema = z.object({
 
 export type RecordBillPaymentDto = z.infer<typeof recordBillPaymentSchema>;
 
-/** GET /supplier-bills */
+/** GET /supplier-bills. status DUE = posted and still owed, not yet overdue (ISSUED + PART_PAID). */
 export const listSupplierBillsQuerySchema = paginationSchema.extend({
-  status: z.enum(INVOICE_VIEW_STATUSES).optional(),
+  status: z.enum([...INVOICE_VIEW_STATUSES, "DUE"]).optional(),
   kind: z.enum(BILL_KINDS).optional(),
   supplier_id: uuidSchema.optional(),
   /** bill_date range, inclusive. */
   from: accountingDateSchema.optional(),
   to: accountingDateSchema.optional(),
+  /** Case-insensitive match on the supplier's name, the number, the reference or the supplier's invoice number. */
+  q: z.string().trim().min(1).max(100).optional(),
 });
 
 /** GET /payables-aging */

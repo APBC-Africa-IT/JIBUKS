@@ -16,6 +16,7 @@ supplierBillsRouter.use(requireRealIdentity);
 supplierBillsRouter.post("/", requirePermission("supplier_bills:create"), asyncHandler(controllers.create));
 supplierBillsRouter.get("/", requirePermission("supplier_bills:view"), asyncHandler(controllers.list));
 supplierBillsRouter.get("/:id", requirePermission("supplier_bills:view"), asyncHandler(controllers.getOne));
+supplierBillsRouter.get("/:id/pdf", requirePermission("supplier_bills:view"), asyncHandler(controllers.pdf));
 supplierBillsRouter.patch("/:id", requirePermission("supplier_bills:create"), asyncHandler(controllers.update));
 supplierBillsRouter.delete("/:id", requirePermission("supplier_bills:create"), asyncHandler(controllers.remove));
 supplierBillsRouter.post("/:id/post", requirePermission("supplier_bills:post"), asyncHandler(controllers.post));

@@ -196,7 +196,7 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `PATCH /accounts/{id}` | `accounts:edit` |
 | `POST /journals/{id}/approve`, `POST /journals/{id}/reject` | `journals:approve` (Owner, Accountant) |
 | `GET /opening-balances` / `PUT /opening-balances` | `journals:view` / `opening_balances:manage` (Owner, Accountant) |
-| `GET /supplier-bills…` | `supplier_bills:view` |
+| `GET /supplier-bills…` (incl. `/{id}/pdf`) | `supplier_bills:view` |
 | `POST /supplier-bills`, `PATCH`/`DELETE /supplier-bills/{id}`, `POST /supplier-bills/{id}/debit-notes` | `supplier_bills:create` |
 | `POST /supplier-bills/{id}/post` / `cancel` / `payments` | `supplier_bills:post` / `supplier_bills:cancel` / `supplier_bills:pay` |
 | `GET /trial-balance`, `GET /profit-and-loss`, `GET /cash-flow`, `GET /receivables-aging`, `GET /payables-aging` | `reports:view` |
@@ -2347,6 +2347,7 @@ Statuses are the same as invoices: `DRAFT` → `ISSUED` (shown in the app as "Po
 | `dueDate` | No | Defaults to `billDate` + the supplier's `paymentTermsDays`. |
 | `supplierReference` | No | The supplier's own invoice number. **The same supplier + reference can't be entered twice** (`409 DUPLICATE_VALUE`) unless the earlier bill was cancelled. |
 | `taxMode`, `reference`, `notes`, `currency` | No | As for invoices. VAT here is **input** VAT (`taxAccountId` = VAT Recoverable); a business that isn't VAT-registered gets `422 TAX_NOT_REGISTERED` and should enter the gross amount with `taxMode: "NONE"`. |
+| `post` | No | `true` = also number and post the bill in this call (the **Save** button). Needs `supplier_bills:post` as well (`403` otherwise). If posting is refused (closed period, …) the draft is deleted again, so nothing is left behind and the same `clientUuid` can be retried. Default `false`. |
 | `lines[]` | ✅ | `itemId` (optional catalogue item), `description`, `quantity` (up to 3 decimals), `unitPriceMinor` **or** `amountMinor` (see below), `expenseAccountId` (expense or asset account), `taxRateBps`, `taxAccountId` (omit for the business's `VAT_INPUT` account). With `itemId`, a left-out `description`, `unitPriceMinor` or `expenseAccountId` comes from the item. The account is the item's **inventory account** for an `INVENTORY` item and its expense account otherwise. |
 
 **Price per unit or line total.** The Bill screen's **Amount** column is the line's total, so send `amountMinor` instead of `unitPriceMinor` (one or the other, not both; `400` otherwise). It's before VAT under `EXCLUSIVE` and includes VAT under `INCLUSIVE`, like a unit price. The amount is kept **exact**: 3 bags for 1,000.00 posts 1,000.00, where a unit price of 333.33 would give 999.99. Lines in the response have:
@@ -2355,11 +2356,24 @@ Statuses are the same as invoices: `DRAFT` → `ISSUED` (shown in the app as "Po
 
 With `itemId` and neither field, the item's rate is used as the unit price.
 
-**Success:** `201`, the bill with `lines` and `allocations`.
+**Success:** `201`, the bill with `lines` and `allocations` (`status: "ISSUED"` and a number with `post: true`).
 
 ### `GET /supplier-bills` / `GET /supplier-bills/{id}`
 
-`supplier_bills:view`. Same paging and filters as `GET /invoices`, with `supplier_id` instead of `customer_id` and `kind` = `BILL` / `DEBIT_NOTE`. `from`/`to` filter on `bill_date`.
+`supplier_bills:view`. Same paging as `GET /invoices`. Filters:
+
+| Query | Description |
+|---|---|
+| `status` | Any invoice status, **or `DUE`**: posted and still owed but not overdue (`ISSUED` + `PART_PAID`). The bill list's tabs map to `DUE` / `OVERDUE` / `PAID` / no filter. |
+| `q` | Case-insensitive match on the supplier's name, the bill number, `reference` or `supplier_reference` (the supplier's invoice number). |
+| `supplier_id`, `kind` (`BILL` / `DEBIT_NOTE`) | |
+| `from` / `to` | On `bill_date`, inclusive. |
+
+`DUE` is accepted on bills only (`GET /invoices?status=DUE` is `400`).
+
+### `GET /supplier-bills/{id}/pdf`
+
+`supplier_bills:view`. The bill or debit note as a PDF, built on request (nothing is stored), `Content-Disposition: inline; filename="BILL-000004.pdf"` (`DRAFT-<id prefix>.pdf` for drafts). It shows the business, then the supplier under **SUPPLIER** (address + city, phone, email, PIN), bill and due dates, the supplier's invoice number, lines with VAT, totals, payments/debit notes and the balance due. Drafts, paid and cancelled bills are stamped. A debit note names the bill it debits. `404` for an invoice id.
 
 ### `PATCH /supplier-bills/{id}` / `DELETE /supplier-bills/{id}`
 

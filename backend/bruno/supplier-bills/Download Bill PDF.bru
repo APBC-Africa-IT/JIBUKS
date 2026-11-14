@@ -1,0 +1,20 @@
+meta {
+  name: Download Bill PDF
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/api/v1/supplier-bills/{{billId}}/pdf
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires supplier_bills:view. Returns application/pdf (drafts and debit notes too). Bruno shows the
+  PDF in the response pane. The supplier block uses the supplier's address, city, phone, email and PIN.
+}

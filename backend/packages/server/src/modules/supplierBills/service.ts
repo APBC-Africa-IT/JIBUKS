@@ -10,9 +10,14 @@
 
 import type { InvoiceKind, InvoicePaymentMethod, InvoiceViewStatus, TaxMode } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
+import { renderInvoicePdf } from "../invoices/pdf.js";
 import * as documents from "../invoices/documents.js";
 import { AP, type DocumentDetail, type DocumentView, type LineDraft, type Page } from "../invoices/documents.js";
+import * as invoicesRepository from "../invoices/repository.js";
 import type { AllocationRow, InvoiceLineRow } from "../invoices/repository.js";
+import * as suppliersService from "../suppliers/service.js";
+import * as tenantsService from "../tenants/service.js";
+import { buildBillPdfModel } from "./pdf.js";
 
 // ---------------------------------------------------------------------
 // Views
@@ -174,8 +179,10 @@ export async function getBill(tenantId: string, billId: string): Promise<BillDet
 // ---------------------------------------------------------------------
 
 export interface ListBillsRequest {
-  readonly status?: InvoiceViewStatus;
+  /** DUE: posted and still owed, not yet overdue. */
+  readonly status?: InvoiceViewStatus | "DUE";
   readonly kind?: InvoiceKind;
+  readonly q?: string;
   readonly supplierId?: string;
   readonly from?: string;
   readonly to?: string;
@@ -298,6 +305,22 @@ export async function postBill(tenantId: string, billId: string, audit: AuditCon
   );
 }
 
+/**
+ * Create and post in one call (the Save button). If posting is refused --
+ * closed period, duplicate supplier reference, ... -- the draft is deleted
+ * again, so the call either fully succeeds or leaves nothing behind and
+ * the same clientUuid can be retried.
+ */
+export async function createAndPostBill(request: CreateBillRequest, audit: AuditContext): Promise<BillDetailView> {
+  const draft = await createBill(request, audit);
+  try {
+    return await postBill(request.tenantId, draft.id, audit);
+  } catch (error) {
+    await documents.remove(AP, request.tenantId, draft.id, audit);
+    throw error;
+  }
+}
+
 export async function cancelBill(tenantId: string, billId: string, reason: string, audit: AuditContext): Promise<BillDetailView> {
   return toBillDetail(await documents.cancel(AP, tenantId, billId, reason, audit));
 }
@@ -340,4 +363,31 @@ export async function createDebitNote(request: CreateDebitNoteRequest, audit: Au
       audit,
     ),
   );
+}
+
+// ---------------------------------------------------------------------
+// PDF
+// ---------------------------------------------------------------------
+
+/** The bill or debit note as a PDF, built on request (nothing is stored). */
+export async function getBillPdf(tenantId: string, billId: string): Promise<{ filename: string; pdf: Buffer }> {
+  const bill = await getBill(tenantId, billId);
+  const [tenant, supplier, debited] = await Promise.all([
+    tenantsService.getTenant(tenantId),
+    suppliersService.getSupplier(tenantId, bill.supplier_id),
+    bill.debited_bill_id ? invoicesRepository.getInvoice(tenantId, bill.debited_bill_id) : null,
+  ]);
+  const model = buildBillPdfModel({
+    bill,
+    business: { name: tenant.name, taxIdentifier: tenant.tax_identifier },
+    supplier: {
+      name: supplier.name,
+      taxIdentifier: supplier.tax_identifier,
+      phone: supplier.phone,
+      email: supplier.email,
+      address: [supplier.address, supplier.city].filter(Boolean).join(", ") || null,
+    },
+    debitedBillNumber: debited?.number ?? null,
+  });
+  return { filename: model.filename, pdf: await renderInvoicePdf(model) };
 }

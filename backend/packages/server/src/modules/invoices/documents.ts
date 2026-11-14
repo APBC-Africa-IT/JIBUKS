@@ -195,7 +195,8 @@ export async function getDetail(side: DocumentScope, tenantId: string, id: strin
 // ---------------------------------------------------------------------
 
 export interface ListRequest {
-  readonly status?: InvoiceViewStatus;
+  /** DUE: AP lists only (GET /supplier-bills). */
+  readonly status?: InvoiceViewStatus | "DUE";
   readonly kind?: InvoiceKind;
   readonly estimateStatus?: EstimateStatus;
   readonly q?: string;
