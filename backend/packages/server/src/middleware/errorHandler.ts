@@ -79,6 +79,7 @@ const STATUS_BY_CODE: Record<DomainErrorCode, number> = {
   STATEMENT_NOT_FOUND: 404,
   // customer payments
   CUSTOMER_PAYMENT_NOT_FOUND: 404,
+  SUPPLIER_PAYMENT_NOT_FOUND: 404,
   PAYMENT_ALLOCATION_INVALID: 422,
   // customer credit
   CREDIT_NOT_AVAILABLE: 422,

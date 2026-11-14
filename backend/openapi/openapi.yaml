@@ -167,6 +167,11 @@ tags:
       Money received from a customer (PMT-000001), applied to any of their
       invoices -- oldest due first by default -- with the rest kept as
       credit. Every AR payment is one, however it is recorded.
+  - name: Supplier Payments
+    description: >
+      Money paid to a supplier (SP-000001), applied to any of their bills --
+      oldest due first by default -- with the rest kept as supplier credit
+      (an advance). Every AP payment is one, however it is recorded.
   - name: Customer Credit
     description: >
       A customer's credit (credit notes with something left, payments with
@@ -1269,10 +1274,12 @@ paths:
       - $ref: '#/components/parameters/InvoiceIdPath'
     post:
       tags: [Supplier Bills]
-      summary: Record a payment to the supplier
+      summary: Record a payment to the supplier against this bill
       description: >
         Requires `supplier_bills:pay`. Posts Dr Accounts Payable (supplier) /
-        Cr paidFromAccountId. More than the balance due is 422.
+        Cr paidFromAccountId. More than the balance due is 422. Recorded as
+        a supplier payment (SP-) applied in full to this bill; the
+        allocation's supplier_payment_id points to it.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -1607,6 +1614,143 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CustomerPaymentDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /supplier-payments:
+    post:
+      tags: [Supplier Payments]
+      summary: Pay a supplier
+      description: >
+        Requires `supplier_bills:pay`. Posts one journal (Dr payables tagged
+        with the supplier, by each bill's payable account; Cr the money
+        account) and applies it to the supplier's bills: the allocations
+        sent, or with none, their posted bills oldest due date first.
+        allocations [] keeps it all as supplier credit. What isn't applied
+        stays on the payment as unapplied_minor. CHEQUE defaults to the
+        Bank account.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSupplierPaymentRequest'
+            example:
+              clientUuid: "5b2c1d3e-4f50-4c6d-8e9f-0a1b2c3d4e5f"
+              supplierId: "8d4e2f3e-2b4a-4c1a-9c1a-2b4a4c1a9c1a"
+              amountMinor: 3500000
+              date: "2026-11-14"
+              method: CHEQUE
+              reference: "004512"
+      responses:
+        '201':
+          description: The payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierPaymentDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: DUPLICATE_VALUE -- clientUuid already used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: >
+            INVOICE_OVERPAYMENT, INVOICE_INVALID_STATE, PAYMENT_ALLOCATION_INVALID
+            or SYSTEM_ACCOUNT_MISSING. Nothing is posted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    get:
+      tags: [Supplier Payments]
+      summary: List payments made to suppliers
+      description: Requires `supplier_bills:view`. Newest first, cursor-paged. Items have no allocations.
+      parameters:
+        - name: supplier_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: method
+          in: query
+          required: false
+          schema: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER] }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: has_credit
+          in: query
+          required: false
+          description: true = payments with supplier credit left on them.
+          schema: { type: string, enum: ["true", "false"] }
+        - name: q
+          in: query
+          required: false
+          description: Supplier name, payment number or reference; case-insensitive.
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of payments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SupplierPayment'
+                  next_cursor: { type: string, nullable: true }
+                  has_more: { type: boolean }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /supplier-payments/{id}:
+    get:
+      tags: [Supplier Payments]
+      summary: Get a supplier payment with its allocations
+      description: Requires `supplier_bills:view`. 404 SUPPLIER_PAYMENT_NOT_FOUND.
+      parameters:
+        - $ref: '#/components/parameters/SupplierPaymentIdPath'
+      responses:
+        '200':
+          description: The payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierPaymentDetail'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4159,6 +4303,11 @@ components:
       schema:
         type: string
         format: uuid
+    SupplierPaymentIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     CustomerPaymentIdPath:
       name: id
       in: path
@@ -5058,7 +5207,7 @@ components:
         amountMinor: { type: integer, minimum: 1 }
         date: { type: string, format: date }
         paidFromAccountId: { type: string, format: uuid, description: "The cash, bank or M-Pesa account the money left." }
-        method: { type: string, enum: [CASH, BANK, MPESA, OTHER], default: CASH }
+        method: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER], default: CASH, description: "CHEQUE - put the cheque number in reference." }
         reference: { type: string, maxLength: 100 }
     SupplierBill:
       type: object
@@ -5126,13 +5275,14 @@ components:
                 type: object
                 properties:
                   id: { type: string, format: uuid }
-                  method: { type: string, enum: [CASH, BANK, MPESA, OTHER, DEBIT_NOTE] }
+                  method: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER, DEBIT_NOTE] }
                   amount_minor: { type: string }
                   date: { type: string, format: date }
                   paid_from_account_id: { type: string, format: uuid, nullable: true }
                   reference: { type: string, nullable: true }
                   journal_id: { type: string, format: uuid }
                   debit_note_id: { type: string, format: uuid, nullable: true }
+                  supplier_payment_id: { type: string, format: uuid, nullable: true, description: "The supplier payment (SP-) this is part of; null on debit notes." }
                   created_at: { type: string, format: date-time }
 
     # -- Opening balances --
@@ -5473,6 +5623,80 @@ components:
                 properties:
                   invoice_id: { type: string, format: uuid }
                   invoice_number: { type: string }
+                  amount_minor: { type: string }
+                  date: { type: string, format: date }
+
+    CreateSupplierPaymentRequest:
+      type: object
+      required: [clientUuid, supplierId, amountMinor, date]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        supplierId: { type: string, format: uuid }
+        amountMinor: { type: integer, minimum: 1 }
+        date: { type: string, format: date }
+        method: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER], default: CASH }
+        paidFromAccountId:
+          type: string
+          format: uuid
+          description: Default the business's Cash, Bank (also for CHEQUE) or M-Pesa account for method; required for OTHER.
+        reference: { type: string, maxLength: 100, description: "Cheque number, M-Pesa code, EFT reference." }
+        memo: { type: string, maxLength: 1000 }
+        allocations:
+          type: array
+          maxItems: 200
+          description: >
+            Omit to pay posted bills oldest due first; [] keeps it all as
+            supplier credit. Each amount at most the bill's balance;
+            together at most amountMinor; each bill once.
+          items:
+            type: object
+            required: [billId, amountMinor]
+            properties:
+              billId: { type: string, format: uuid }
+              amountMinor: { type: integer, minimum: 1 }
+
+    SupplierPayment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: string, example: "SP-000017" }
+        supplier_id: { type: string, format: uuid }
+        supplier_name: { type: string }
+        date: { type: string, format: date }
+        currency: { type: string, example: KES }
+        amount_minor: { type: string }
+        applied_minor: { type: string, description: Applied to bills. }
+        unapplied_minor: { type: string, description: Supplier credit (an advance) still on the payment. }
+        refunded_minor:
+          type: string
+          description: Credit the supplier paid back. amount = applied + unapplied + refunded.
+        credit_account_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The payable account its credit was posted to.
+        method: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER] }
+        paid_from_account_id: { type: string, format: uuid }
+        reference: { type: string, nullable: true }
+        memo: { type: string, nullable: true }
+        journal_id: { type: string, format: uuid }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    SupplierPaymentDetail:
+      allOf:
+        - $ref: '#/components/schemas/SupplierPayment'
+        - type: object
+          properties:
+            allocations:
+              type: array
+              description: Oldest due first.
+              items:
+                type: object
+                properties:
+                  bill_id: { type: string, format: uuid }
+                  bill_number: { type: string }
+                  supplier_reference: { type: string, nullable: true, description: "The supplier's own invoice number." }
                   amount_minor: { type: string }
                   date: { type: string, format: date }
 
@@ -5975,13 +6199,18 @@ components:
         date: { type: string, format: date }
         type: { $ref: '#/components/schemas/SupplierTransactionType' }
         document_id: { type: string, format: uuid, nullable: true }
-        document_kind: { type: string, nullable: true, enum: [BILL, DEBIT_NOTE, null] }
+        document_kind:
+          type: string
+          nullable: true
+          enum: [BILL, DEBIT_NOTE, SUPPLIER_PAYMENT, null]
+          description: SUPPLIER_PAYMENT on PAYMENT rows - document_id/number are the SP- payment.
         document_number: { type: string, nullable: true }
         debited_bill_id: { type: string, format: uuid, nullable: true, description: "DEBIT_NOTE rows - the bill it was raised against." }
         debited_bill_number: { type: string, nullable: true }
-        payment_method: { type: string, nullable: true, enum: [CASH, BANK, MPESA, OTHER, null] }
+        payment_method: { type: string, nullable: true, enum: [CASH, BANK, MPESA, CHEQUE, OTHER, null] }
         reference: { type: string, nullable: true }
         description: { type: string }
+        unapplied_minor: { type: string, nullable: true, description: "PAYMENT rows - what became supplier credit; null on other rows." }
         paid_bills:
           type: array
           description: PAYMENT rows - the bills it paid.

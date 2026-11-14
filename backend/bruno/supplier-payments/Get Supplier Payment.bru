@@ -1,0 +1,23 @@
+meta {
+  name: Get Supplier Payment
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/supplier-payments/{{supplierPaymentId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  supplierPaymentId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  Requires supplier_bills:view. One payment with the bills it paid. 404 SUPPLIER_PAYMENT_NOT_FOUND.
+}

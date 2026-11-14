@@ -29,6 +29,7 @@ const METHOD_LABELS: Readonly<Record<string, string>> = {
   CASH: "Cash",
   BANK: "Bank",
   MPESA: "M-Pesa",
+  CHEQUE: "Cheque",
   OTHER: "Other",
   DEBIT_NOTE: "Debit note",
 };

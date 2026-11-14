@@ -61,6 +61,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.28 Customer Statements](#728-customer-statements)
 - [7.29 Customer Payments](#729-customer-payments)
 - [7.29b Customer Credit](#729b-customer-credit)
+- [7.30 Supplier Payments](#730-supplier-payments)
 
 ---
 
@@ -199,6 +200,7 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `GET /supplier-bills…` (incl. `/{id}/pdf`) | `supplier_bills:view` |
 | `POST /supplier-bills`, `PATCH`/`DELETE /supplier-bills/{id}`, `POST /supplier-bills/{id}/debit-notes` | `supplier_bills:create` |
 | `POST /supplier-bills/{id}/post` / `cancel` / `payments` | `supplier_bills:post` / `supplier_bills:cancel` / `supplier_bills:pay` |
+| `POST /supplier-payments` / `GET /supplier-payments`, `GET /supplier-payments/{id}` | `supplier_bills:pay` / `supplier_bills:view` |
 | `GET /trial-balance`, `GET /profit-and-loss`, `GET /cash-flow`, `GET /receivables-aging`, `GET /payables-aging` | `reports:view` |
 
 ---
@@ -1047,7 +1049,7 @@ Like [7.5 Customers](#75-customers), except a supplier's `balance_minor` sits on
 }
 ```
 
-`last_activity` is the supplier's latest posted transaction at `as_of`, or `null` if they have none. `type` is one of the types under [`GET /suppliers/{id}/transactions`](#get-suppliersidtransactions); `document_number` is the bill or debit note number (for a payment, the first bill it paid), else `null`.
+`last_activity` is the supplier's latest posted transaction at `as_of`, or `null` if they have none. `type` is one of the types under [`GET /suppliers/{id}/transactions`](#get-suppliersidtransactions); `document_number` is the bill or debit note number, or for a payment its `SP-` number, else `null`.
 
 The Suppliers list card is `name`, `balance_minor` and the tag from **`payment_status`**:
 
@@ -1092,14 +1094,15 @@ Omit both for the whole history.
       "document_id": "…", "document_kind": "BILL", "document_number": "BILL-000124",
       "debited_bill_id": null, "debited_bill_number": null,
       "payment_method": null, "reference": "INV-5521", "description": "Bill BILL-000124",
-      "paid_bills": [], "credit_minor": "50000", "debit_minor": "0", "balance_minor": "60000"
+      "paid_bills": [], "unapplied_minor": null, "credit_minor": "50000", "debit_minor": "0", "balance_minor": "60000"
     },
     {
       "journal_id": "…", "journal_number": null, "date": "2026-09-10", "type": "PAYMENT",
-      "document_id": null, "document_kind": null, "document_number": null,
+      "document_id": "…", "document_kind": "SUPPLIER_PAYMENT", "document_number": "SP-000017",
       "debited_bill_id": null, "debited_bill_number": null,
-      "payment_method": "MPESA", "reference": "QAB12CD34E", "description": "…",
+      "payment_method": "MPESA", "reference": "QAB12CD34E", "description": "Payment SP-000017 to Unga Ltd",
       "paid_bills": [{ "bill_id": "…", "bill_number": "BILL-000124", "supplier_reference": "INV-5521", "amount_minor": "20000" }],
+      "unapplied_minor": "0",
       "credit_minor": "0", "debit_minor": "20000", "balance_minor": "40000"
     }
   ]
@@ -1114,7 +1117,7 @@ The balance is **what the business owes the supplier**, so a row's `credit_minor
 | `BILL` | A bill posted | The bill; null for a guided `POST /bills` |
 | `DEBIT_NOTE` | A debit note posted | The debit note, with `debited_bill_*` |
 | `BILL_CANCELLED` / `DEBIT_NOTE_CANCELLED` | The reversal posted when it was cancelled | The cancelled document |
-| `PAYMENT` | Money paid to the supplier | null; `paid_bills` lists the bills it paid, with `payment_method` and `reference`. A guided `POST /cheques` has `paid_bills: []` |
+| `PAYMENT` | Money paid to the supplier | The [supplier payment](#730-supplier-payments) (`document_kind: "SUPPLIER_PAYMENT"`, `SP-` number); `paid_bills` lists the bills it paid, `unapplied_minor` what became supplier credit, with `payment_method` (incl. `CHEQUE`) and `reference`. A guided `POST /cheques` has `document_*` null, `paid_bills: []` and `unapplied_minor: null` |
 | `REVERSAL` | A reversed journal | null |
 | `JOURNAL` | Any other journal tagged with the supplier | null |
 
@@ -1190,7 +1193,7 @@ Types can't be deleted yet.
 
 - **Add Supplier:** load `GET /supplier-types` for the dropdown and `GET /opening-balances` for the opening balance date. Code shows "(auto)" until saved. The button should say **Save Supplier**.
 - A journal line may carry `customerId` **or** `supplierId`, never both — `400 VALIDATION_ERROR` otherwise.
-- For purchases, see [7.22 Supplier Bills](#722-supplier-bills).
+- For purchases, see [7.22 Supplier Bills](#722-supplier-bills); for paying them, [7.30 Supplier Payments](#730-supplier-payments).
 - **Reports tab:** Payables Summary = `GET /suppliers` (each `balance_minor`) or `GET /payables-overview` for the total; Aging Report = `GET /payables-aging`; Supplier Statements = `GET /suppliers/{id}/transactions` (a PDF comes in a later step).
 
 ---
@@ -2385,13 +2388,15 @@ With `itemId` and neither field, the item's rate is used as the unit price.
 
 ### `POST /supplier-bills/{id}/payments`
 
-`supplier_bills:pay`. Money paid to the supplier. Accepts `Idempotency-Key`.
+`supplier_bills:pay`. Money paid to the supplier against this one bill. Accepts `Idempotency-Key`.
 
 ```json
 { "clientUuid": "...", "amountMinor": 500000, "date": "2026-10-20", "paidFromAccountId": "<Bank 1010>", "method": "BANK", "reference": "TRF-2231" }
 ```
 
-Posts Dr Accounts Payable (supplier) / Cr `paidFromAccountId`, moves the bill to `PART_PAID` / `PAID`, returns the bill (`201`). More than `balance_due_minor` → `422 INVOICE_OVERPAYMENT`, nothing posted.
+`method`: `CASH` / `BANK` / `MPESA` / `CHEQUE` / `OTHER` (default `CASH`); for `CHEQUE` put the cheque number in `reference`. Posts Dr Accounts Payable (supplier) / Cr `paidFromAccountId`, moves the bill to `PART_PAID` / `PAID`, returns the bill (`201`). More than `balance_due_minor` → `422 INVOICE_OVERPAYMENT`, nothing posted.
+
+It is recorded as a [supplier payment](#730-supplier-payments) (`SP-` number) applied in full to this bill, so it shows on the Payments list; the allocation's `supplier_payment_id` points to it. For a payment that covers several bills, or more than is owed (an advance), use `POST /supplier-payments`.
 
 ### `POST /supplier-bills/{id}/cancel`
 
@@ -3069,3 +3074,103 @@ A payment refunded from shows it in `refunded_minor`; then `amount_minor = appli
 - **Credit Note screen:** the orange card is `available_minor` from `GET /customers/{id}/credit`. **Create Credit Note** is `POST /invoices` with `kind: "CREDIT_NOTE"` (no invoice), or `POST /invoices/{id}/credit-notes` from an invoice. **Apply to Invoice** is `POST /invoices/{id}/apply-credit`. "Or refunded" is `POST /customer-refunds`.
 - A customer with an open invoice and credit at the same time shows both: the invoice in aging, the credit here. Their `balance_minor` is the net.
 - **Not built yet:** voiding a refund or un-applying credit, and moving credit between receivable accounts (use a journal).
+
+---
+
+## 7.30 Supplier Payments
+
+Base path: `/api/v1/supplier-payments`. The **Pay Bills** screen and the Suppliers hub's **Payments** list — the supplier side of [Customer Payments](#729-customer-payments). A payment is money paid to a **supplier**, not against one bill. It gets an `SP-000001` number (gapless per business) and posts **one journal**: Dr Accounts Payable tagged with the supplier, Cr the money account. It can pay any number of that supplier's bills. Whatever isn't applied stays on the payment as **supplier credit** (`unapplied_minor`), e.g. an advance or deposit: it's already in the supplier's balance, which goes negative (`payment_status: "CREDIT"`). Applying that credit to a later bill, or recording the supplier paying it back, comes in the next step.
+
+Every payment against bills is a supplier payment, whichever way it arrives: this endpoint or [`POST /supplier-bills/{id}/payments`](#post-supplier-billsidpayments). Bill payments recorded before this existed were converted, one each, numbered in the order they were made.
+
+### `POST /supplier-payments`
+
+`supplier_bills:pay` (Owner, Accountant). Accepts `Idempotency-Key`.
+
+```json
+{
+  "clientUuid": "5b2c…",
+  "supplierId": "8d4e…",
+  "amountMinor": 3500000,
+  "date": "2026-11-14",
+  "method": "CHEQUE",
+  "reference": "004512",
+  "memo": "October deliveries",
+  "allocations": [
+    { "billId": "…", "amountMinor": 2000000 },
+    { "billId": "…", "amountMinor": 1500000 }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `clientUuid` | uuid | Yes | Same one again: `409 DUPLICATE_VALUE`. |
+| `supplierId` | uuid | Yes | |
+| `amountMinor` | integer | Yes | More than 0. In the supplier's currency (the base currency if they have none). |
+| `date` | date | Yes | Needs an open period, like any posting. |
+| `method` | `CASH` / `BANK` / `MPESA` / `CHEQUE` / `OTHER` | No | Default `CASH`. The supplier's `preferred_payment_method` is a good pre-fill. |
+| `paidFromAccountId` | uuid | No | Where the money came from. Default: the business's Cash, Bank or M-Pesa account for `method` — **`CHEQUE` uses Bank** (M-Pesa is created if missing). **Required for `OTHER`.** |
+| `reference` | string | No | Cheque number, M-Pesa code, EFT reference… Also the journal's reference (else the `SP-` number). |
+| `memo` | string | No | Internal note. |
+| `allocations` | array | No | `[{ "billId": "…", "amountMinor": 2000000 }]`: the bills it pays and how much of each. **Omit** to pay the supplier's posted bills **oldest due date first** (bill date if no due date) as far as the money goes. Send **`[]`** to keep it all as supplier credit (an advance). |
+
+**How the money is split:**
+- **Oldest first (no `allocations`):** pays each open bill in full, oldest due first, until the money runs out. Money left after every bill is paid becomes supplier credit.
+- **Chosen bills:** each amount must be no more than that bill's `balance_due_minor`, and together no more than `amountMinor`. The rest becomes supplier credit.
+- The journal debits each bill's own payable account; **credit** is posted to the payable account of the bills involved, else of the supplier's open bills, else the business's `PAYABLE` account (`credit_account_id`).
+
+**Success Response:** `201 Created`
+```json
+{
+  "id": "…",
+  "number": "SP-000017",
+  "supplier_id": "…",
+  "supplier_name": "Unga Millers Ltd",
+  "date": "2026-11-14",
+  "currency": "KES",
+  "amount_minor": "3500000",
+  "applied_minor": "3500000",
+  "unapplied_minor": "0",
+  "refunded_minor": "0",
+  "credit_account_id": null,
+  "method": "CHEQUE",
+  "paid_from_account_id": "…",
+  "reference": "004512",
+  "memo": "October deliveries",
+  "journal_id": "…",
+  "created_by": "…",
+  "created_at": "2026-11-14T08:41:10.552Z",
+  "allocations": [
+    { "bill_id": "…", "bill_number": "BILL-000031", "supplier_reference": "KQ-5521", "amount_minor": "2000000", "date": "2026-11-14" },
+    { "bill_id": "…", "bill_number": "BILL-000034", "supplier_reference": "KQ-5560", "amount_minor": "1500000", "date": "2026-11-14" }
+  ]
+}
+```
+
+`amount_minor = applied_minor + unapplied_minor + refunded_minor` (`refunded_minor` stays 0 until supplier refunds exist). `allocations` are oldest due first; `supplier_reference` is the supplier's own invoice number on each bill.
+
+**Errors:** `400 VALIDATION_ERROR` (allocations add up to more than `amountMinor`, the same bill twice, `OTHER` without `paidFromAccountId`, zero amount); `404 SUPPLIER_NOT_FOUND`, `404 INVOICE_NOT_FOUND` (unknown bill, or an invoice's id); `422 INVOICE_OVERPAYMENT` (more than a bill still owes); `422 INVOICE_INVALID_STATE` (a draft, paid or cancelled bill, a debit note, or the bill changed meanwhile: try again); `422 PAYMENT_ALLOCATION_INVALID` (another supplier's bill, or another currency); `422 SYSTEM_ACCOUNT_MISSING` (no default account for the method, or no `PAYABLE` account for credit with no bill); `409 DUPLICATE_VALUE`. Nothing is posted on any error.
+
+### `GET /supplier-payments`
+
+`supplier_bills:view`. Newest first, cursor paging as for `GET /supplier-bills`. Items have no `allocations`.
+
+| Filter | Description |
+|---|---|
+| `supplier_id` | One supplier's payments. |
+| `method` | `CASH`, `BANK`, `MPESA`, `CHEQUE` or `OTHER`. |
+| `from` / `to` | Payment date range, inclusive. |
+| `has_credit` | `true` = payments with supplier credit left on them. |
+| `q` | The search box: supplier name, payment number or reference (e.g. cheque number), case-insensitive. |
+
+### `GET /supplier-payments/{id}`
+
+`supplier_bills:view`. One payment with its `allocations`. `404 SUPPLIER_PAYMENT_NOT_FOUND`.
+
+### Notes for consuming clients (Supplier Payments)
+
+- **Payments list (Suppliers hub):** `GET /supplier-payments`. Each card is `supplier_name`, `amount_minor`, `method`, `date` and `number`.
+- **Pay Bills form:** pick the supplier, then show their open bills oldest first from [`GET /payables-aging?supplier_id=…`](#723-payables-aging) or `GET /supplier-bills?supplier_id=…&status=DUE` plus `status=OVERDUE`. Pre-fill the amounts oldest first, let the user untick or edit them, and send what's left ticked as `allocations` — or send no `allocations` and let the server apply oldest first.
+- **Supplier credit:** a supplier with credit has a negative `balance_minor` and `payment_status: "CREDIT"` on `GET /suppliers`. On their history (`GET /suppliers/{id}/transactions`) the payment row shows `unapplied_minor`.
+- **Not built yet:** voiding or editing a payment, a payment voucher PDF, applying supplier credit to a bill and recording a refund from the supplier (next step).

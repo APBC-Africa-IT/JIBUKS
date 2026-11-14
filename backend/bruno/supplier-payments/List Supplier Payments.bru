@@ -1,0 +1,29 @@
+meta {
+  name: List Supplier Payments
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/supplier-payments
+  body: none
+  auth: none
+}
+
+params:query {
+  ~supplier_id: {{supplierId}}
+  ~method: CHEQUE
+  ~from: 2026-11-01
+  ~to: 2026-11-30
+  ~has_credit: true
+  ~q: unga
+  ~limit: 50
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+docs {
+  Requires supplier_bills:view. The Suppliers hub's Payments list. Newest first, cursor-paged; no allocations on items.
+}

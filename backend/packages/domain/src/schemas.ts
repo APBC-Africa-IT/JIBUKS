@@ -1129,7 +1129,8 @@ export const recordBillPaymentSchema = z.object({
   date: accountingDateSchema,
   /** The cash, bank or M-Pesa account the money left. */
   paidFromAccountId: uuidSchema,
-  method: z.enum(INVOICE_PAYMENT_METHODS).default("CASH"),
+  /** CHEQUE: put the cheque number in reference. */
+  method: z.enum(SUPPLIER_PAYMENT_METHODS).default("CASH"),
   reference: z.string().max(100).optional(),
 });
 
@@ -1536,6 +1537,86 @@ export const listCustomerPaymentsQuerySchema = paginationSchema
   });
 
 export type ListCustomerPaymentsQueryDto = z.infer<typeof listCustomerPaymentsQuerySchema>;
+
+// ---------------------------------------------------------------------
+// Supplier payments -- the Pay Bills screen
+// ---------------------------------------------------------------------
+
+/** POST /supplier-payments -- money paid to a supplier, applied to their bills. */
+export const createSupplierPaymentSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    supplierId: uuidSchema,
+    amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+    date: accountingDateSchema,
+    /** CHEQUE leaves the Bank account by default; put the cheque number in reference. */
+    method: z.enum(SUPPLIER_PAYMENT_METHODS).default("CASH"),
+    /** Where the money came from. Omit for the business's Cash, Bank or M-Pesa account (by method); required for OTHER. */
+    paidFromAccountId: uuidSchema.optional(),
+    /** e.g. a cheque number or M-Pesa transaction code. */
+    reference: z.string().trim().min(1).max(100).optional(),
+    /** Internal note. */
+    memo: z.string().trim().min(1).max(1000).optional(),
+    /**
+     * The bills it pays and how much of each. Omit to apply it to the
+     * supplier's open bills oldest due date first; [] to keep it all as
+     * supplier credit (an advance). Whatever isn't applied stays on the
+     * payment as credit.
+     */
+    allocations: z
+      .array(
+        z.object({
+          billId: uuidSchema,
+          amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+        }),
+      )
+      .max(200)
+      .optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.method === "OTHER" && body.paidFromAccountId === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["paidFromAccountId"],
+        message: "Required when method is OTHER -- there is no default account for it",
+      });
+    }
+    if (body.allocations) {
+      const total = body.allocations.reduce((sum, a) => sum + a.amountMinor, 0);
+      if (total > body.amountMinor) {
+        ctx.addIssue({ code: "custom", path: ["allocations"], message: "The allocations add up to more than amountMinor" });
+      }
+      const seen = new Set<string>();
+      body.allocations.forEach((a, i) => {
+        if (seen.has(a.billId)) {
+          ctx.addIssue({ code: "custom", path: ["allocations", i, "billId"], message: "Each bill may appear only once" });
+        }
+        seen.add(a.billId);
+      });
+    }
+  });
+
+export type CreateSupplierPaymentDto = z.infer<typeof createSupplierPaymentSchema>;
+
+/** GET /supplier-payments -- newest first, cursor pagination. */
+export const listSupplierPaymentsQuerySchema = paginationSchema
+  .extend({
+    supplier_id: uuidSchema.optional(),
+    method: z.enum(SUPPLIER_PAYMENT_METHODS).optional(),
+    /** Payment date range, inclusive. */
+    from: accountingDateSchema.optional(),
+    to: accountingDateSchema.optional(),
+    /** "true" for payments with supplier credit left on them. */
+    has_credit: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
+    /** Case-insensitive match on the supplier's name, the payment number or its reference. */
+    q: z.string().trim().min(1).max(100).optional(),
+  })
+  .refine((r) => r.from === undefined || r.to === undefined || r.from <= r.to, {
+    message: "from must be on or before to",
+    path: ["to"],
+  });
+
+export type ListSupplierPaymentsQueryDto = z.infer<typeof listSupplierPaymentsQuerySchema>;
 
 // ---------------------------------------------------------------------
 // Customer credit -- applying it to invoices, and refunds

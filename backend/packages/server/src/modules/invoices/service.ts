@@ -451,9 +451,3 @@ export async function listJournalDocumentLinks(
   return repository.listJournalDocumentLinks(tenantId, journalIds, direction);
 }
 
-export type JournalBillPayment = repository.JournalBillPaymentRow;
-
-/** The bills each journal paid (bill payments only, not debit notes). */
-export async function listJournalBillPayments(tenantId: string, journalIds: readonly string[]): Promise<JournalBillPayment[]> {
-  return repository.listJournalBillPayments(tenantId, journalIds);
-}

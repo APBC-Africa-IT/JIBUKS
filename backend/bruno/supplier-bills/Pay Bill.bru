@@ -29,4 +29,6 @@ body:json {
 
 docs {
   Requires supplier_bills:pay. Posts Dr AP (supplier) / Cr paidFromAccountId. More than balance_due_minor is 422.
+  method may also be CHEQUE (reference = cheque number). Recorded as a supplier payment (SP-) applied to this
+  bill -- see supplier-payments/ for paying several bills at once.
 }

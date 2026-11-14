@@ -17,6 +17,7 @@ import { onboard } from "../src/modules/onboarding/service.js";
 import * as openingBalances from "../src/modules/openingBalances/service.js";
 import * as supplierBills from "../src/modules/supplierBills/service.js";
 import * as supplierLedger from "../src/modules/supplierLedger/service.js";
+import * as supplierPayments from "../src/modules/supplierPayments/service.js";
 import * as suppliersService from "../src/modules/suppliers/service.js";
 import { todayInNairobi } from "../src/modules/periods/service.js";
 import { authHeader } from "./testAuth.js";
@@ -82,10 +83,11 @@ describe("supplier transaction history", () => {
       b.audit,
     );
     const bill = await b.bill(supplier.id, 50000, "2026-09-05", "2026-09-20");
-    await supplierBills.payBill(
+    const payment = await supplierPayments.makePayment(
       {
         tenantId: b.tenantId,
-        billId: bill.id,
+        supplierId: supplier.id,
+        allocations: [{ billId: bill.id, amountMinor: 20000 }],
         clientUuid: randomUUID(),
         amountMinor: 20000,
         date: "2026-09-10",
@@ -123,6 +125,10 @@ describe("supplier transaction history", () => {
     ]);
     expect(all.data[1]).toMatchObject({ document_id: bill.id, document_kind: "BILL", document_number: bill.number });
     expect(all.data[2]).toMatchObject({
+      document_id: payment.id,
+      document_kind: "SUPPLIER_PAYMENT",
+      document_number: payment.number,
+      unapplied_minor: "0",
       payment_method: "MPESA",
       reference: "QAB12CD34E",
       paid_bills: [{ bill_id: bill.id, bill_number: bill.number, amount_minor: "20000" }],
