@@ -8,7 +8,7 @@
  * paid_from_account_id, debited_bill_id, posted_at.
  */
 
-import type { InvoiceKind, InvoicePaymentMethod, InvoiceViewStatus, TaxMode } from "@jibuks/domain";
+import type { InvoiceKind, InvoiceViewStatus, TaxMode } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import { renderInvoicePdf } from "../invoices/pdf.js";
 import * as documents from "../invoices/documents.js";
@@ -85,6 +85,8 @@ export interface BillPaymentView {
   readonly reference: string | null;
   readonly journal_id: string;
   readonly debit_note_id: string | null;
+  /** The supplier payment (SP-) this is part of; null on debit notes. */
+  readonly supplier_payment_id: string | null;
   readonly created_by: string;
   readonly created_at: string;
 }
@@ -160,6 +162,7 @@ function toPaymentView(a: AllocationRow): BillPaymentView {
     reference: a.reference,
     journal_id: a.journal_id,
     debit_note_id: a.credit_note_id,
+    supplier_payment_id: a.supplier_payment_id,
     created_by: a.created_by,
     created_at: a.created_at,
   };
@@ -296,7 +299,7 @@ export async function deleteBill(tenantId: string, billId: string, audit: AuditC
 }
 
 // ---------------------------------------------------------------------
-// Post, cancel, pay, debit notes
+// Post, cancel, debit notes
 // ---------------------------------------------------------------------
 
 export async function postBill(tenantId: string, billId: string, audit: AuditContext): Promise<BillDetailView> {
@@ -325,22 +328,36 @@ export async function cancelBill(tenantId: string, billId: string, reason: strin
   return toBillDetail(await documents.cancel(AP, tenantId, billId, reason, audit));
 }
 
-export interface PayBillRequest {
-  readonly tenantId: string;
-  readonly billId: string;
-  readonly clientUuid: string;
-  readonly amountMinor: number;
-  readonly date: string;
-  readonly paidFromAccountId: string;
-  readonly method: InvoicePaymentMethod;
-  readonly reference?: string;
+// ---------------------------------------------------------------------
+// Primitives for the supplierPayments module -- every payment to a
+// supplier is recorded there and applied to bills through these.
+// ---------------------------------------------------------------------
+
+export type BillRow = invoicesRepository.InvoiceRow;
+
+/** The bill or debit note row, or 404 (invoices and cheques are never found). */
+export async function getBillRow(tenantId: string, billId: string): Promise<BillRow> {
+  return documents.getRow(AP, tenantId, billId);
 }
 
-export async function payBill(request: PayBillRequest, audit: AuditContext): Promise<BillDetailView> {
-  const { billId, paidFromAccountId, ...rest } = request;
-  await documents.pay(AP, { ...rest, id: billId, moneyAccountId: paidFromAccountId, allowOverpayment: false }, audit);
-  return getBill(request.tenantId, billId);
+/** The supplier's posted bills that can take a payment now, oldest due first. */
+export async function listPayableBills(tenantId: string, supplierId: string): Promise<BillRow[]> {
+  return invoicesRepository.listPayableInvoices(tenantId, supplierId, "AP");
 }
+
+/** What is still owed on a posted bill; 0 on drafts, cancelled bills and debit notes. */
+export const balanceDue = documents.balanceDue;
+
+/** The business's PAYABLE account -- where supplier credit not applied to a bill is posted. */
+export async function defaultPayableAccountId(tenantId: string): Promise<string> {
+  return documents.defaultControlAccountId(AP, tenantId);
+}
+
+/** Locks a bill row for the rest of the transaction. */
+export const lockBill = invoicesRepository.lockInvoice;
+
+/** Records an amount applied to a locked bill and moves it to PART_PAID or PAID. */
+export const applyAllocation = invoicesRepository.applyAllocation;
 
 export interface CreateDebitNoteRequest {
   readonly tenantId: string;

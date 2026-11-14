@@ -1,0 +1,37 @@
+meta {
+  name: Pay Chosen Bills by Cheque
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/supplier-payments
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "supplierId": "{{supplierId}}",
+    "amountMinor": 2000000,
+    "date": "2026-11-14",
+    "method": "CHEQUE",
+    "reference": "004512",
+    "allocations": [
+      { "billId": "{{billId}}", "amountMinor": 2000000 }
+    ]
+  }
+}
+
+docs {
+  Requires supplier_bills:pay. Pays only the bills listed (each at most its balance_due_minor). CHEQUE leaves the
+  business's Bank account unless paidFromAccountId is given; reference = cheque number. 422 INVOICE_OVERPAYMENT
+  if more than a bill owes, PAYMENT_ALLOCATION_INVALID for another supplier's bill.
+}

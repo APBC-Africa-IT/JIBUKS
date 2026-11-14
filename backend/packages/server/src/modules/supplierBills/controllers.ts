@@ -14,6 +14,7 @@ import {
 } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
 import { loadPermissions } from "../../middleware/requirePermission.js";
+import * as supplierPaymentsService from "../supplierPayments/service.js";
 import * as service from "./service.js";
 
 function auditContextFrom(req: Request): AuditContext {
@@ -96,13 +97,26 @@ export async function cancel(req: Request, res: Response): Promise<void> {
   res.json(await service.cancelBill(req.tenantId!, req.params["id"]!, body.reason, auditContextFrom(req)));
 }
 
+/** A payment against one bill: recorded as a supplier payment applied to it in full. */
 export async function pay(req: Request, res: Response): Promise<void> {
   const body = recordBillPaymentSchema.parse(req.body);
-  const bill = await service.payBill(
-    { ...defined(body), tenantId: req.tenantId!, billId: req.params["id"]! },
+  const billId = req.params["id"]!;
+  const bill = await service.getBillRow(req.tenantId!, billId);
+  await supplierPaymentsService.makePayment(
+    {
+      tenantId: req.tenantId!,
+      clientUuid: body.clientUuid,
+      supplierId: bill.supplier_id!,
+      amountMinor: body.amountMinor,
+      date: body.date,
+      method: body.method,
+      paidFromAccountId: body.paidFromAccountId,
+      reference: body.reference,
+      allocations: [{ billId, amountMinor: body.amountMinor }],
+    },
     auditContextFrom(req),
   );
-  res.status(201).json(bill);
+  res.status(201).json(await service.getBill(req.tenantId!, billId));
 }
 
 export async function createDebitNote(req: Request, res: Response): Promise<void> {

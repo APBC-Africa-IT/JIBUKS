@@ -6,8 +6,9 @@
  * Read-only and built from the general ledger, like customerLedger: every
  * POSTED journal line tagged with the supplier, one row per journal, so the
  * closing balance is always the figure GET /suppliers/{id} returns. The
- * invoices module names each row (the bill or debit note it posted or
- * cancelled, the bills a payment paid); journals with no purchase document
+ * invoices module names each row by the bill or debit note it posted or
+ * cancelled, the supplierPayments module by the payment and the bills it
+ * paid; journals with no purchase document
  * -- opening balances, guided POST /bills, manual journals -- are named
  * from their source.
  *
@@ -15,12 +16,14 @@
  * credit_minor adds to it and debit_minor takes off it.
  */
 
-import { daysPastDue, type InvoiceKind, type InvoicePaymentMethod } from "@jibuks/domain";
+import { daysPastDue, type InvoiceKind, type SupplierPaymentMethod } from "@jibuks/domain";
 import * as documents from "../invoices/documents.js";
 import { AP } from "../invoices/documents.js";
 import * as invoicesService from "../invoices/service.js";
-import type { JournalBillPayment, JournalDocumentLink } from "../invoices/service.js";
+import type { JournalDocumentLink } from "../invoices/service.js";
 import { todayInNairobi } from "../periods/service.js";
+import * as supplierPaymentsService from "../supplierPayments/service.js";
+import type { JournalPayment } from "../supplierPayments/service.js";
 import * as suppliersService from "../suppliers/service.js";
 import type { ListSuppliersFilters, SupplierLedgerJournalRow, SupplierWithActivityRow } from "../suppliers/repository.js";
 import * as tenantsService from "../tenants/service.js";
@@ -41,8 +44,8 @@ interface Label {
   readonly type: SupplierTransactionType;
   /** The bill or debit note the journal posted or cancelled. */
   readonly link: JournalDocumentLink | null;
-  /** The bills the journal paid ([] unless it is a bill payment). */
-  readonly paid: readonly JournalBillPayment[];
+  /** The supplier payment the journal recorded. */
+  readonly payment: JournalPayment | null;
 }
 
 const JOURNAL_SOURCE_TYPES: Readonly<Record<string, SupplierTransactionType>> = {
@@ -53,18 +56,18 @@ const JOURNAL_SOURCE_TYPES: Readonly<Record<string, SupplierTransactionType>> = 
   REVERSAL: "REVERSAL",
 };
 
-function labelFrom(link: JournalDocumentLink | undefined, paid: readonly JournalBillPayment[], source: string): Label {
-  if (paid.length > 0) {
-    return { type: "PAYMENT", link: null, paid };
+function labelFrom(link: JournalDocumentLink | undefined, payment: JournalPayment | undefined, source: string): Label {
+  if (payment) {
+    return { type: "PAYMENT", link: null, payment };
   }
   if (!link) {
-    return { type: JOURNAL_SOURCE_TYPES[source] ?? "JOURNAL", link: null, paid };
+    return { type: JOURNAL_SOURCE_TYPES[source] ?? "JOURNAL", link: null, payment: null };
   }
   const debitNote = link.kind === "DEBIT_NOTE";
   if (link.link === "CANCEL") {
-    return { type: debitNote ? "DEBIT_NOTE_CANCELLED" : "BILL_CANCELLED", link, paid };
+    return { type: debitNote ? "DEBIT_NOTE_CANCELLED" : "BILL_CANCELLED", link, payment: null };
   }
-  return { type: debitNote ? "DEBIT_NOTE" : "BILL", link, paid };
+  return { type: debitNote ? "DEBIT_NOTE" : "BILL", link, payment: null };
 }
 
 /** Labels journals by id: by the bill payment or purchase document behind each, else by its source. */
@@ -75,16 +78,10 @@ async function labelJournals(
   const ids = [...new Set(journals.map((j) => j.id))];
   const [links, payments] = await Promise.all([
     invoicesService.listJournalDocumentLinks(tenantId, ids, "AP"),
-    invoicesService.listJournalBillPayments(tenantId, ids),
+    supplierPaymentsService.listJournalPayments(tenantId, ids),
   ]);
   const linkByJournal = new Map(links.map((link) => [link.journal_id, link]));
-  const paidByJournal = new Map<string, JournalBillPayment[]>();
-  for (const payment of payments) {
-    paidByJournal.set(payment.journal_id, [...(paidByJournal.get(payment.journal_id) ?? []), payment]);
-  }
-  return new Map(
-    journals.map((j) => [j.id, labelFrom(linkByJournal.get(j.id), paidByJournal.get(j.id) ?? [], j.source)]),
-  );
+  return new Map(journals.map((j) => [j.id, labelFrom(linkByJournal.get(j.id), payments.get(j.id), j.source)]));
 }
 
 /** A bill a payment row paid. */
@@ -100,19 +97,21 @@ export interface SupplierTransaction {
   readonly journal_number: string | null;
   readonly date: string;
   readonly type: SupplierTransactionType;
-  /** The bill or debit note the row posted or cancelled. */
+  /** The bill or debit note the row posted or cancelled, or the supplier payment (SP-) it recorded. */
   readonly document_id: string | null;
-  readonly document_kind: InvoiceKind | null;
+  readonly document_kind: InvoiceKind | "SUPPLIER_PAYMENT" | null;
   readonly document_number: string | null;
   /** DEBIT_NOTE rows: the bill it was raised against. */
   readonly debited_bill_id: string | null;
   readonly debited_bill_number: string | null;
   /** PAYMENT rows: how the money moved; `reference` is its cheque number or M-Pesa code. */
-  readonly payment_method: InvoicePaymentMethod | null;
+  readonly payment_method: SupplierPaymentMethod | null;
   readonly reference: string | null;
   readonly description: string;
   /** PAYMENT rows: the bills it paid ([] on other rows). */
   readonly paid_bills: PaidBill[];
+  /** PAYMENT rows: what wasn't applied to a bill, i.e. supplier credit (null on other rows). */
+  readonly unapplied_minor: string | null;
   /** What the row added to what the business owes (bills, opening balances). */
   readonly credit_minor: string;
   /** What it took off (payments, debit notes, cancellations). */
@@ -122,26 +121,27 @@ export interface SupplierTransaction {
 }
 
 function toTransaction(journal: SupplierLedgerJournalRow, label: Label, balance: number): SupplierTransaction {
-  const { type, link, paid } = label;
+  const { type, link, payment } = label;
   return {
     journal_id: journal.journal_id,
     journal_number: journal.journal_number,
     date: journal.date,
     type,
-    document_id: link?.document_id ?? null,
-    document_kind: link?.kind ?? null,
-    document_number: link?.number ?? null,
+    document_id: link?.document_id ?? payment?.payment.id ?? null,
+    document_kind: link?.kind ?? (payment ? "SUPPLIER_PAYMENT" : null),
+    document_number: link?.number ?? payment?.payment.number ?? null,
     debited_bill_id: link?.credited_invoice_id ?? null,
     debited_bill_number: link?.credited_invoice_number ?? null,
-    payment_method: paid[0]?.method ?? null,
-    reference: paid[0]?.reference ?? journal.reference,
+    payment_method: payment?.payment.method ?? null,
+    reference: payment ? payment.payment.reference : journal.reference,
     description: journal.description,
-    paid_bills: paid.map((p) => ({
-      bill_id: p.bill_id,
-      bill_number: p.bill_number,
-      supplier_reference: p.supplier_reference,
-      amount_minor: p.amount_minor,
+    paid_bills: (payment?.allocations ?? []).map((a) => ({
+      bill_id: a.bill_id,
+      bill_number: a.bill_number,
+      supplier_reference: a.supplier_reference,
+      amount_minor: a.amount_minor,
     })),
+    unapplied_minor: payment ? payment.payment.unapplied_minor : null,
     credit_minor: journal.credit_minor,
     debit_minor: journal.debit_minor,
     balance_minor: String(balance),
@@ -226,9 +226,9 @@ export type SupplierEntry = Omit<SupplierWithActivityRow, "last_activity_journal
   readonly payment_status: PaymentStatus;
 };
 
-/** The number a row shows: the document's, else the first bill a payment paid. */
+/** The number a row shows: the bill's or debit note's, or the payment's (SP-). */
 function documentNumberOf(label: Label): string | null {
-  return label.link?.number ?? label.paid[0]?.bill_number ?? null;
+  return label.link?.number ?? label.payment?.payment.number ?? null;
 }
 
 /** Adds the last activity and the list's "(Overdue)" / "(Due)" tag. */

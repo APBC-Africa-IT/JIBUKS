@@ -1,0 +1,36 @@
+meta {
+  name: Pay Supplier
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/supplier-payments
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "supplierId": "{{supplierId}}",
+    "amountMinor": 3500000,
+    "date": "2026-11-14",
+    "method": "MPESA",
+    "reference": "QKT7Y8Z9A1",
+    "memo": "October deliveries"
+  }
+}
+
+docs {
+  Requires supplier_bills:pay. No allocations: pays the supplier's posted bills oldest due date first; anything
+  left over stays on the payment as supplier credit (unapplied_minor). Send "allocations": [] for an advance.
+  paidFromAccountId left out -> the business's M-Pesa account for MPESA (Cash for CASH, Bank for BANK/CHEQUE).
+  Returns SP-000001-style number and the bills it paid.
+}

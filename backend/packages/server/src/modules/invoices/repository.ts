@@ -14,7 +14,15 @@
 
 import { randomUUID } from "node:crypto";
 import { recordAuditLog, withTenant, readAsTenant, type AuditContext } from "@jibuks/db";
-import type { EstimateResponse, EstimateStatus, InvoiceKind, InvoicePaymentMethod, InvoiceStatus, TaxMode } from "@jibuks/domain";
+import type {
+  EstimateResponse,
+  EstimateStatus,
+  InvoiceKind,
+  InvoicePaymentMethod,
+  InvoiceStatus,
+  SupplierPaymentMethod,
+  TaxMode,
+} from "@jibuks/domain";
 
 /** A transaction-scoped client, as handed out by withTenant. */
 export type TxClient = Parameters<Parameters<typeof withTenant>[1]>[0];
@@ -115,7 +123,8 @@ export interface AllocationRow {
   readonly tenant_id: string;
   readonly client_uuid: string;
   readonly invoice_id: string;
-  readonly method: InvoicePaymentMethod | "CREDIT_NOTE" | "DEBIT_NOTE";
+  /** CHEQUE on bill payments only. */
+  readonly method: SupplierPaymentMethod | "CREDIT_NOTE" | "DEBIT_NOTE";
   readonly amount_minor: string;
   readonly unapplied_minor: string;
   readonly date: string;
@@ -127,6 +136,8 @@ export interface AllocationRow {
   readonly credit_note_id: string | null;
   /** The customer payment this applies (customerPayments module); null on credit notes and bill payments. */
   readonly customer_payment_id: string | null;
+  /** The supplier payment this applies (supplierPayments module); null on debit notes and AR. */
+  readonly supplier_payment_id: string | null;
   readonly created_by: string;
   readonly created_at: string;
 }
@@ -667,35 +678,6 @@ export async function listJournalDocumentLinks(
   });
 }
 
-/** Money paid against a bill (POST /supplier-bills/{id}/payments): one row per bill the journal paid. */
-export interface JournalBillPaymentRow {
-  readonly journal_id: string;
-  readonly bill_id: string;
-  readonly bill_number: string | null;
-  readonly supplier_reference: string | null;
-  readonly amount_minor: string;
-  readonly method: InvoicePaymentMethod;
-  readonly reference: string | null;
-}
-
-export async function listJournalBillPayments(tenantId: string, journalIds: readonly string[]): Promise<JournalBillPaymentRow[]> {
-  if (journalIds.length === 0) {
-    return [];
-  }
-  return readAsTenant(tenantId, async (client) => {
-    const result = await client.query<JournalBillPaymentRow>(
-      `SELECT a.journal_id, i.id AS bill_id, i.number AS bill_number, i.supplier_reference,
-              a.amount_minor::text AS amount_minor, a.method, a.reference
-         FROM invoice_allocations a
-         JOIN invoices i ON i.id = a.invoice_id
-        WHERE i.direction = 'AP' AND a.method NOT IN ('CREDIT_NOTE', 'DEBIT_NOTE') AND a.journal_id = ANY($1::uuid[])
-        ORDER BY a.created_at, a.id`,
-      [journalIds],
-    );
-    return result.rows;
-  });
-}
-
 // ---------------------------------------------------------------------
 // Transaction primitives -- called inside a service-opened withTenant.
 // ---------------------------------------------------------------------
@@ -781,7 +763,7 @@ export async function markCancelled(
 
 export interface InsertAllocationInput {
   readonly clientUuid: string;
-  readonly method: InvoicePaymentMethod | "CREDIT_NOTE" | "DEBIT_NOTE";
+  readonly method: SupplierPaymentMethod | "CREDIT_NOTE" | "DEBIT_NOTE";
   readonly amountMinor: number;
   readonly unappliedMinor: number;
   readonly date: string;
@@ -791,6 +773,7 @@ export interface InsertAllocationInput {
   readonly paymentId?: string;
   readonly creditNoteId?: string;
   readonly customerPaymentId?: string;
+  readonly supplierPaymentId?: string;
 }
 
 /**
@@ -807,8 +790,9 @@ export async function applyAllocation(
   const allocationResult = await client.query<AllocationRow>(
     `INSERT INTO invoice_allocations
        (id, tenant_id, client_uuid, invoice_id, method, amount_minor, unapplied_minor, date,
-        received_account_id, reference, journal_id, payment_id, credit_note_id, customer_payment_id, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        received_account_id, reference, journal_id, payment_id, credit_note_id, customer_payment_id,
+        supplier_payment_id, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
      RETURNING *`,
     [
       randomUUID(),
@@ -825,6 +809,7 @@ export async function applyAllocation(
       input.paymentId ?? null,
       input.creditNoteId ?? null,
       input.customerPaymentId ?? null,
+      input.supplierPaymentId ?? null,
       audit.actorUserId,
     ],
   );
@@ -901,14 +886,18 @@ export async function listCreditNotesWithCredit(tenantId: string, customerId: st
   });
 }
 
-/** A customer's invoices that can take a payment now, oldest due first (issue date when there's no due date). */
-export async function listPayableInvoices(tenantId: string, customerId: string): Promise<InvoiceRow[]> {
+/**
+ * A customer's invoices (AR) or supplier's bills (AP) that can take a
+ * payment now, oldest due first (issue date when there's no due date).
+ */
+export async function listPayableInvoices(tenantId: string, partyId: string, direction: "AR" | "AP" = "AR"): Promise<InvoiceRow[]> {
   return readAsTenant(tenantId, async (client) => {
     const result = await client.query<InvoiceRow>(
       `SELECT * FROM invoices
-        WHERE direction = 'AR' AND kind = 'INVOICE' AND status IN ('ISSUED', 'PART_PAID') AND customer_id = $1
+        WHERE direction = $2 AND kind = $3 AND status IN ('ISSUED', 'PART_PAID')
+          AND ${direction === "AR" ? "customer_id" : "supplier_id"} = $1
         ORDER BY COALESCE(due_date, issue_date), issue_date, created_at, id`,
-      [customerId],
+      [partyId, direction, direction === "AR" ? "INVOICE" : "BILL"],
     );
     return result.rows;
   });
