@@ -15,5 +15,7 @@ headers {
 }
 
 docs {
-  Requires supplier_bills:view. Filters: status (incl. OVERDUE), kind (BILL, DEBIT_NOTE), supplier_id, from, to.
+  Requires supplier_bills:view. Filters: status (incl. OVERDUE, and DUE = posted, owed, not overdue), q
+  (supplier name, number, reference, supplier invoice no.), kind (BILL, DEBIT_NOTE), supplier_id, from, to.
+  e.g. ?status=DUE&q=unga
 }

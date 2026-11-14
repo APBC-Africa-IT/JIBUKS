@@ -37,6 +37,8 @@ export interface InvoicePdfModel {
   /** Large diagonal stamp: PAID, CANCELLED, DRAFT -- or null. */
   readonly stamp: string | null;
   readonly business: string[];
+  /** The heading over the other party: BILL TO on sales, SUPPLIER on bills. */
+  readonly partyLabel: string;
   readonly billTo: string[];
   /** The delivery address, printed beside Bill to; null when there is none. */
   readonly shipTo: string | null;
@@ -96,11 +98,11 @@ export function formatDate(date: string): string {
 }
 
 /** "1.500" -> "1.5", "10.000" -> "10". */
-function formatQuantity(quantity: string): string {
+export function formatQuantity(quantity: string): string {
   return quantity.includes(".") ? quantity.replace(/\.?0+$/, "") : quantity;
 }
 
-function partyLines(party: PdfParty): string[] {
+export function partyLines(party: PdfParty): string[] {
   return [
     party.name,
     ...(party.address ? [party.address] : []),
@@ -166,6 +168,7 @@ export function buildInvoicePdfModel(input: InvoicePdfInput): InvoicePdfModel {
     number,
     stamp,
     business: partyLines(input.business),
+    partyLabel: "BILL TO",
     billTo: partyLines(input.customer),
     shipTo: invoice.ship_to,
     meta,
@@ -260,7 +263,7 @@ export function renderInvoicePdf(model: InvoicePdfModel): Promise<Buffer> {
 
   // Bill to.
   let y = Math.max(headerBottom, doc.y) + 25;
-  doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text("BILL TO", PAGE_MARGIN, y);
+  doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text(model.partyLabel, PAGE_MARGIN, y);
   doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text(model.billTo[0] ?? "");
   doc.font("Helvetica").fontSize(9).fillColor(INK);
   for (const line of model.billTo.slice(1)) {

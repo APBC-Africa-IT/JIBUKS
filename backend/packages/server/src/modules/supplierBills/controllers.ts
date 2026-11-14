@@ -4,6 +4,7 @@
 
 import type { Request, Response } from "express";
 import {
+  DomainError,
   cancelInvoiceSchema,
   createDebitNoteSchema,
   createSupplierBillSchema,
@@ -12,6 +13,7 @@ import {
   updateSupplierBillSchema,
 } from "@jibuks/domain";
 import type { AuditContext } from "@jibuks/db";
+import { loadPermissions } from "../../middleware/requirePermission.js";
 import * as service from "./service.js";
 
 function auditContextFrom(req: Request): AuditContext {
@@ -34,12 +36,17 @@ function lines(bodyLines: ReadonlyArray<object>) {
 }
 
 export async function create(req: Request, res: Response): Promise<void> {
-  const { lines: bodyLines, ...body } = createSupplierBillSchema.parse(req.body);
-  const bill = await service.createBill(
-    { ...defined(body), lines: lines(bodyLines), tenantId: req.tenantId! },
-    auditContextFrom(req),
-  );
-  res.status(201).json(bill);
+  const { lines: bodyLines, post: postNow, ...body } = createSupplierBillSchema.parse(req.body);
+  const request = { ...defined(body), lines: lines(bodyLines), tenantId: req.tenantId! };
+  if (!postNow) {
+    res.status(201).json(await service.createBill(request, auditContextFrom(req)));
+    return;
+  }
+  const permissions = await loadPermissions(req);
+  if (!permissions.has("supplier_bills:post")) {
+    throw new DomainError("FORBIDDEN", 'post: true requires the "supplier_bills:post" permission');
+  }
+  res.status(201).json(await service.createAndPostBill(request, auditContextFrom(req)));
 }
 
 export async function list(req: Request, res: Response): Promise<void> {
@@ -49,6 +56,7 @@ export async function list(req: Request, res: Response): Promise<void> {
     defined({
       status: query.status,
       kind: query.kind,
+      q: query.q,
       supplierId: query.supplier_id,
       from: query.from,
       to: query.to,
@@ -104,4 +112,15 @@ export async function createDebitNote(req: Request, res: Response): Promise<void
     auditContextFrom(req),
   );
   res.status(201).json(note);
+}
+
+/** inline: the app can show it or hand it to the phone's share sheet. */
+export async function pdf(req: Request, res: Response): Promise<void> {
+  const { filename, pdf: body } = await service.getBillPdf(req.tenantId!, req.params["id"]!);
+  res
+    .status(200)
+    .type("application/pdf")
+    .set("Content-Disposition", `inline; filename="${filename}"`)
+    .set("Cache-Control", "private, no-store")
+    .send(body);
 }

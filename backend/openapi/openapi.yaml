@@ -1100,11 +1100,14 @@ paths:
   /supplier-bills:
     post:
       tags: [Supplier Bills]
-      summary: Create a draft bill
+      summary: Create a draft bill (or create and post it with post true)
       description: >
         Requires `supplier_bills:create`. Amounts are computed by the
         server. The same supplier + supplierReference can't be entered
-        twice (409) unless the earlier bill was cancelled.
+        twice (409) unless the earlier bill was cancelled. With
+        `post: true` the bill is also numbered and posted in this call
+        (also needs `supplier_bills:post`); if posting is refused the
+        draft is deleted again, so the same clientUuid can be retried.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -1131,8 +1134,21 @@ paths:
       parameters:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
         - { name: cursor, in: query, schema: { type: string } }
-        - { name: status, in: query, schema: { $ref: '#/components/schemas/InvoiceStatus' } }
+        - name: status
+          in: query
+          description: >
+            An invoice status, or DUE -- posted and still owed but not
+            overdue (ISSUED + PART_PAID). The bill list's Due tab.
+          schema:
+            type: string
+            enum: [DRAFT, ISSUED, PART_PAID, PAID, OVERDUE, CANCELLED, DUE]
         - { name: kind, in: query, schema: { type: string, enum: [BILL, DEBIT_NOTE] } }
+        - name: q
+          in: query
+          description: >
+            Case-insensitive match on the supplier's name, the bill number,
+            the reference or the supplier's invoice number.
+          schema: { type: string, minLength: 1, maxLength: 100 }
         - { name: supplier_id, in: query, schema: { type: string, format: uuid } }
         - { name: from, in: query, description: bill_date from (inclusive), schema: { type: string, format: date } }
         - { name: to, in: query, description: bill_date to (inclusive), schema: { type: string, format: date } }
@@ -1202,6 +1218,29 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+
+  /supplier-bills/{id}/pdf:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    get:
+      tags: [Supplier Bills]
+      summary: Download the bill or debit note as a PDF
+      description: >
+        Requires `supplier_bills:view`. Built on request, never stored.
+        Shows the business, the supplier (with tax PINs), the supplier's
+        invoice number, lines, VAT, totals, payments and balance due;
+        drafts, paid and cancelled bills are stamped. Content-Disposition
+        is inline with filename `<number>.pdf` (`DRAFT-<id prefix>.pdf`
+        for drafts). 404 for an invoice id.
+      responses:
+        '200':
+          description: The PDF
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /supplier-bills/{id}/post:
     parameters:
@@ -4978,6 +5017,10 @@ components:
           minItems: 1
           maxItems: 200
           items: { $ref: '#/components/schemas/BillLineInput' }
+        post:
+          type: boolean
+          default: false
+          description: Also number and post the bill (the Save button). Needs `supplier_bills:post`.
     UpdateSupplierBillRequest:
       type: object
       minProperties: 1
