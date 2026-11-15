@@ -1059,10 +1059,17 @@ function checkBillTax(
   });
 }
 
-/** POST /supplier-bills -- a DRAFT bill. */
+/**
+ * POST /supplier-bills -- a DRAFT bill or debit note, or with post: true,
+ * posted at once. A DEBIT_NOTE here is against no bill (the supplier's
+ * credit note for a return, rebate or discount): posted, all of it is
+ * supplier credit. For one against a bill use
+ * POST /supplier-bills/{id}/debit-notes.
+ */
 export const createSupplierBillSchema = z
   .object({
     clientUuid: uuidSchema,
+    kind: z.enum(BILL_KINDS).default("BILL"),
     branchId: uuidSchema.optional(),
     supplierId: uuidSchema,
     /** Accounts Payable. Omit for the business's PAYABLE account. */
@@ -1071,7 +1078,7 @@ export const createSupplierBillSchema = z
     billDate: accountingDateSchema,
     /** Omit to use billDate + the supplier's payment terms (0 days if none). */
     dueDate: accountingDateSchema.optional(),
-    /** The supplier's own invoice number. Unique per supplier. */
+    /** The supplier's own invoice number (credit note number on a debit note). Unique per supplier among bills. */
     supplierReference: z.string().trim().min(1).max(100).optional(),
     currency: currencySchema.optional(),
     taxMode: z.enum(TAX_MODES).default("NONE"),
@@ -1085,6 +1092,9 @@ export const createSupplierBillSchema = z
     checkBillTax(body, ctx);
     if (body.dueDate !== undefined && body.dueDate < body.billDate) {
       ctx.addIssue({ code: "custom", path: ["dueDate"], message: "dueDate can't be before billDate" });
+    }
+    if (body.kind === "DEBIT_NOTE" && body.dueDate !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["dueDate"], message: "A debit note has no dueDate" });
     }
   });
 
@@ -1633,18 +1643,19 @@ const creditSourceSchema = z
     message: "Give exactly one of creditNoteId and customerPaymentId",
   });
 
+const customerCreditId = (s: { creditNoteId?: string | undefined; customerPaymentId?: string | undefined }) =>
+  (s.creditNoteId ?? s.customerPaymentId)!;
+
 /** Each credit at most once; when amountMinor is given too, the sources add up to it. */
-function checkCreditSources(
-  body: {
-    amountMinor?: number | undefined;
-    sources?: { creditNoteId?: string | undefined; customerPaymentId?: string | undefined; amountMinor: number }[] | undefined;
-  },
+function checkCreditSources<S extends { amountMinor: number }>(
+  body: { amountMinor?: number | undefined; sources?: S[] | undefined },
   ctx: z.RefinementCtx,
+  idOf: (source: S) => string,
 ): void {
   if (!body.sources) return;
   const seen = new Set<string>();
   body.sources.forEach((s, i) => {
-    const id = (s.creditNoteId ?? s.customerPaymentId)!;
+    const id = idOf(s);
     if (seen.has(id)) {
       ctx.addIssue({ code: "custom", path: ["sources", i], message: "Each credit may appear only once" });
     }
@@ -1667,7 +1678,7 @@ export const applyCreditSchema = z
     /** Which credit to use. Omit to use the oldest credit first. */
     sources: z.array(creditSourceSchema).min(1).max(100).optional(),
   })
-  .superRefine(checkCreditSources);
+  .superRefine((body, ctx) => checkCreditSources(body, ctx, customerCreditId));
 
 export type ApplyCreditDto = z.infer<typeof applyCreditSchema>;
 
@@ -1694,7 +1705,7 @@ export const createRefundSchema = z
         message: "Required when method is OTHER -- there is no default account for it",
       });
     }
-    checkCreditSources(body, ctx);
+    checkCreditSources(body, ctx, customerCreditId);
   });
 
 export type CreateRefundDto = z.infer<typeof createRefundSchema>;
@@ -1712,6 +1723,82 @@ export const listRefundsQuerySchema = paginationSchema
   });
 
 export type ListRefundsQueryDto = z.infer<typeof listRefundsQuerySchema>;
+
+// ---------------------------------------------------------------------
+// Supplier credit -- applying it to bills, and refunds received
+// ---------------------------------------------------------------------
+
+/** A debit note or a supplier payment with credit on it -- exactly one of the two ids. */
+const supplierCreditSourceSchema = z
+  .object({
+    debitNoteId: uuidSchema.optional(),
+    supplierPaymentId: uuidSchema.optional(),
+    amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+  })
+  .refine((s) => (s.debitNoteId === undefined) !== (s.supplierPaymentId === undefined), {
+    message: "Give exactly one of debitNoteId and supplierPaymentId",
+  });
+
+const supplierCreditId = (s: { debitNoteId?: string | undefined; supplierPaymentId?: string | undefined }) =>
+  (s.debitNoteId ?? s.supplierPaymentId)!;
+
+/** POST /supplier-bills/{id}/apply-credit -- use the supplier's credit on a bill. */
+export const applySupplierCreditSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    /** Omit for as much as the bill owes and the credit covers. */
+    amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero").optional(),
+    /** When it counts for aging. Omit for today (Africa/Nairobi). */
+    date: accountingDateSchema.optional(),
+    /** Which credit to use. Omit to use the oldest credit first. */
+    sources: z.array(supplierCreditSourceSchema).min(1).max(100).optional(),
+  })
+  .superRefine((body, ctx) => checkCreditSources(body, ctx, supplierCreditId));
+
+export type ApplySupplierCreditDto = z.infer<typeof applySupplierCreditSchema>;
+
+/** POST /supplier-refunds -- money a supplier paid back out of their credit. */
+export const createSupplierRefundSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    supplierId: uuidSchema,
+    amountMinor: minorUnitsSchema.refine((n) => n > 0, "amountMinor must be greater than zero"),
+    date: accountingDateSchema,
+    /** CHEQUE goes into the Bank account by default; put the cheque number in reference. */
+    method: z.enum(SUPPLIER_PAYMENT_METHODS).default("CASH"),
+    /** Where the money went. Omit for the business's Cash, Bank or M-Pesa account (by method); required for OTHER. */
+    receivedAccountId: uuidSchema.optional(),
+    reference: z.string().trim().min(1).max(100).optional(),
+    memo: z.string().trim().min(1).max(1000).optional(),
+    /** Which credit was refunded. Omit to use the oldest credit first. */
+    sources: z.array(supplierCreditSourceSchema).min(1).max(100).optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.method === "OTHER" && body.receivedAccountId === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["receivedAccountId"],
+        message: "Required when method is OTHER -- there is no default account for it",
+      });
+    }
+    checkCreditSources(body, ctx, supplierCreditId);
+  });
+
+export type CreateSupplierRefundDto = z.infer<typeof createSupplierRefundSchema>;
+
+/** GET /supplier-refunds -- newest first, cursor pagination. */
+export const listSupplierRefundsQuerySchema = paginationSchema
+  .extend({
+    supplier_id: uuidSchema.optional(),
+    from: accountingDateSchema.optional(),
+    to: accountingDateSchema.optional(),
+  })
+  .refine((r) => r.from === undefined || r.to === undefined || r.from <= r.to, {
+    message: "from must be on or before to",
+    path: ["to"],
+  });
+
+export type ListSupplierRefundsQueryDto = z.infer<typeof listSupplierRefundsQuerySchema>;
 
 // ---------------------------------------------------------------------
 // Customer defaults and the follow-up report

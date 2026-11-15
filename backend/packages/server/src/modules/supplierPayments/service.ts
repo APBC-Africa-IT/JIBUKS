@@ -341,3 +341,20 @@ export async function listJournalPayments(tenantId: string, journalIds: readonly
     ]),
   );
 }
+
+// ---------------------------------------------------------------------
+// Credit -- primitives for the supplierCredits module.
+// ---------------------------------------------------------------------
+
+export type SupplierPaymentRow = repository.SupplierPaymentRow;
+
+/** The supplier's payments with credit left on them, oldest first. */
+export async function listWithCredit(tenantId: string, supplierId: string): Promise<SupplierPaymentView[]> {
+  return repository.listWithCredit(tenantId, supplierId);
+}
+
+/** Locks a payment row for the rest of the transaction. */
+export const lockPayment = repository.lockPayment;
+
+/** Moves some of a locked payment's credit to applied or refunded. */
+export const useCredit = repository.useCredit;

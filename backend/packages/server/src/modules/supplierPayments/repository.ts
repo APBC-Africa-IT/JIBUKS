@@ -162,6 +162,56 @@ export async function listByJournalIds(tenantId: string, journalIds: readonly st
   });
 }
 
+/** Locks a payment row for the rest of the transaction. */
+export async function lockPayment(client: TxClient, id: string): Promise<SupplierPaymentRow | null> {
+  const result = await client.query<SupplierPaymentRow>(
+    `SELECT * FROM supplier_payments WHERE id = $1 FOR UPDATE`,
+    [id],
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Moves `amountMinor` of a locked payment's credit to applied (used on a
+ * bill) or refunded. The database refuses more than its unapplied_minor.
+ */
+export async function useCredit(
+  client: TxClient,
+  before: SupplierPaymentRow,
+  amountMinor: number,
+  use: "APPLIED" | "REFUNDED",
+  audit: AuditContext,
+): Promise<SupplierPaymentRow> {
+  const column = use === "APPLIED" ? "applied_minor" : "refunded_minor";
+  const result = await client.query<SupplierPaymentRow>(
+    `UPDATE supplier_payments SET unapplied_minor = unapplied_minor - $2, ${column} = ${column} + $2 WHERE id = $1
+     RETURNING *`,
+    [before.id, amountMinor],
+  );
+  const payment = result.rows[0]!;
+  await recordAuditLog(client, {
+    tenantId: before.tenant_id,
+    action: "UPDATE",
+    entityType: "supplier_payment",
+    entityId: before.id,
+    beforeState: before,
+    afterState: payment,
+    context: audit,
+  });
+  return payment;
+}
+
+/** The supplier's payments with credit left on them, oldest first. */
+export async function listWithCredit(tenantId: string, supplierId: string): Promise<SupplierPaymentListRow[]> {
+  return readAsTenant(tenantId, async (client) => {
+    const result = await client.query<SupplierPaymentListRow>(
+      `${SELECT_WITH_SUPPLIER} WHERE p.supplier_id = $1 AND p.unapplied_minor > 0 ORDER BY p.date, p.created_at, p.id`,
+      [supplierId],
+    );
+    return result.rows;
+  });
+}
+
 export interface ListFilters {
   readonly supplierId?: string | undefined;
   readonly method?: SupplierPaymentMethod | undefined;

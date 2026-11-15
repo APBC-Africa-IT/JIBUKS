@@ -43,6 +43,8 @@ export interface BillView {
   readonly total_minor: string;
   readonly amount_paid_minor: string;
   readonly balance_due_minor: string;
+  /** Debit notes: what is left to apply to bills or have refunded ("0" on bills and drafts). */
+  readonly credit_remaining_minor: string;
   readonly reference: string | null;
   readonly notes: string | null;
   readonly journal_id: string | null;
@@ -117,6 +119,9 @@ function toBillView(v: DocumentView): BillView {
     total_minor: v.total_minor,
     amount_paid_minor: v.amount_paid_minor,
     balance_due_minor: v.balance_due_minor,
+    credit_remaining_minor: String(
+      v.kind === "DEBIT_NOTE" && v.status !== "DRAFT" ? Number(v.total_minor) - Number(v.amount_paid_minor) : 0,
+    ),
     reference: v.reference,
     notes: v.notes,
     journal_id: v.journal_id,
@@ -226,6 +231,8 @@ function toLineRequests(lines: readonly BillLineRequest[]): LineDraft[] {
 export interface CreateBillRequest {
   readonly tenantId: string;
   readonly clientUuid: string;
+  /** DEBIT_NOTE: a debit note against no bill -- all of it supplier credit once posted. Default BILL. */
+  readonly kind?: "BILL" | "DEBIT_NOTE";
   readonly branchId?: string;
   readonly supplierId: string;
   /** Omit for the business's PAYABLE account. */
@@ -241,13 +248,13 @@ export interface CreateBillRequest {
 }
 
 export async function createBill(request: CreateBillRequest, audit: AuditContext): Promise<BillDetailView> {
-  const { supplierId, payableAccountId, billDate, lines, ...rest } = request;
+  const { supplierId, payableAccountId, billDate, lines, kind, ...rest } = request;
   return toBillDetail(
     await documents.create(
       AP,
       {
         ...rest,
-        kind: "BILL",
+        kind: kind ?? "BILL",
         partyId: supplierId,
         ...(payableAccountId !== undefined ? { controlAccountId: payableAccountId } : {}),
         issueDate: billDate,
@@ -329,8 +336,9 @@ export async function cancelBill(tenantId: string, billId: string, reason: strin
 }
 
 // ---------------------------------------------------------------------
-// Primitives for the supplierPayments module -- every payment to a
-// supplier is recorded there and applied to bills through these.
+// Primitives for the supplierPayments and supplierCredits modules --
+// every payment to a supplier, and every use of their credit, is applied
+// to bills through these.
 // ---------------------------------------------------------------------
 
 export type BillRow = invoicesRepository.InvoiceRow;
@@ -358,6 +366,14 @@ export const lockBill = invoicesRepository.lockInvoice;
 
 /** Records an amount applied to a locked bill and moves it to PART_PAID or PAID. */
 export const applyAllocation = invoicesRepository.applyAllocation;
+
+/** Records `amountMinor` more of a locked, posted debit note as used (applied to a bill or refunded). */
+export const useCredit = invoicesRepository.useCredit;
+
+/** The supplier's posted debit notes with something left to use, oldest first. */
+export async function listDebitNotesWithCredit(tenantId: string, supplierId: string): Promise<BillRow[]> {
+  return invoicesRepository.listCreditNotesWithCredit(tenantId, supplierId, "AP");
+}
 
 export interface CreateDebitNoteRequest {
   readonly tenantId: string;

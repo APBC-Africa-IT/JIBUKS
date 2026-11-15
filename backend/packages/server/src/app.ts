@@ -41,6 +41,7 @@ import { invoicesRouter } from "./modules/invoices/routes.js";
 import { customerStatementsRouter } from "./modules/customerStatements/routes.js";
 import { customerPaymentsRouter } from "./modules/customerPayments/routes.js";
 import { supplierPaymentsRouter } from "./modules/supplierPayments/routes.js";
+import { supplierRefundsRouter } from "./modules/supplierCredits/routes.js";
 import { customerRefundsRouter } from "./modules/customerCredits/routes.js";
 import { customerReportsRouter } from "./modules/customerReports/routes.js";
 import { supplierBillsRouter } from "./modules/supplierBills/routes.js";
@@ -104,6 +105,7 @@ export function createApp(): Express {
   app.use("/api/v1/customer-statements", customerStatementsRouter);
   app.use("/api/v1/customer-payments", customerPaymentsRouter);
   app.use("/api/v1/supplier-payments", supplierPaymentsRouter);
+  app.use("/api/v1/supplier-refunds", supplierRefundsRouter);
   app.use("/api/v1/customer-refunds", customerRefundsRouter);
   app.use("/api/v1/reports", customerReportsRouter);
   app.use("/api/v1/supplier-bills", supplierBillsRouter);

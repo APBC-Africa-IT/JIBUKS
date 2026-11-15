@@ -8,7 +8,7 @@
  * closing balance is always the figure GET /suppliers/{id} returns. The
  * invoices module names each row by the bill or debit note it posted or
  * cancelled, the supplierPayments module by the payment and the bills it
- * paid; journals with no purchase document
+ * paid, supplierCredits by the refund received; journals with no purchase document
  * -- opening balances, guided POST /bills, manual journals -- are named
  * from their source.
  *
@@ -22,6 +22,8 @@ import { AP } from "../invoices/documents.js";
 import * as invoicesService from "../invoices/service.js";
 import type { JournalDocumentLink } from "../invoices/service.js";
 import { todayInNairobi } from "../periods/service.js";
+import * as supplierCreditsService from "../supplierCredits/service.js";
+import type { SupplierRefundView } from "../supplierCredits/service.js";
 import * as supplierPaymentsService from "../supplierPayments/service.js";
 import type { JournalPayment } from "../supplierPayments/service.js";
 import * as suppliersService from "../suppliers/service.js";
@@ -35,6 +37,7 @@ export const SUPPLIER_TRANSACTION_TYPES = [
   "BILL_CANCELLED",
   "DEBIT_NOTE_CANCELLED",
   "PAYMENT",
+  "REFUND",
   "REVERSAL",
   "JOURNAL",
 ] as const;
@@ -46,6 +49,8 @@ interface Label {
   readonly link: JournalDocumentLink | null;
   /** The supplier payment the journal recorded. */
   readonly payment: JournalPayment | null;
+  /** The refund received from the supplier the journal recorded. */
+  readonly refund: SupplierRefundView | null;
 }
 
 const JOURNAL_SOURCE_TYPES: Readonly<Record<string, SupplierTransactionType>> = {
@@ -56,32 +61,44 @@ const JOURNAL_SOURCE_TYPES: Readonly<Record<string, SupplierTransactionType>> = 
   REVERSAL: "REVERSAL",
 };
 
-function labelFrom(link: JournalDocumentLink | undefined, payment: JournalPayment | undefined, source: string): Label {
+function labelFrom(
+  link: JournalDocumentLink | undefined,
+  payment: JournalPayment | undefined,
+  refund: SupplierRefundView | undefined,
+  source: string,
+): Label {
+  const none = { link: null, payment: null, refund: null };
   if (payment) {
-    return { type: "PAYMENT", link: null, payment };
+    return { ...none, type: "PAYMENT", payment };
+  }
+  if (refund) {
+    return { ...none, type: "REFUND", refund };
   }
   if (!link) {
-    return { type: JOURNAL_SOURCE_TYPES[source] ?? "JOURNAL", link: null, payment: null };
+    return { ...none, type: JOURNAL_SOURCE_TYPES[source] ?? "JOURNAL" };
   }
   const debitNote = link.kind === "DEBIT_NOTE";
   if (link.link === "CANCEL") {
-    return { type: debitNote ? "DEBIT_NOTE_CANCELLED" : "BILL_CANCELLED", link, payment: null };
+    return { ...none, type: debitNote ? "DEBIT_NOTE_CANCELLED" : "BILL_CANCELLED", link };
   }
-  return { type: debitNote ? "DEBIT_NOTE" : "BILL", link, payment: null };
+  return { ...none, type: debitNote ? "DEBIT_NOTE" : "BILL", link };
 }
 
-/** Labels journals by id: by the bill payment or purchase document behind each, else by its source. */
+/** Labels journals by id: by the payment, refund or purchase document behind each, else by its source. */
 async function labelJournals(
   tenantId: string,
   journals: readonly { readonly id: string; readonly source: string }[],
 ): Promise<Map<string, Label>> {
   const ids = [...new Set(journals.map((j) => j.id))];
-  const [links, payments] = await Promise.all([
+  const [links, payments, refunds] = await Promise.all([
     invoicesService.listJournalDocumentLinks(tenantId, ids, "AP"),
     supplierPaymentsService.listJournalPayments(tenantId, ids),
+    supplierCreditsService.listJournalRefunds(tenantId, ids),
   ]);
   const linkByJournal = new Map(links.map((link) => [link.journal_id, link]));
-  return new Map(journals.map((j) => [j.id, labelFrom(linkByJournal.get(j.id), payments.get(j.id), j.source)]));
+  return new Map(
+    journals.map((j) => [j.id, labelFrom(linkByJournal.get(j.id), payments.get(j.id), refunds.get(j.id), j.source)]),
+  );
 }
 
 /** A bill a payment row paid. */
@@ -97,14 +114,14 @@ export interface SupplierTransaction {
   readonly journal_number: string | null;
   readonly date: string;
   readonly type: SupplierTransactionType;
-  /** The bill or debit note the row posted or cancelled, or the supplier payment (SP-) it recorded. */
+  /** The bill or debit note the row posted or cancelled, or the supplier payment (SP-) or refund (SRF-) it recorded. */
   readonly document_id: string | null;
-  readonly document_kind: InvoiceKind | "SUPPLIER_PAYMENT" | null;
+  readonly document_kind: InvoiceKind | "SUPPLIER_PAYMENT" | "SUPPLIER_REFUND" | null;
   readonly document_number: string | null;
   /** DEBIT_NOTE rows: the bill it was raised against. */
   readonly debited_bill_id: string | null;
   readonly debited_bill_number: string | null;
-  /** PAYMENT rows: how the money moved; `reference` is its cheque number or M-Pesa code. */
+  /** PAYMENT and REFUND rows: how the money moved; `reference` is its cheque number or M-Pesa code. */
   readonly payment_method: SupplierPaymentMethod | null;
   readonly reference: string | null;
   readonly description: string;
@@ -112,7 +129,7 @@ export interface SupplierTransaction {
   readonly paid_bills: PaidBill[];
   /** PAYMENT rows: what wasn't applied to a bill, i.e. supplier credit (null on other rows). */
   readonly unapplied_minor: string | null;
-  /** What the row added to what the business owes (bills, opening balances). */
+  /** What the row added to what the business owes (bills, opening balances, refunds received). */
   readonly credit_minor: string;
   /** What it took off (payments, debit notes, cancellations). */
   readonly debit_minor: string;
@@ -121,19 +138,19 @@ export interface SupplierTransaction {
 }
 
 function toTransaction(journal: SupplierLedgerJournalRow, label: Label, balance: number): SupplierTransaction {
-  const { type, link, payment } = label;
+  const { type, link, payment, refund } = label;
   return {
     journal_id: journal.journal_id,
     journal_number: journal.journal_number,
     date: journal.date,
     type,
-    document_id: link?.document_id ?? payment?.payment.id ?? null,
-    document_kind: link?.kind ?? (payment ? "SUPPLIER_PAYMENT" : null),
-    document_number: link?.number ?? payment?.payment.number ?? null,
+    document_id: link?.document_id ?? payment?.payment.id ?? refund?.id ?? null,
+    document_kind: link?.kind ?? (payment ? "SUPPLIER_PAYMENT" : refund ? "SUPPLIER_REFUND" : null),
+    document_number: link?.number ?? payment?.payment.number ?? refund?.number ?? null,
     debited_bill_id: link?.credited_invoice_id ?? null,
     debited_bill_number: link?.credited_invoice_number ?? null,
-    payment_method: payment?.payment.method ?? null,
-    reference: payment ? payment.payment.reference : journal.reference,
+    payment_method: payment?.payment.method ?? refund?.method ?? null,
+    reference: payment ? payment.payment.reference : refund ? refund.reference : journal.reference,
     description: journal.description,
     paid_bills: (payment?.allocations ?? []).map((a) => ({
       bill_id: a.bill_id,
@@ -226,9 +243,9 @@ export type SupplierEntry = Omit<SupplierWithActivityRow, "last_activity_journal
   readonly payment_status: PaymentStatus;
 };
 
-/** The number a row shows: the bill's or debit note's, or the payment's (SP-). */
+/** The number a row shows: the bill's or debit note's, the payment's (SP-) or the refund's (SRF-). */
 function documentNumberOf(label: Label): string | null {
-  return label.link?.number ?? label.payment?.payment.number ?? null;
+  return label.link?.number ?? label.payment?.payment.number ?? label.refund?.number ?? null;
 }
 
 /** Adds the last activity and the list's "(Overdue)" / "(Due)" tag. */
