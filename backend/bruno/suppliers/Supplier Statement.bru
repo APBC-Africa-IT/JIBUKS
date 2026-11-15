@@ -1,0 +1,28 @@
+meta {
+  name: Supplier Statement
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/api/v1/suppliers/{{supplierId}}/statement
+  body: none
+  auth: none
+}
+
+params:query {
+  ~from: 2026-11-01
+  ~to: 2026-11-30
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  supplierId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  Read on request, nothing stored. to defaults to today, from to the 1st of to's month.
+}

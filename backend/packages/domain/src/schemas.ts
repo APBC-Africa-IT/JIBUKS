@@ -78,6 +78,12 @@ export type CustomerTransactionsQueryDto = z.infer<typeof customerTransactionsQu
 /** GET /suppliers/{id}/transactions -- the same optional inclusive date range. */
 export const supplierTransactionsQuerySchema = customerTransactionsQuerySchema;
 
+/**
+ * GET /suppliers/{id}/statement (and /pdf) -- to defaults to today, from to
+ * the 1st of to's month; the service checks from <= to once defaulted.
+ */
+export const supplierStatementQuerySchema = customerTransactionsQuerySchema;
+
 /** GET /payables-overview -- the Suppliers hub's Overview tab. */
 export const payablesOverviewQuerySchema = z.object({
   /** Omit for today (Africa/Nairobi). */

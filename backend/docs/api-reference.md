@@ -1134,6 +1134,52 @@ Cheques written with `POST /cheque-payments` and cash expenses aren't tagged wit
 
 ---
 
+### `GET /suppliers/{id}/statement`
+
+`suppliers:view`. The Reports tab's **Supplier Statement**: the supplier's transactions for a period with a running balance, the totals, and what is owed by age at the end of it. **Nothing is stored or numbered**: it is read from the ledger on every request, so it always matches `GET /suppliers/{id}/transactions` and `GET /payables-aging?supplier_id=…&as_of=<to>`.
+
+| Query | Description |
+|---|---|
+| `to` | Statement date (inclusive). Default today (Africa/Nairobi). |
+| `from` | First day covered. Default the 1st of `to`'s month. After `to`: `400`. |
+
+**Success Response:** `200 OK`
+```json
+{
+  "supplier_id": "…",
+  "supplier_code": "SUP-0007",
+  "supplier_name": "Unga Millers Ltd",
+  "currency": "KES",
+  "period_from": "2026-11-01",
+  "period_to": "2026-11-30",
+  "opening_balance_minor": "100000",
+  "total_credit_minor": "5300000",
+  "total_debit_minor": "2300000",
+  "closing_balance_minor": "3100000",
+  "transactions": [ { "type": "BILL", "document_number": "BILL-000031", "credit_minor": "5000000", "debit_minor": "0", "balance_minor": "5100000", "…": "…" } ],
+  "aging": {
+    "current_minor": "3100000", "days_1_30_minor": "0", "days_31_60_minor": "0", "days_61_90_minor": "0", "days_over_90_minor": "0",
+    "not_billed_minor": "0", "balance_minor": "3100000"
+  }
+}
+```
+
+- `transactions` are the rows of [`GET /suppliers/{id}/transactions`](#get-suppliersidtransactions) for the period, same shape.
+- `opening_balance_minor` is what was owed before `from`. `total_credit_minor` (bills, opening balances, refunds received) adds to the balance, and `total_debit_minor` (payments, debit notes, cancellations) takes off it. `closing_balance_minor` is what is owed at the end of `to`; a negative figure is supplier credit.
+- `aging` uses the same field names as `GET /payables-aging` at `to`; `not_billed_minor` is the part of the balance not on a bill (opening balances, credit…).
+
+**Error Response:** `400 VALIDATION_ERROR`, `404 SUPPLIER_NOT_FOUND`.
+
+### `GET /suppliers/{id}/statement/pdf`
+
+`suppliers:view`. The same statement as a PDF, built on request, with the same `from` / `to`. `Content-Disposition: inline; filename="Statement-SUP-0007-2026-11-30.pdf"`. It is titled **SUPPLIER STATEMENT** with the supplier's code, and shows:
+- the business and the supplier (address + city, phone, email, PIN);
+- the statement date and period;
+- a table that starts with the balance brought forward, then each row's details (e.g. "Payment SP-000017 (Cheque 004512) - BILL-000031, BILL-000034") under **BILLS** / **PAYMENTS**, with the running balance;
+- the totals, then **Amount owed** (or **Supplier credit** when negative), then the amount owed by age.
+
+---
+
 ### `GET /payables-overview`
 
 `reports:view` (like payables aging). The Suppliers hub's **Overview** tab.
@@ -1201,7 +1247,7 @@ Types can't be deleted yet.
 - **Add Supplier:** load `GET /supplier-types` for the dropdown and `GET /opening-balances` for the opening balance date. Code shows "(auto)" until saved. The button should say **Save Supplier**.
 - A journal line may carry `customerId` **or** `supplierId`, never both — `400 VALIDATION_ERROR` otherwise.
 - For purchases, see [7.22 Supplier Bills](#722-supplier-bills); for paying them, [7.30 Supplier Payments](#730-supplier-payments).
-- **Reports tab:** Payables Summary = `GET /suppliers` (each `balance_minor`) or `GET /payables-overview` for the total; Aging Report = `GET /payables-aging`; Supplier Statements = `GET /suppliers/{id}/transactions` (a PDF comes in a later step).
+- **Reports tab:** Payables Summary = `GET /suppliers` (each `balance_minor`) or `GET /payables-overview` for the total; Aging Report = `GET /payables-aging`; Supplier Statements = [`GET /suppliers/{id}/statement`](#get-suppliersidstatement) and its `/pdf`; there is no sending or "sent" mark.
 
 ---
 

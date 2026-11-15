@@ -4,7 +4,9 @@
  *   renderStatementPdf     -- lays it out with pdfkit (A4, Helvetica)
  *
  * Amounts come from the stored snapshot; business and customer details are
- * their current values. Generated on request, never stored.
+ * their current values. Generated on request, never stored. The layout is
+ * shared with supplier statements (supplierStatements/pdf.ts), which fill
+ * in their own labels.
  */
 
 import PDFDocument from "pdfkit";
@@ -22,7 +24,15 @@ export interface StatementPdfInput {
 }
 
 export interface StatementPdfModel {
+  /** Under the title: the statement number, or the supplier's code. */
   readonly number: string;
+  /** "STATEMENT" / "SUPPLIER STATEMENT". */
+  readonly title: string;
+  /** Above the party block: "STATEMENT FOR" / "SUPPLIER". */
+  readonly partyHeading: string;
+  /** The two amount columns: what adds to the balance, what takes off it. */
+  readonly columns: readonly [string, string];
+  readonly agingHeading: string;
   readonly business: string[];
   readonly customer: string[];
   readonly meta: Array<[string, string]>;
@@ -42,7 +52,7 @@ const METHOD_LABELS: Readonly<Record<string, string>> = {
   OTHER: "Other",
 };
 
-const BUCKET_LABELS: Readonly<Record<string, string>> = {
+export const BUCKET_LABELS: Readonly<Record<string, string>> = {
   CURRENT: "Current",
   DAYS_1_30: "1-30 days",
   DAYS_31_60: "31-60 days",
@@ -87,7 +97,7 @@ export function describeTransaction(t: CustomerTransaction): string {
   }
 }
 
-function partyLines(party: PdfParty): string[] {
+export function partyLines(party: PdfParty): string[] {
   return [
     party.name,
     ...(party.address ? [party.address] : []),
@@ -104,6 +114,10 @@ export function buildStatementPdfModel(input: StatementPdfInput): StatementPdfMo
 
   return {
     number: statement.number,
+    title: "STATEMENT",
+    partyHeading: "STATEMENT FOR",
+    columns: ["CHARGES", "PAYMENTS"],
+    agingHeading: "AMOUNT DUE BY AGE",
     business: partyLines(input.business),
     customer: partyLines(input.customer),
     meta: [
@@ -167,7 +181,7 @@ export function renderStatementPdf(model: StatementPdfModel): Promise<Buffer> {
     size: "A4",
     margin: PAGE_MARGIN,
     bufferPages: true, // footers are drawn after the body
-    info: { Title: `STATEMENT ${model.number}`, Producer: "JiBUks", Creator: "JiBUks" },
+    info: { Title: `${model.title} ${model.number}`, Producer: "JiBUks", Creator: "JiBUks" },
   });
   const chunks: Buffer[] = [];
   const done = new Promise<Buffer>((resolve, reject) => {
@@ -189,7 +203,7 @@ export function renderStatementPdf(model: StatementPdfModel): Promise<Buffer> {
   }
   const headerBottom = doc.y;
 
-  doc.font("Helvetica-Bold").fontSize(20).fillColor(ACCENT).text("STATEMENT", PAGE_MARGIN, PAGE_MARGIN, {
+  doc.font("Helvetica-Bold").fontSize(20).fillColor(ACCENT).text(model.title, PAGE_MARGIN, PAGE_MARGIN, {
     width: usable,
     align: "right",
   });
@@ -203,9 +217,9 @@ export function renderStatementPdf(model: StatementPdfModel): Promise<Buffer> {
     metaY += 13;
   }
 
-  // Customer.
+  // Customer or supplier.
   let y = Math.max(headerBottom, metaY) + 25;
-  doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text("STATEMENT FOR", PAGE_MARGIN, y);
+  doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text(model.partyHeading, PAGE_MARGIN, y);
   doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text(model.customer[0] ?? "");
   doc.font("Helvetica").fontSize(9).fillColor(INK);
   for (const line of model.customer.slice(1)) {
@@ -219,8 +233,8 @@ export function renderStatementPdf(model: StatementPdfModel): Promise<Buffer> {
     doc.font("Helvetica-Bold").fontSize(8).fillColor(MUTED);
     doc.text("DATE", COLUMNS.date.x + 4, top, { width: COLUMNS.date.width - 4 });
     doc.text("DETAILS", COLUMNS.details.x, top, { width: COLUMNS.details.width });
-    doc.text("CHARGES", COLUMNS.charges.x, top, { width: COLUMNS.charges.width, align: "right" });
-    doc.text("PAYMENTS", COLUMNS.payments.x, top, { width: COLUMNS.payments.width, align: "right" });
+    doc.text(model.columns[0], COLUMNS.charges.x, top, { width: COLUMNS.charges.width, align: "right" });
+    doc.text(model.columns[1], COLUMNS.payments.x, top, { width: COLUMNS.payments.width, align: "right" });
     doc.text("BALANCE", COLUMNS.balance.x, top, { width: COLUMNS.balance.width - 4, align: "right" });
     return top + 20;
   };
@@ -273,7 +287,7 @@ export function renderStatementPdf(model: StatementPdfModel): Promise<Buffer> {
 
   // Aging: one box per bucket across the page.
   ensureSpace(50);
-  doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text("AMOUNT DUE BY AGE", PAGE_MARGIN, y);
+  doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text(model.agingHeading, PAGE_MARGIN, y);
   y = doc.y + 4;
   const cell = usable / model.aging.length;
   model.aging.forEach(([label, value], i) => {
@@ -299,7 +313,7 @@ export function renderStatementPdf(model: StatementPdfModel): Promise<Buffer> {
       .font("Helvetica")
       .fontSize(7)
       .fillColor(MUTED)
-      .text(`STATEMENT ${model.number} · page ${i + 1} of ${range.count} · prepared with JiBUks`, PAGE_MARGIN, doc.page.height - 35, {
+      .text(`${model.title} ${model.number} · page ${i + 1} of ${range.count} · prepared with JiBUks`, PAGE_MARGIN, doc.page.height - 35, {
         width: usable,
         align: "center",
         lineBreak: false,
