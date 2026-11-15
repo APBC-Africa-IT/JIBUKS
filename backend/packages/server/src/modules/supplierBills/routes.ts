@@ -7,6 +7,7 @@ import { Router, type Router as RouterType } from "express";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRealIdentity } from "../../middleware/authContext.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
+import * as creditControllers from "../supplierCredits/controllers.js";
 import * as controllers from "./controllers.js";
 
 export const supplierBillsRouter: RouterType = Router();
@@ -22,4 +23,5 @@ supplierBillsRouter.delete("/:id", requirePermission("supplier_bills:create"), a
 supplierBillsRouter.post("/:id/post", requirePermission("supplier_bills:post"), asyncHandler(controllers.post));
 supplierBillsRouter.post("/:id/cancel", requirePermission("supplier_bills:cancel"), asyncHandler(controllers.cancel));
 supplierBillsRouter.post("/:id/payments", requirePermission("supplier_bills:pay"), asyncHandler(controllers.pay));
+supplierBillsRouter.post("/:id/apply-credit", requirePermission("supplier_bills:pay"), asyncHandler(creditControllers.applyCredit));
 supplierBillsRouter.post("/:id/debit-notes", requirePermission("supplier_bills:create"), asyncHandler(controllers.createDebitNote));

@@ -72,6 +72,7 @@ export type DomainErrorCode =
   // customer payments
   | "CUSTOMER_PAYMENT_NOT_FOUND"
   | "SUPPLIER_PAYMENT_NOT_FOUND"
+  | "SUPPLIER_REFUND_NOT_FOUND"
   | "PAYMENT_ALLOCATION_INVALID"
   // customer credit
   | "CREDIT_NOT_AVAILABLE"

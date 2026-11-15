@@ -7,6 +7,7 @@ import { Router, type Router as RouterType } from "express";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRealIdentity } from "../../middleware/authContext.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
+import * as creditControllers from "../supplierCredits/controllers.js";
 import * as ledgerControllers from "../supplierLedger/controllers.js";
 import * as controllers from "./controllers.js";
 
@@ -19,6 +20,7 @@ suppliersRouter.post("/", requirePermission("suppliers:create"), asyncHandler(co
 suppliersRouter.get("/", requirePermission("suppliers:view"), asyncHandler(ledgerControllers.list));
 suppliersRouter.get("/:id", requirePermission("suppliers:view"), asyncHandler(ledgerControllers.getOne));
 suppliersRouter.get("/:id/transactions", requirePermission("suppliers:view"), asyncHandler(ledgerControllers.transactions));
+suppliersRouter.get("/:id/credit", requirePermission("suppliers:view"), asyncHandler(creditControllers.availableCredit));
 suppliersRouter.patch("/:id", requirePermission("suppliers:edit"), asyncHandler(controllers.update));
 suppliersRouter.post("/:id/deactivate", requirePermission("suppliers:edit"), asyncHandler(controllers.deactivate));
 suppliersRouter.post("/:id/reactivate", requirePermission("suppliers:edit"), asyncHandler(controllers.reactivate));

@@ -1,0 +1,33 @@
+meta {
+  name: Apply Credit to Bill
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/supplier-bills/{{billId}}/apply-credit
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}"
+  }
+}
+
+vars:pre-request {
+  billId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  No amountMinor or sources: as much as the bill owes, oldest credit first. Posts nothing.
+  Choose credit with "sources": [{ "debitNoteId": "…", "amountMinor": 150000 }]
+  or [{ "supplierPaymentId": "…", "amountMinor": 50000 }].
+}

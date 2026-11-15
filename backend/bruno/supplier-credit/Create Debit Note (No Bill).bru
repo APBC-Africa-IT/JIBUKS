@@ -1,0 +1,42 @@
+meta {
+  name: Create Debit Note (No Bill)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/supplier-bills
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "kind": "DEBIT_NOTE",
+    "supplierId": "{{supplierId}}",
+    "billDate": "2026-11-14",
+    "supplierReference": "CRN-0091",
+    "notes": "Damaged bags returned",
+    "lines": [
+      { "description": "Returned: maize 90kg bags", "quantity": 2, "unitPriceMinor": 100000, "expenseAccountId": "{{expenseAccountId}}" }
+    ],
+    "post": true
+  }
+}
+
+vars:pre-request {
+  supplierId: 00000000-0000-4000-8000-000000000000
+  expenseAccountId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  A debit note against no bill: posted (post: true), all of it is supplier credit.
+  Dr Accounts Payable (supplier) / Cr the expense account. No dueDate.
+}

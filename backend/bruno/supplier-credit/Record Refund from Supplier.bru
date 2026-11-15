@@ -1,0 +1,38 @@
+meta {
+  name: Record Refund from Supplier
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/supplier-refunds
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "supplierId": "{{supplierId}}",
+    "amountMinor": 50000,
+    "date": "2026-11-14",
+    "method": "CHEQUE",
+    "reference": "000452",
+    "memo": "Deposit returned"
+  }
+}
+
+vars:pre-request {
+  supplierId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  Numbered SRF-000001. Dr the money account (CHEQUE -> Bank by default; receivedAccountId to choose,
+  required for OTHER) / Cr Accounts Payable (supplier). Oldest credit first unless "sources" chooses.
+}

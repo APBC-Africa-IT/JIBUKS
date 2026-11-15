@@ -172,6 +172,11 @@ tags:
       Money paid to a supplier (SP-000001), applied to any of their bills --
       oldest due first by default -- with the rest kept as supplier credit
       (an advance). Every AP payment is one, however it is recorded.
+  - name: Supplier Credit
+    description: >
+      A supplier's credit (debit notes with something left, payments with
+      unapplied money): the total, applying it to bills, refunds received
+      from the supplier (SRF-000001).
   - name: Customer Credit
     description: >
       A customer's credit (credit notes with something left, payments with
@@ -1269,6 +1274,51 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
 
+  /supplier-bills/{id}/apply-credit:
+    post:
+      tags: [Supplier Credit]
+      summary: Apply the supplier's credit to a bill
+      description: >
+        Requires `supplier_bills:pay`. Posts nothing -- the credit is already
+        in payables. Adds allocations pointing at the debit notes or
+        payments used (oldest first unless `sources` chooses).
+      parameters:
+        - $ref: '#/components/parameters/InvoiceIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplySupplierCreditRequest'
+      responses:
+        '201':
+          description: The bill
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierBillDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: DUPLICATE_VALUE -- clientUuid already used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: INVOICE_INVALID_STATE, INVOICE_OVERPAYMENT, CREDIT_NOT_AVAILABLE or PAYMENT_ALLOCATION_INVALID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /supplier-bills/{id}/payments:
     parameters:
       - $ref: '#/components/parameters/InvoiceIdPath'
@@ -1751,6 +1801,119 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupplierPaymentDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /supplier-refunds:
+    post:
+      tags: [Supplier Credit]
+      summary: Record a refund received from a supplier
+      description: >
+        Requires `supplier_bills:pay`. Numbered SRF-000001. Posts Dr the
+        money account / Cr payables (tagged with the supplier), drawing on
+        the credit chosen or the oldest first.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSupplierRefundRequest'
+      responses:
+        '201':
+          description: The refund
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierRefundDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: DUPLICATE_VALUE -- clientUuid already used
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: CREDIT_NOT_AVAILABLE or SYSTEM_ACCOUNT_MISSING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    get:
+      tags: [Supplier Credit]
+      summary: List refunds received from suppliers
+      description: Requires `supplier_bills:view`. Newest first, cursor-paged. Items have no sources.
+      parameters:
+        - name: supplier_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of refunds
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SupplierRefund'
+                  next_cursor: { type: string, nullable: true }
+                  has_more: { type: boolean }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /supplier-refunds/{id}:
+    get:
+      tags: [Supplier Credit]
+      summary: Get a supplier refund with its sources
+      description: Requires `supplier_bills:view`. 404 SUPPLIER_REFUND_NOT_FOUND.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The refund
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierRefundDetail'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3064,6 +3227,29 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+
+  /suppliers/{id}/credit:
+    get:
+      tags: [Supplier Credit]
+      summary: A supplier's available credit
+      description: >
+        Requires `suppliers:view`. Debit notes with something left and
+        payments with unapplied money, oldest first, and their total.
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdPath'
+      responses:
+        '200':
+          description: The available credit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableSupplierCredit'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /customers/{id}/credit:
     get:
@@ -5151,12 +5337,17 @@ components:
       required: [clientUuid, supplierId, billDate, lines]
       properties:
         clientUuid: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [BILL, DEBIT_NOTE]
+          default: BILL
+          description: "DEBIT_NOTE - a debit note against no bill; posted, all of it is supplier credit. No dueDate."
         branchId: { type: string, format: uuid }
         supplierId: { type: string, format: uuid }
         payableAccountId: { type: string, format: uuid, description: "Omit for the business's PAYABLE account (422 SYSTEM_ACCOUNT_MISSING if none)." }
         billDate: { type: string, format: date }
-        dueDate: { type: string, format: date, description: "Defaults to billDate + the supplier's paymentTermsDays." }
-        supplierReference: { type: string, maxLength: 100, description: "The supplier's own invoice number; unique per supplier." }
+        dueDate: { type: string, format: date, description: "Defaults to billDate + the supplier's paymentTermsDays. Not on a debit note." }
+        supplierReference: { type: string, maxLength: 100, description: "The supplier's own invoice (or credit note) number; unique per supplier among bills." }
         currency: { type: string }
         taxMode: { $ref: '#/components/schemas/TaxMode' }
         reference: { type: string, maxLength: 100 }
@@ -5230,13 +5421,14 @@ components:
         subtotal_minor: { type: string }
         tax_minor: { type: string }
         total_minor: { type: string }
-        amount_paid_minor: { type: string, description: Paid plus debited. }
+        amount_paid_minor: { type: string, description: "Bills - paid plus debited. Debit notes - what of the note has been used." }
         balance_due_minor: { type: string }
+        credit_remaining_minor: { type: string, description: "Posted debit notes - what is left to apply to bills or have refunded; 0 otherwise." }
         reference: { type: string, nullable: true }
         notes: { type: string, nullable: true }
         journal_id: { type: string, format: uuid, nullable: true }
         cancel_journal_id: { type: string, format: uuid, nullable: true }
-        debited_bill_id: { type: string, format: uuid, nullable: true, description: On a debit note -- the bill it reduces. }
+        debited_bill_id: { type: string, format: uuid, nullable: true, description: "On a debit note -- the bill it reduces; null for one against no bill." }
         cancel_reason: { type: string, nullable: true }
         created_by: { type: string, format: uuid }
         posted_by: { type: string, format: uuid, nullable: true }
@@ -5856,6 +6048,105 @@ components:
                   number: { type: string }
                   amount_minor: { type: string }
 
+    SupplierCreditSourceRequest:
+      type: object
+      description: Exactly one of debitNoteId and supplierPaymentId.
+      required: [amountMinor]
+      properties:
+        debitNoteId: { type: string, format: uuid }
+        supplierPaymentId: { type: string, format: uuid }
+        amountMinor: { type: integer, minimum: 1 }
+
+    AvailableSupplierCredit:
+      type: object
+      properties:
+        supplier_id: { type: string, format: uuid }
+        supplier_name: { type: string }
+        currency: { type: string }
+        available_minor: { type: string, description: The Available Credit total. }
+        sources:
+          type: array
+          description: Oldest first -- the order credit is used in when none is chosen.
+          items:
+            type: object
+            properties:
+              type: { type: string, enum: [DEBIT_NOTE, PAYMENT] }
+              id: { type: string, format: uuid, description: The debit note's (bill) id or the supplier payment's id. }
+              number: { type: string }
+              date: { type: string, format: date }
+              amount_minor: { type: string }
+              remaining_minor: { type: string }
+              debited_bill_id: { type: string, format: uuid, nullable: true }
+              supplier_reference: { type: string, nullable: true, description: "Debit notes - the supplier's credit note number." }
+              description: { type: string, nullable: true, description: "Debit note notes, or payment reference." }
+              account_id: { type: string, format: uuid, description: The payable account the credit sits in. }
+
+    ApplySupplierCreditRequest:
+      type: object
+      required: [clientUuid]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        amountMinor: { type: integer, minimum: 1, description: Omit for as much as the bill owes and the credit covers. }
+        date: { type: string, format: date, description: Default today; not before the bill's or the credit's date. }
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Omit for oldest first. With amountMinor, must add up to it.
+          items: { $ref: '#/components/schemas/SupplierCreditSourceRequest' }
+
+    CreateSupplierRefundRequest:
+      type: object
+      required: [clientUuid, supplierId, amountMinor, date]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        supplierId: { type: string, format: uuid }
+        amountMinor: { type: integer, minimum: 1 }
+        date: { type: string, format: date }
+        method: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER], default: CASH }
+        receivedAccountId: { type: string, format: uuid, description: "Where the money went. Default by method (CHEQUE - Bank); required for OTHER." }
+        reference: { type: string, maxLength: 100 }
+        memo: { type: string, maxLength: 1000 }
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Omit for oldest first. Must add up to amountMinor.
+          items: { $ref: '#/components/schemas/SupplierCreditSourceRequest' }
+
+    SupplierRefund:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: string, example: SRF-000003 }
+        supplier_id: { type: string, format: uuid }
+        supplier_name: { type: string }
+        date: { type: string, format: date }
+        currency: { type: string }
+        amount_minor: { type: string }
+        method: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER] }
+        received_account_id: { type: string, format: uuid }
+        reference: { type: string, nullable: true }
+        memo: { type: string, nullable: true }
+        journal_id: { type: string, format: uuid }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    SupplierRefundDetail:
+      allOf:
+        - $ref: '#/components/schemas/SupplierRefund'
+        - type: object
+          properties:
+            sources:
+              type: array
+              items:
+                type: object
+                properties:
+                  type: { type: string, enum: [DEBIT_NOTE, PAYMENT] }
+                  id: { type: string, format: uuid }
+                  number: { type: string }
+                  amount_minor: { type: string }
+
     CreateStatementRequest:
       type: object
       required: [clientUuid, customerId]
@@ -6190,7 +6481,7 @@ components:
             document_number: { type: string, nullable: true }
     SupplierTransactionType:
       type: string
-      enum: [OPENING_BALANCE, BILL, DEBIT_NOTE, BILL_CANCELLED, DEBIT_NOTE_CANCELLED, PAYMENT, REVERSAL, JOURNAL]
+      enum: [OPENING_BALANCE, BILL, DEBIT_NOTE, BILL_CANCELLED, DEBIT_NOTE_CANCELLED, PAYMENT, REFUND, REVERSAL, JOURNAL]
     SupplierTransaction:
       type: object
       properties:
@@ -6202,8 +6493,8 @@ components:
         document_kind:
           type: string
           nullable: true
-          enum: [BILL, DEBIT_NOTE, SUPPLIER_PAYMENT, null]
-          description: SUPPLIER_PAYMENT on PAYMENT rows - document_id/number are the SP- payment.
+          enum: [BILL, DEBIT_NOTE, SUPPLIER_PAYMENT, SUPPLIER_REFUND, null]
+          description: SUPPLIER_PAYMENT on PAYMENT rows (the SP- payment); SUPPLIER_REFUND on REFUND rows (the SRF- refund).
         document_number: { type: string, nullable: true }
         debited_bill_id: { type: string, format: uuid, nullable: true, description: "DEBIT_NOTE rows - the bill it was raised against." }
         debited_bill_number: { type: string, nullable: true }

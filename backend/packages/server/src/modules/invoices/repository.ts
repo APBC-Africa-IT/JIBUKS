@@ -849,8 +849,8 @@ export async function applyAllocation(
 }
 
 /**
- * Records `amountMinor` more of an issued credit note (already locked) as
- * used -- applied to an invoice or refunded. A credit note's
+ * Records `amountMinor` more of an issued credit note or posted debit note
+ * (already locked) as used -- applied to an invoice or bill, or refunded. A note's
  * amount_paid_minor is what of it has been used; the database refuses
  * using more than its total.
  */
@@ -872,15 +872,15 @@ export async function useCredit(client: TxClient, before: InvoiceRow, amountMino
   return note;
 }
 
-/** A customer's issued credit notes with something left to use, oldest first. */
-export async function listCreditNotesWithCredit(tenantId: string, customerId: string): Promise<InvoiceRow[]> {
+/** A customer's issued credit notes (AR) or supplier's posted debit notes (AP) with something left to use, oldest first. */
+export async function listCreditNotesWithCredit(tenantId: string, partyId: string, direction: "AR" | "AP" = "AR"): Promise<InvoiceRow[]> {
   return readAsTenant(tenantId, async (client) => {
     const result = await client.query<InvoiceRow>(
       `SELECT * FROM invoices
-        WHERE direction = 'AR' AND kind = 'CREDIT_NOTE' AND status = 'ISSUED' AND customer_id = $1
+        WHERE direction = $2 AND kind = $3 AND status = 'ISSUED' AND ${direction === "AR" ? "customer_id" : "supplier_id"} = $1
           AND amount_paid_minor < total_minor
         ORDER BY issue_date, created_at, id`,
-      [customerId],
+      [partyId, direction, direction === "AR" ? "CREDIT_NOTE" : "DEBIT_NOTE"],
     );
     return result.rows;
   });

@@ -456,7 +456,7 @@ async function baseCurrency(side: Side, tenantId: string, requested?: string): P
 export interface CreateRequest {
   readonly tenantId: string;
   readonly clientUuid: string;
-  readonly kind: "INVOICE" | "PROFORMA" | "BILL" | "CREDIT_NOTE";
+  readonly kind: "INVOICE" | "PROFORMA" | "BILL" | "CREDIT_NOTE" | "DEBIT_NOTE";
   readonly branchId?: string;
   readonly partyId: string;
   readonly controlAccountId?: string;
@@ -847,10 +847,8 @@ export async function issue(
         },
         audit,
       );
-      if (side.direction === "AR") {
-        // All of a credit note raised against an invoice is used on it.
-        await repository.useCredit(client, issued, Number(issued.total_minor), audit);
-      }
+      // All of a credit or debit note raised against a document is used on it.
+      await repository.useCredit(client, issued, Number(issued.total_minor), audit);
     }
   });
   return getDetail(side, tenantId, id);
