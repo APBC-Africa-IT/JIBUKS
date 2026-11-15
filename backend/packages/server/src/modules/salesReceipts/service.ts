@@ -99,7 +99,7 @@ function toView(v: DocumentView): SalesReceiptView {
     customer_name: v.party_name,
     date: v.issue_date,
     currency: v.currency,
-    payment_method: v.payment_method!,
+    payment_method: v.payment_method as InvoicePaymentMethod, // never CHEQUE on a cash sale (database check)
     deposit_account_id: v.deposit_account_id!,
     tax_mode: v.tax_mode,
     subtotal_minor: v.subtotal_minor,

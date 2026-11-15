@@ -1,0 +1,32 @@
+meta {
+  name: Record Cash Purchase (No Supplier, Stock Item)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/cash-purchases
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "paymentMethod": "CASH",
+    "memo": "Gikomba market",
+    "lines": [
+      { "itemId": "{{itemId}}", "quantity": 10, "unitPriceMinor": 15000 }
+    ]
+  }
+}
+
+vars:pre-request {
+  itemId: 00000000-0000-4000-8000-000000000000
+}

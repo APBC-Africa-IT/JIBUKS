@@ -6,7 +6,7 @@
  * Read-only and built from the general ledger, like customerLedger: every
  * POSTED journal line tagged with the supplier, one row per journal, so the
  * closing balance is always the figure GET /suppliers/{id} returns. The
- * invoices module names each row by the bill or debit note it posted or
+ * invoices module names each row by the bill, debit note or cash purchase it posted or
  * cancelled, the supplierPayments module by the payment and the bills it
  * paid, supplierCredits by the refund received; journals with no purchase document
  * -- opening balances, guided POST /bills, manual journals -- are named
@@ -36,6 +36,7 @@ export const SUPPLIER_TRANSACTION_TYPES = [
   "DEBIT_NOTE",
   "BILL_CANCELLED",
   "DEBIT_NOTE_CANCELLED",
+  "CASH_PURCHASE",
   "PAYMENT",
   "REFUND",
   "REVERSAL",
@@ -76,6 +77,9 @@ function labelFrom(
   }
   if (!link) {
     return { ...none, type: JOURNAL_SOURCE_TYPES[source] ?? "JOURNAL" };
+  }
+  if (link.kind === "CASH_PURCHASE") {
+    return { ...none, type: "CASH_PURCHASE", link };
   }
   const debitNote = link.kind === "DEBIT_NOTE";
   if (link.link === "CANCEL") {

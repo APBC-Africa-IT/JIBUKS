@@ -1437,6 +1437,72 @@ export const listChequePaymentsQuerySchema = paginationSchema.extend({
 export type ListChequePaymentsQueryDto = z.infer<typeof listChequePaymentsQuerySchema>;
 
 // ---------------------------------------------------------------------
+// Cash purchases -- bought and paid on the spot (PUR-000001)
+// ---------------------------------------------------------------------
+
+/**
+ * POST /cash-purchases -- the Cash Purchase screen. Posted and PAID on
+ * creation: Dr line accounts (net) / Dr input VAT / Cr the money account,
+ * passing through the supplier's payables when a supplier is named.
+ * Lines are as on a cheque.
+ */
+export const createCashPurchaseSchema = z
+  .object({
+    clientUuid: uuidSchema,
+    branchId: uuidSchema.optional(),
+    /** Omit for a one-off seller with no supplier record. */
+    supplierId: uuidSchema.optional(),
+    /** The seller's receipt or invoice number. */
+    supplierReference: z.string().trim().min(1).max(100).optional(),
+    /** Omit for today (Africa/Nairobi). */
+    date: accountingDateSchema.optional(),
+    /** CHEQUE comes out of the Bank account by default; put the cheque number in reference. */
+    paymentMethod: z.enum(SUPPLIER_PAYMENT_METHODS).default("CASH"),
+    /** Where the money came from. Omit for the business's Cash, Bank or M-Pesa account (by method); required for OTHER. */
+    paidFromAccountId: uuidSchema.optional(),
+    /** With a supplier: the payables the purchase passes through. Omit for the business's PAYABLE account. */
+    payableAccountId: uuidSchema.optional(),
+    currency: currencySchema.optional(),
+    taxMode: z.enum(TAX_MODES).default("NONE"),
+    /** e.g. the cheque number or M-Pesa transaction code. */
+    reference: z.string().trim().min(1).max(100).optional(),
+    /** Internal note for the whole purchase. */
+    memo: z.string().max(2000).optional(),
+    lines: z.array(chequeLineSchema).min(1, "A cash purchase needs at least one line").max(200),
+  })
+  .superRefine((body, ctx) => {
+    if (body.paymentMethod === "OTHER" && body.paidFromAccountId === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["paidFromAccountId"],
+        message: "Required when paymentMethod is OTHER -- there is no default account for it",
+      });
+    }
+    if (body.supplierId === undefined && body.payableAccountId !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["payableAccountId"], message: "Only with a supplierId" });
+    }
+    body.lines.forEach((line, i) => {
+      if (body.taxMode === "NONE" && line.taxRateBps > 0) {
+        ctx.addIssue({ code: "custom", path: ["lines", i, "taxRateBps"], message: "taxMode NONE allows no tax rate" });
+      }
+    });
+  });
+
+export type CreateCashPurchaseDto = z.infer<typeof createCashPurchaseSchema>;
+
+/** GET /cash-purchases -- newest first, cursor pagination. */
+export const listCashPurchasesQuerySchema = paginationSchema.extend({
+  supplier_id: uuidSchema.optional(),
+  /** Purchase date range, inclusive. */
+  from: accountingDateSchema.optional(),
+  to: accountingDateSchema.optional(),
+  /** Case-insensitive match on the supplier's name, the number, the reference or the seller's receipt number. */
+  q: z.string().trim().min(1).max(100).optional(),
+});
+
+export type ListCashPurchasesQueryDto = z.infer<typeof listCashPurchasesQuerySchema>;
+
+// ---------------------------------------------------------------------
 // Customer statements
 // ---------------------------------------------------------------------
 

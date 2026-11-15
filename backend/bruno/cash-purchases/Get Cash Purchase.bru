@@ -1,0 +1,19 @@
+meta {
+  name: Get Cash Purchase
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/cash-purchases/{{cashPurchaseId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}
+
+vars:pre-request {
+  cashPurchaseId: 00000000-0000-4000-8000-000000000000
+}
