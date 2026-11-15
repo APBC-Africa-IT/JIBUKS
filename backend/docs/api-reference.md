@@ -63,6 +63,7 @@ Live, interactive documentation (Swagger UI, "Try it out" against real data): `h
 - [7.29b Customer Credit](#729b-customer-credit)
 - [7.30 Supplier Payments](#730-supplier-payments)
 - [7.30b Supplier Credit](#730b-supplier-credit)
+- [7.31 Cash Purchases](#731-cash-purchases)
 
 ---
 
@@ -182,6 +183,7 @@ A business can also create **custom roles** from the permission catalogue (see [
 | `POST /customer-statements`, `POST /customer-statements/{id}/mark-sent` | `statements:create` (Owner, Accountant) |
 | `GET /customer-statements`, `GET /customer-statements/{id}`, `GET /customer-statements/{id}/pdf` | `statements:view` (Owner, Accountant, Viewer) |
 | `POST /cash-expenses` | `cash_expenses:create` |
+| `POST /cash-purchases` / `GET /cash-purchases`, `GET /cash-purchases/{id}` | `cash_purchases:create` / `cash_purchases:view` (Owner, Accountant, Cashier; Viewer can view) |
 | `POST /payments/mpesa/stk-push` | `payments:create` |
 | `GET /payments`, `GET /payments/{id}` | `payments:view` |
 | `GET /invoices`, `GET /invoices/{id}` | `invoices:view` |
@@ -1119,6 +1121,7 @@ The balance is **what the business owes the supplier**, so a row's `credit_minor
 | `DEBIT_NOTE` | A debit note posted | The debit note, with `debited_bill_*` (null for one [against no bill](#730b-supplier-credit)) |
 | `BILL_CANCELLED` / `DEBIT_NOTE_CANCELLED` | The reversal posted when it was cancelled | The cancelled document |
 | `PAYMENT` | Money paid to the supplier | The [supplier payment](#730-supplier-payments) (`document_kind: "SUPPLIER_PAYMENT"`, `SP-` number); `paid_bills` lists the bills it paid, `unapplied_minor` what became supplier credit, with `payment_method` (incl. `CHEQUE`) and `reference`. A guided `POST /cheques` has `document_*` null, `paid_bills: []` and `unapplied_minor: null` |
+| `CASH_PURCHASE` | A [cash purchase](#731-cash-purchases) from the supplier, paid on the spot | The purchase (`document_kind: "CASH_PURCHASE"`, `PUR-` number). `credit_minor` and `debit_minor` are both its total, so the balance doesn't move |
 | `REFUND` | Money the supplier paid back out of their credit | The [refund](#post-supplier-refunds) (`document_kind: "SUPPLIER_REFUND"`, `SRF-` number), with `payment_method` and `reference`. Adds to the balance (`credit_minor`) |
 | `REVERSAL` | A reversed journal | null |
 | `JOURNAL` | Any other journal tagged with the supplier | null |
@@ -3277,3 +3280,103 @@ A payment refunded from shows it in `refunded_minor`. In the supplier's history 
 - **Pay Bills:** if `GET /suppliers/{id}/credit` shows `available_minor > 0`, offer **Apply credit** on the open bills (`POST /supplier-bills/{id}/apply-credit`) before taking money out.
 - A supplier with an open bill and credit at the same time shows both: the bill in aging, the credit here. Their `balance_minor` is the net.
 - **Not built yet:** voiding a refund or un-applying credit, and moving credit between payable accounts (use a journal).
+
+---
+
+## 7.31 Cash Purchases
+
+Base path: `/api/v1/cash-purchases`. The Suppliers hub's **Cash Purchase** screen: goods or services **bought and paid for on the spot**. It is the supplier side of a [sales receipt](#725-sales-receipts). Settled when recorded, so there is no draft. One `POST` numbers it (`PUR-000001`, gapless per business), posts it and stores it as `PAID`:
+
+```
+Dr line account(s)          (net: an expense, stock, or any other account)
+Dr input VAT                (per VAT account, if any)
+    Cr Accounts Payable     (total, tagged with the supplier)  } only when a
+Dr Accounts Payable         (total, tagged with the supplier)  } supplier is named
+    Cr the money account    (total)
+```
+
+**With a supplier**, the purchase passes through their payables. The two payables lines cancel out, so their **balance and aging don't change**. It still shows in their history (`CASH_PURCHASE` row), last activity and the Overview's recent activity. **Without one** (a one-off seller at the market), the lines go straight to the money account.
+
+The journal has `source: "BILL"`, `description: "Cash purchase PUR-000004 from Unga Millers Ltd (supplier ref RCPT-4471)"` and `reference` = `reference` (else the PUR- number). VAT maths is the same as bills. Cash purchases never appear under `/supplier-bills` or `/cheque-payments`, and those never appear here.
+
+**Buying on credit is a bill, not this.** Use a [bill](#722-supplier-bills) when the supplier will be paid later.
+
+### `POST /cash-purchases`
+
+`cash_purchases:create` (Owner, Accountant, Cashier). Accepts `Idempotency-Key`.
+
+```json
+{
+  "clientUuid": "3f7a...",
+  "supplierId": "<Unga Millers>",
+  "supplierReference": "RCPT-4471",
+  "paymentMethod": "MPESA",
+  "reference": "SKL4X9P2QA",
+  "taxMode": "EXCLUSIVE",
+  "lines": [
+    { "accountId": "<Packaging expense>", "amountMinor": 250000, "description": "Packaging bags", "taxRateBps": 1600 }
+  ]
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `clientUuid` | ✅ | Reusing one is refused with `409 DUPLICATE_VALUE`, and nothing is posted. |
+| `supplierId` | No | Omit for a seller with no supplier record. |
+| `supplierReference` | No | The seller's receipt or invoice number (not checked for repeats). |
+| `date` | No | Defaults to today (Africa/Nairobi). Its period must be open. |
+| `paymentMethod` | No | `CASH` (default) / `BANK` / `MPESA` / `CHEQUE` / `OTHER`. For `CHEQUE`, put the cheque number in `reference`. |
+| `paidFromAccountId` | No | Where the money came from. Default: the business's Cash, Bank or M-Pesa account for the method (**`CHEQUE` uses Bank**; M-Pesa is created if missing). **Required for `OTHER`** (`400`). |
+| `payableAccountId` | No | Only with `supplierId` (`400` otherwise): the payables the purchase passes through. Omit for the business's `PAYABLE` account (`422 SYSTEM_ACCOUNT_MISSING` if none). |
+| `taxMode` | No | `INCLUSIVE`, `EXCLUSIVE` or `NONE` (default). **Input** VAT: a business that isn't VAT-registered gets `422 TAX_NOT_REGISTERED`. |
+| `reference`, `memo` | No | `reference`: cheque number, M-Pesa code…; `memo`: internal note for the whole purchase. |
+| `currency` | No | Base currency only. |
+| `lines[]` | ✅ | 1–200 lines, **exactly as on a [cheque payment](#727-cheque-payments)**: `accountId` or `itemId` (Expense / Stock / Other tabs), `amountMinor` or `unitPriceMinor`, `quantity` (default 1), `description`, `taxRateBps`, `taxAccountId`. |
+
+**Success:** `201`, the purchase (see `GET` below). Errors: `400 VALIDATION_ERROR`, `404 ACCOUNT_NOT_FOUND` / `SUPPLIER_NOT_FOUND` / `ITEM_NOT_FOUND`, `409 DUPLICATE_VALUE`, `422 PERIOD_LOCKED` / `ACCOUNT_INACTIVE` / `ACCOUNT_NOT_POSTABLE` / `TAX_NOT_REGISTERED` / `SYSTEM_ACCOUNT_MISSING` / `ITEM_INVALID` / `CURRENCY_MISMATCH`, and `422 INVOICE_INVALID_STATE` for a total of zero.
+
+### `GET /cash-purchases/{id}`
+
+`cash_purchases:view`.
+
+```json
+{
+  "id": "…",
+  "number": "PUR-000004",
+  "status": "PAID",
+  "supplier_id": "…",
+  "supplier_name": "Unga Millers Ltd",
+  "supplier_reference": "RCPT-4471",
+  "date": "2026-11-15",
+  "currency": "KES",
+  "payment_method": "MPESA",
+  "paid_from_account_id": "…",
+  "payable_account_id": "…",
+  "tax_mode": "EXCLUSIVE",
+  "subtotal_minor": "250000",
+  "tax_minor": "40000",
+  "total_minor": "290000",
+  "reference": "SKL4X9P2QA",
+  "memo": null,
+  "journal_id": "…",
+  "created_by": "…",
+  "created_at": "…",
+  "lines": [
+    { "id": "…", "line_no": 1, "item_id": null, "account_id": "…", "description": "Packaging bags", "quantity": "1.000",
+      "unit_price_minor": "250000", "amount_minor": "250000", "tax_rate_bps": 1600, "tax_account_id": "…",
+      "net_minor": "250000", "tax_minor": "40000", "total_minor": "290000" }
+  ]
+}
+```
+
+`supplier_id`, `supplier_name` and `payable_account_id` are `null` without a supplier. Unknown id, or a bill's or cheque's id: `404 INVOICE_NOT_FOUND`.
+
+### `GET /cash-purchases`
+
+`cash_purchases:view`. Newest first, cursor paging as for `GET /invoices`. Filters: `supplier_id`, `from` / `to` (purchase `date`), `q` (supplier name, PUR- number, `reference` or `supplier_reference`, case-insensitive). Items have no `lines`.
+
+### Notes for consuming clients (Cash Purchases)
+
+- **The line tabs** work as on Write Cheque: **Expense** lists `EXPENSE` accounts, **Stock Purchase** lists `INVENTORY` items (send `itemId`), **Other** lists any account.
+- The supplier's `preferred_payment_method` is a good pre-fill for `paymentMethod`.
+- **Not built yet:** voiding a cash purchase, a receipt PDF, and stock quantities (a stock line debits the inventory account only, as on bills).

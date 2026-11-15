@@ -55,6 +55,8 @@ export const PERMISSIONS = [
   "cheques:view",
   "cheques:create",
   "cash_expenses:create",
+  "cash_purchases:view",
+  "cash_purchases:create",
   "payments:view",
   "payments:create",
   "refunds:create",
@@ -121,7 +123,7 @@ export const SYSTEM_ROLES: Readonly<Record<SystemRoleKey, SystemRole>> = {
   CASHIER: {
     key: "CASHIER",
     name: "Cashier",
-    description: "Records cash sales and cash expenses, collects M-Pesa payments and takes payments against invoices.",
+    description: "Records cash sales, cash expenses and cash purchases, collects M-Pesa payments and takes payments against invoices.",
     permissions: [
       "accounts:view",
       "customers:view",
@@ -130,6 +132,8 @@ export const SYSTEM_ROLES: Readonly<Record<SystemRoleKey, SystemRole>> = {
       "cash_sales:view",
       "cash_sales:create",
       "cash_expenses:create",
+      "cash_purchases:view",
+      "cash_purchases:create",
       "payments:view",
       "payments:create",
       // Sees invoices to take payment against them; can't raise or issue one.

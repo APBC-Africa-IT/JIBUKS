@@ -68,7 +68,7 @@ export interface InvoiceRow {
   readonly issued_at: string | null;
   readonly cancelled_at: string | null;
   /** CASH_SALE only: how it was paid. */
-  readonly payment_method: InvoicePaymentMethod | null;
+  readonly payment_method: SupplierPaymentMethod | null; // CHEQUE on cash purchases only
   /** CASH_SALE / CHEQUE: the money account -- where a sale's money went, or the bank a cheque is drawn on. */
   readonly deposit_account_id: string | null;
   /** CHEQUE only: the number on the cheque leaf. */
@@ -296,15 +296,19 @@ export interface InsertSettledInput {
   readonly tenantId: string;
   readonly clientUuid: string;
   readonly branchId?: string;
-  readonly kind: "CASH_SALE" | "CHEQUE";
+  readonly kind: "CASH_SALE" | "CHEQUE" | "CASH_PURCHASE";
   readonly customerId?: string;
   readonly supplierId?: string;
+  /** CASH_PURCHASE: the seller's receipt or invoice number. */
+  readonly supplierReference?: string;
   readonly issueDate: string;
   readonly currency: string;
-  /** CASH_SALE only. */
-  readonly paymentMethod?: InvoicePaymentMethod;
-  /** Where a sale's money went, or the bank a cheque is drawn on. */
+  /** CASH_SALE and CASH_PURCHASE only. */
+  readonly paymentMethod?: SupplierPaymentMethod;
+  /** Where a sale's money went, the bank a cheque is drawn on, or what a purchase was paid from. */
   readonly moneyAccountId: string;
+  /** CASH_PURCHASE with a supplier: the payables it passed through. */
+  readonly payableAccountId?: string;
   /** CHEQUE only. */
   readonly chequeNumber?: string;
   readonly taxMode: TaxMode;
@@ -320,7 +324,7 @@ export interface InsertSettledInput {
 }
 
 /**
- * A document settled on the spot -- a cash sale (AR) or a cheque (AP) --
+ * A document settled on the spot -- a cash sale (AR), a cheque or a cash purchase (AP) --
  * inserted already numbered, posted and PAID, inside the transaction that
  * posted its journal.
  */
@@ -329,9 +333,10 @@ export async function insertSettledDocument(client: TxClient, input: InsertSettl
     `INSERT INTO invoices
        (id, tenant_id, client_uuid, branch_id, direction, kind, status, number, customer_id, issue_date, currency,
         payment_method, deposit_account_id, tax_mode, subtotal_minor, tax_minor, total_minor, amount_paid_minor,
-        reference, notes, memo, journal_id, created_by, issued_by, issued_at, supplier_id, cheque_number)
+        reference, notes, memo, journal_id, created_by, issued_by, issued_at, supplier_id, cheque_number,
+        supplier_reference, receivable_account_id)
      VALUES ($1, $2, $3, $4, $20, $21, 'PAID', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14,
-             $15, $16, $17, $18, $19, $19, now(), $22, $23)
+             $15, $16, $17, $18, $19, $19, now(), $22, $23, $24, $25)
      RETURNING *`,
     [
       input.id,
@@ -353,10 +358,12 @@ export async function insertSettledDocument(client: TxClient, input: InsertSettl
       input.memo ?? null,
       input.journalId,
       audit.actorUserId,
-      input.kind === "CHEQUE" ? "AP" : "AR",
+      input.kind === "CASH_SALE" ? "AR" : "AP",
       input.kind,
       input.supplierId ?? null,
       input.chequeNumber ?? null,
+      input.supplierReference ?? null,
+      input.payableAccountId ?? null,
     ],
   );
   const doc = result.rows[0]!;

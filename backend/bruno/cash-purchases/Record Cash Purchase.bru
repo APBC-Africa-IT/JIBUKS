@@ -1,0 +1,42 @@
+meta {
+  name: Record Cash Purchase
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/cash-purchases
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+  Content-Type: application/json
+  Idempotency-Key: {{$randomUUID}}
+}
+
+body:json {
+  {
+    "clientUuid": "{{$randomUUID}}",
+    "supplierId": "{{supplierId}}",
+    "supplierReference": "RCPT-4471",
+    "paymentMethod": "MPESA",
+    "reference": "SKL4X9P2QA",
+    "taxMode": "EXCLUSIVE",
+    "lines": [
+      { "accountId": "{{expenseAccountId}}", "amountMinor": 250000, "description": "Packaging bags", "taxRateBps": 1600 }
+    ]
+  }
+}
+
+vars:pre-request {
+  supplierId: 00000000-0000-4000-8000-000000000000
+  expenseAccountId: 00000000-0000-4000-8000-000000000000
+}
+
+docs {
+  Numbered PUR-000001, posted and PAID. With supplierId it passes through payables (net zero)
+  so it shows in the supplier's history. Drop supplierId for a one-off seller.
+  paidFromAccountId defaults by paymentMethod (CHEQUE -> Bank); required for OTHER.
+}

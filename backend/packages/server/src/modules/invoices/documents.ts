@@ -105,6 +105,14 @@ export const CHEQUES: DocumentScope = {
   lineAccountField: "accountId",
 };
 
+/** Cash purchases (/cash-purchases): bought and paid on the spot, like cheques. */
+export const CASH_PURCHASES: DocumentScope = {
+  direction: "AP",
+  kinds: ["CASH_PURCHASE"],
+  noun: "cash purchase",
+  lineAccountField: "accountId",
+};
+
 export const DOC_NAMES: Readonly<Record<InvoiceKind, string>> = {
   INVOICE: "Invoice",
   CREDIT_NOTE: "Credit note",
@@ -113,6 +121,7 @@ export const DOC_NAMES: Readonly<Record<InvoiceKind, string>> = {
   DEBIT_NOTE: "Debit note",
   CASH_SALE: "Cash sale",
   CHEQUE: "Cheque",
+  CASH_PURCHASE: "Cash purchase",
 };
 
 function partyIdOf(side: Side, row: InvoiceRow): string {

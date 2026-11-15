@@ -26,6 +26,7 @@ import { creditSalesRouter } from "./modules/creditSales/routes.js";
 import { cashSalesRouter } from "./modules/cashSales/routes.js";
 import { salesReceiptsRouter } from "./modules/salesReceipts/routes.js";
 import { itemsRouter } from "./modules/items/routes.js";
+import { cashPurchasesRouter } from "./modules/cashPurchases/routes.js";
 import { chequePaymentsRouter } from "./modules/chequePayments/routes.js";
 import { billsRouter } from "./modules/bills/routes.js";
 import { chequesRouter } from "./modules/cheques/routes.js";
@@ -93,6 +94,7 @@ export function createApp(): Express {
   app.use("/api/v1/sales-receipts", salesReceiptsRouter);
   app.use("/api/v1/items", itemsRouter);
   app.use("/api/v1/cheque-payments", chequePaymentsRouter);
+  app.use("/api/v1/cash-purchases", cashPurchasesRouter);
   app.use("/api/v1/bills", billsRouter);
   app.use("/api/v1/cheques", chequesRouter);
   app.use("/api/v1/cash-expenses", cashExpensesRouter);

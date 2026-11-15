@@ -1,0 +1,23 @@
+meta {
+  name: List Cash Purchases
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/cash-purchases
+  body: none
+  auth: none
+}
+
+params:query {
+  ~supplier_id: 00000000-0000-4000-8000-000000000000
+  ~from: 2026-11-01
+  ~to: 2026-11-30
+  ~q: RCPT
+  ~limit: 50
+}
+
+headers {
+  Authorization: Bearer {{authToken}}
+}

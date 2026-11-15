@@ -186,6 +186,12 @@ tags:
       Statements as numbered snapshots (ST-000001) of a customer's
       transactions and aging for a period, with a PDF and a sent mark. They
       post nothing; the server doesn't send them.
+  - name: Cash Purchases
+    description: >
+      Purchases paid on the spot as numbered documents (PUR-000001):
+      optional supplier, payment method, input VAT, line amounts or items.
+      Created already posted and PAID; with a supplier the journal passes
+      through their payables (net zero) so it shows in their history.
   - name: Cheque Payments
     description: >
       Cheques as numbered documents (CHQ-000001): cheque number, optional
@@ -2258,6 +2264,83 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ChequePaymentDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /cash-purchases:
+    post:
+      tags: [Cash Purchases]
+      summary: Record a cash purchase (numbered, posted and paid)
+      description: >
+        Requires `cash_purchases:create`. Numbers it PUR-000001 (gapless),
+        posts Dr line accounts (net) / Dr input VAT / Cr the money account
+        (total) and stores it PAID in one transaction. With supplierId the
+        journal also has Cr / Dr payables tagged with the supplier (the
+        total each way), so it shows in their history and their balance is
+        unchanged. Without paidFromAccountId the money comes from the
+        business's CASH, BANK (also for CHEQUE) or M-Pesa account by
+        paymentMethod; OTHER requires it.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCashPurchaseRequest' }
+      responses:
+        '201':
+          description: The cash purchase
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CashPurchaseDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/DuplicateValue' }
+        '422': { $ref: '#/components/responses/InvoiceRuleViolation' }
+    get:
+      tags: [Cash Purchases]
+      summary: List cash purchases (cursor-paginated)
+      description: Requires `cash_purchases:view`. Newest first; items have no `lines`.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: supplier_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, description: Purchase date from (inclusive), schema: { type: string, format: date } }
+        - { name: to, in: query, description: Purchase date to (inclusive), schema: { type: string, format: date } }
+        - { name: q, in: query, description: "Supplier name, number, reference or supplier reference (case-insensitive)", schema: { type: string, maxLength: 100 } }
+      responses:
+        '200':
+          description: A page of cash purchases
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/CashPurchase' }
+                  next_cursor: { type: string, nullable: true }
+                  has_more: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /cash-purchases/{id}:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceIdPath'
+    get:
+      tags: [Cash Purchases]
+      summary: Get a cash purchase with its lines
+      description: Requires `cash_purchases:view`. 404 for a bill's or cheque's id.
+      responses:
+        '200':
+          description: The cash purchase
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CashPurchaseDetail' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -4794,6 +4877,8 @@ components:
         - "cheques:view"
         - "cheques:create"
         - "cash_expenses:create"
+        - "cash_purchases:view"
+        - "cash_purchases:create"
         - "payments:view"
         - "payments:create"
         - "refunds:create"
@@ -6481,7 +6566,7 @@ components:
             document_number: { type: string, nullable: true }
     SupplierTransactionType:
       type: string
-      enum: [OPENING_BALANCE, BILL, DEBIT_NOTE, BILL_CANCELLED, DEBIT_NOTE_CANCELLED, PAYMENT, REFUND, REVERSAL, JOURNAL]
+      enum: [OPENING_BALANCE, BILL, DEBIT_NOTE, BILL_CANCELLED, DEBIT_NOTE_CANCELLED, CASH_PURCHASE, PAYMENT, REFUND, REVERSAL, JOURNAL]
     SupplierTransaction:
       type: object
       properties:
@@ -6493,7 +6578,7 @@ components:
         document_kind:
           type: string
           nullable: true
-          enum: [BILL, DEBIT_NOTE, SUPPLIER_PAYMENT, SUPPLIER_REFUND, null]
+          enum: [BILL, DEBIT_NOTE, CASH_PURCHASE, SUPPLIER_PAYMENT, SUPPLIER_REFUND, null]
           description: SUPPLIER_PAYMENT on PAYMENT rows (the SP- payment); SUPPLIER_REFUND on REFUND rows (the SRF- refund).
         document_number: { type: string, nullable: true }
         debited_bill_id: { type: string, format: uuid, nullable: true, description: "DEBIT_NOTE rows - the bill it was raised against." }
@@ -6868,6 +6953,76 @@ components:
     ChequePaymentDetail:
       allOf:
         - $ref: '#/components/schemas/ChequePayment'
+        - type: object
+          properties:
+            lines:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  line_no: { type: integer }
+                  item_id: { type: string, format: uuid, nullable: true }
+                  account_id: { type: string, format: uuid }
+                  description: { type: string, nullable: true }
+                  quantity: { type: string }
+                  unit_price_minor: { type: string }
+                  amount_minor: { type: string, nullable: true }
+                  tax_rate_bps: { type: integer }
+                  tax_account_id: { type: string, format: uuid, nullable: true }
+                  net_minor: { type: string }
+                  tax_minor: { type: string }
+                  total_minor: { type: string }
+    CreateCashPurchaseRequest:
+      type: object
+      required: [clientUuid, lines]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        branchId: { type: string, format: uuid }
+        supplierId: { type: string, format: uuid, description: Omit for a seller with no supplier record. }
+        supplierReference: { type: string, maxLength: 100, description: "The seller's receipt or invoice number." }
+        date: { type: string, format: date, description: Defaults to today (Africa/Nairobi). }
+        paymentMethod: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER], default: CASH, description: "CHEQUE - put the cheque number in reference." }
+        paidFromAccountId: { type: string, format: uuid, description: "Default by paymentMethod (CHEQUE - Bank); required for OTHER." }
+        payableAccountId: { type: string, format: uuid, description: "Only with supplierId; omit for the business's PAYABLE account." }
+        currency: { type: string, description: Base currency only. }
+        taxMode: { $ref: '#/components/schemas/TaxMode' }
+        reference: { type: string, maxLength: 100 }
+        memo: { type: string, maxLength: 2000 }
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/ChequePaymentLineInput' }
+    CashPurchase:
+      type: object
+      description: Money fields are 64-bit-safe integer strings.
+      properties:
+        id: { type: string, format: uuid }
+        client_uuid: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid, nullable: true }
+        number: { type: string, example: PUR-000004 }
+        status: { type: string, enum: [PAID] }
+        supplier_id: { type: string, format: uuid, nullable: true }
+        supplier_name: { type: string, nullable: true }
+        supplier_reference: { type: string, nullable: true }
+        date: { type: string, format: date }
+        currency: { type: string }
+        payment_method: { type: string, enum: [CASH, BANK, MPESA, CHEQUE, OTHER] }
+        paid_from_account_id: { type: string, format: uuid }
+        payable_account_id: { type: string, format: uuid, nullable: true, description: With a supplier - the payables it passed through. }
+        tax_mode: { $ref: '#/components/schemas/TaxMode' }
+        subtotal_minor: { type: string }
+        tax_minor: { type: string }
+        total_minor: { type: string }
+        reference: { type: string, nullable: true }
+        memo: { type: string, nullable: true }
+        journal_id: { type: string, format: uuid }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+    CashPurchaseDetail:
+      allOf:
+        - $ref: '#/components/schemas/CashPurchase'
         - type: object
           properties:
             lines:
