@@ -9,6 +9,7 @@ import { requireRealIdentity } from "../../middleware/authContext.js";
 import { requirePermission } from "../../middleware/requirePermission.js";
 import * as creditControllers from "../supplierCredits/controllers.js";
 import * as ledgerControllers from "../supplierLedger/controllers.js";
+import * as statementControllers from "../supplierStatements/controllers.js";
 import * as controllers from "./controllers.js";
 
 export const suppliersRouter: RouterType = Router();
@@ -21,6 +22,8 @@ suppliersRouter.get("/", requirePermission("suppliers:view"), asyncHandler(ledge
 suppliersRouter.get("/:id", requirePermission("suppliers:view"), asyncHandler(ledgerControllers.getOne));
 suppliersRouter.get("/:id/transactions", requirePermission("suppliers:view"), asyncHandler(ledgerControllers.transactions));
 suppliersRouter.get("/:id/credit", requirePermission("suppliers:view"), asyncHandler(creditControllers.availableCredit));
+suppliersRouter.get("/:id/statement", requirePermission("suppliers:view"), asyncHandler(statementControllers.statement));
+suppliersRouter.get("/:id/statement/pdf", requirePermission("suppliers:view"), asyncHandler(statementControllers.pdf));
 suppliersRouter.patch("/:id", requirePermission("suppliers:edit"), asyncHandler(controllers.update));
 suppliersRouter.post("/:id/deactivate", requirePermission("suppliers:edit"), asyncHandler(controllers.deactivate));
 suppliersRouter.post("/:id/reactivate", requirePermission("suppliers:edit"), asyncHandler(controllers.reactivate));

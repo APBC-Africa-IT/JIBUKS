@@ -3623,6 +3623,74 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /suppliers/{id}/statement:
+    get:
+      tags: [Suppliers]
+      summary: A supplier statement for a period
+      description: >
+        Requires suppliers:view. The supplier's transactions for the period
+        with a running balance, totals, and the amount owed by age at `to`.
+        Read on request; nothing is stored or numbered.
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdPath'
+        - name: from
+          in: query
+          required: false
+          description: First day covered. Default the 1st of to's month.
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          description: Statement date. Default today (Africa/Nairobi).
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: The statement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierStatement'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /suppliers/{id}/statement/pdf:
+    get:
+      tags: [Suppliers]
+      summary: A supplier statement as a PDF
+      description: >
+        Requires suppliers:view. Built on request with the same from / to;
+        filename Statement-<supplier code>-<to>.pdf, served inline.
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdPath'
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: The PDF
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /payables-overview:
     get:
       tags: [Suppliers]
@@ -6600,6 +6668,34 @@ components:
         credit_minor: { type: string, description: "What the row added to what the business owes." }
         debit_minor: { type: string, description: "What the row took off." }
         balance_minor: { type: string, description: "What the business owes after the row; negative = the supplier owes the business." }
+    SupplierStatement:
+      type: object
+      description: Money fields are 64-bit-safe integer strings.
+      properties:
+        supplier_id: { type: string, format: uuid }
+        supplier_code: { type: string, example: SUP-0007 }
+        supplier_name: { type: string }
+        currency: { type: string }
+        period_from: { type: string, format: date }
+        period_to: { type: string, format: date }
+        opening_balance_minor: { type: string, description: Owed before period_from. }
+        total_credit_minor: { type: string, description: "Bills, opening balances and refunds received in the period." }
+        total_debit_minor: { type: string, description: "Payments, debit notes and cancellations in the period." }
+        closing_balance_minor: { type: string, description: Owed at the end of period_to; negative = supplier credit. }
+        transactions:
+          type: array
+          items: { $ref: '#/components/schemas/SupplierTransaction' }
+        aging:
+          type: object
+          description: As GET /payables-aging at period_to.
+          properties:
+            current_minor: { type: string }
+            days_1_30_minor: { type: string }
+            days_31_60_minor: { type: string }
+            days_61_90_minor: { type: string }
+            days_over_90_minor: { type: string }
+            not_billed_minor: { type: string }
+            balance_minor: { type: string }
     SupplierTransactions:
       type: object
       properties:
